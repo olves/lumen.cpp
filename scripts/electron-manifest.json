@@ -1,0 +1,10 @@
+{
+  "v": "v44.5.1",
+  "name": "electron-v44.5.1-win32-x64.zip",
+  "sha256": "9b382492dcfee91f8f9e92c91f7972550a1b95d2299cac72279dab33a600d7db",
+  "bytes": 157998329,
+  "applicationExeSha256": "8fdca95808a4a9413b0ba1006f19a8d1b1112c2b56b5b31025e7a30adbcd8812",
+  "customizations": [
+    "Windows icon resources branded as Lumen Beta; upstream ZIP hash identifies the original Electron download."
+  ]
+}

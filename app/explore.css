@@ -1,0 +1,40 @@
+/* Explore: collections, family shortcuts, richer rows and quant guidance. Uses the semantic tokens from design.css. */
+.explore-filters{display:flex;flex-direction:column;gap:11px;margin:-6px 0 18px}
+.collection-tabs{display:flex;gap:2px;padding:3px;border:1px solid var(--border);border-radius:8px;background:var(--field)}
+.collection-tabs button{flex:1 1 0;min-width:0;padding:7px 4px;border-radius:5px;font-size:10.5px;color:var(--secondary-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.collection-tabs button:hover{color:var(--ink)}
+.collection-tabs button[aria-pressed=true]{background:var(--selection);color:var(--accent-ink);box-shadow:inset 0 0 0 1px var(--selection-line)}
+.family-chips{display:flex;flex-wrap:wrap;gap:6px}
+.family-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px 3px 3px;border:1px solid var(--border);border-radius:999px;font-size:10px;color:var(--secondary-ink)}
+.family-chip img{display:block;width:16px;height:16px;border-radius:50%;object-fit:contain}
+.family-chip:hover{color:var(--ink);border-color:var(--selection-line)}
+.family-chip[aria-pressed=true]{background:var(--selection);border-color:var(--selection-line);color:var(--accent-ink)}
+.browser-list .explore-row{align-items:flex-start}
+.browser-list .explore-row .family-mark{margin-top:1px}
+.explore-row .row-facts{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:7px}
+.explore-row .row-facts span{flex:none}
+.fact-chip{font-size:9.5px;line-height:1.5;padding:0 6px;border-radius:4px;background:var(--field);color:var(--secondary-ink)}
+.browser-list .explore-row.selected .fact-chip{background:#0000001f}body[data-mode=light] .browser-list .explore-row.selected .fact-chip{background:#ffffff99}
+.fit-dot{display:inline-block;width:7px;height:7px;border-radius:50%;flex:none}
+.fit-gpu{background:#8fb07d}.fit-mixed{background:#d4a45e}.fit-over{background:#cf6a55}
+body[data-mode=light] .fit-gpu{background:#4f7d43}body[data-mode=light] .fit-mixed{background:#a76e1d}body[data-mode=light] .fit-over{background:#b0442f}
+.browser-list .repo-row .installed-tag{color:var(--accent-ink);font-size:11px;margin-top:1px}
+.hub-offline{padding:0 0 8px}.hub-offline .text-button{padding:0 9px}
+/* Detail: one fact strip, then download choices with a single highlighted fit. */
+.model-detail-header .detail-link{margin-left:auto;align-self:flex-start;flex:none;padding:7px 11px;font-size:10px;white-space:nowrap}
+.model-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;margin:24px 0 6px}
+.model-facts>div{display:flex;flex-direction:column;gap:7px;min-width:0;padding:11px 13px;border:1px solid var(--border);border-radius:8px;background:var(--panel)}
+.model-facts span{font-size:9.5px;color:var(--soft-ink)}
+.model-facts strong{font-size:13px;font-weight:550;color:var(--ink);overflow-wrap:anywhere}
+.options-heading{display:flex;align-items:baseline;justify-content:space-between;gap:18px}
+.options-heading .quiet{font-size:10px;line-height:1.5;text-align:right;max-width:320px;margin:0}
+.download-options{padding:0;overflow:hidden}
+.download-options .quant-row{padding:13px 14px}
+.download-options .quant-row.recommended{background:var(--selection);box-shadow:inset 2px 0 var(--selection-line)}
+.download-options .options-note{padding:4px 14px;margin:10px 0}
+.quant-line{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+.best-badge{font-size:9px;font-weight:600;padding:2px 6px;border-radius:4px;background:var(--button-bg);color:var(--button-ink)}
+.device-badge{font-size:9px;padding:1px 5px;border-radius:4px;border:1px solid var(--selection-line);color:var(--accent-ink)}
+.download-options .quant-row .quant-name .fit-badge{display:flex;align-items:center;gap:6px;line-height:1.5}
+@media(max-width:1100px){.download-options .quant-row{padding:12px 10px}.options-heading{flex-direction:column;gap:0}.options-heading .quiet{text-align:left;margin:-6px 0 12px}}
+@media(max-width:900px){.model-browser{grid-template-rows:minmax(170px,250px) minmax(0,1fr)}.family-chips{display:none}.explore-filters{margin:0 0 8px}.explore-row .row-facts{display:none}.model-facts{margin-top:16px}}

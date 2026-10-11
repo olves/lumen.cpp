@@ -1,0 +1,14 @@
+# Build output and downloads
+dist/
+*.zip
+*.rar
+
+# Binaries are shipped in the release ZIP, not in the repository
+*.exe
+*.dll
+*.pdb
+
+# Test hook and local diagnostics
+app/ui-check.cjs
+debug.log
+*.log

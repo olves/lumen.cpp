@@ -1,0 +1,65 @@
+[
+  {
+    "family": "qwen",
+    "owner": "Qwen",
+    "file": "logos/qwen.webp",
+    "type": "image/webp",
+    "bytes": 2832,
+    "profile": "https://huggingface.co/Qwen",
+    "source": "https://cdn-avatars.huggingface.co/v1/production/uploads/6215ca5692c0ecfba9186921/hrRM50-6XcdWgg2AKpENG.jpeg"
+  },
+  {
+    "family": "llama",
+    "owner": "meta-llama",
+    "file": "logos/llama.webp",
+    "type": "image/webp",
+    "bytes": 8108,
+    "profile": "https://huggingface.co/meta-llama",
+    "source": "https://cdn-avatars.huggingface.co/v1/production/uploads/646cf8084eefb026fb8fd8bc/oCTqufkdTkjyGodsx1vo1.png"
+  },
+  {
+    "family": "mistral",
+    "owner": "mistralai",
+    "file": "logos/mistral.webp",
+    "type": "image/webp",
+    "bytes": 2656,
+    "profile": "https://huggingface.co/mistralai",
+    "source": "https://cdn-avatars.huggingface.co/v1/production/uploads/634c17653d11eaedd88b314d/9OgyfKstSZtbmsmuG8MbU.png"
+  },
+  {
+    "family": "deepseek",
+    "owner": "deepseek-ai",
+    "file": "logos/deepseek.webp",
+    "type": "image/webp",
+    "bytes": 3682,
+    "profile": "https://huggingface.co/deepseek-ai",
+    "source": "https://cdn-avatars.huggingface.co/v1/production/uploads/6538815d1bdb3c40db94fbfa/xMBly9PUMphrFVMxLX4kq.png"
+  },
+  {
+    "family": "gemma",
+    "owner": "google",
+    "file": "logos/gemma.webp",
+    "type": "image/webp",
+    "bytes": 7100,
+    "profile": "https://huggingface.co/google",
+    "source": "https://cdn-avatars.huggingface.co/v1/production/uploads/5dd96eb166059660ed1ee413/WtA3YYitedOr9n02eHfJe.png"
+  },
+  {
+    "family": "phi",
+    "owner": "microsoft",
+    "file": "logos/phi.webp",
+    "type": "image/webp",
+    "bytes": 626,
+    "profile": "https://huggingface.co/microsoft",
+    "source": "https://cdn-avatars.huggingface.co/v1/production/uploads/1583646260758-5e64858c87403103f9f1055d.png"
+  },
+  {
+    "family": "tinyllama",
+    "owner": "TinyLlama",
+    "file": "logos/tinyllama.webp",
+    "type": "image/webp",
+    "bytes": 10494,
+    "profile": "https://huggingface.co/TinyLlama",
+    "source": "https://cdn-avatars.huggingface.co/v1/production/uploads/63565cc56d7fcf1bedb7d347/DRv8Ln7nvK22iXkLmAGb_.png"
+  }
+]

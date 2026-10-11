@@ -1,0 +1,117 @@
+/* Polish layer, loaded last. Same identity (warm charcoal, orange accent, Desk/Studio), less chrome, token-only colors
+   so all four looks stay consistent. No new animations beyond short hover/focus transitions. */
+:root{--radius-s:6px;--radius-m:10px;--radius-l:14px;--ring:0 0 0 3px color-mix(in srgb,var(--selection-line,#8c694c) 22%,transparent)}
+
+/* ---------- Window chrome ---------- */
+.titlehint{visibility:hidden}
+.titlebar{border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
+body[data-layout=studio] .titlebar{border-bottom:0}
+.workspace-header{border-bottom-color:color-mix(in srgb,var(--border) 70%,transparent)}
+.breadcrumb>span,#page-crumb{color:var(--soft-ink)}
+.local-label{font:10px var(--mono);letter-spacing:.2px;color:var(--soft-ink)}
+img.small-mark{display:inline-block;width:18px;height:18px;padding:0;border-radius:5px;flex:none;vertical-align:middle}
+.welcome-brand img.small-mark{width:30px;height:30px;border-radius:8px}
+body[data-layout=studio] .empty-kicker img.small-mark{width:28px;height:28px;margin-bottom:8px;border-radius:8px}
+
+/* ---------- Sidebar ---------- */
+.rail-label,.settings-label{font:9px var(--mono);letter-spacing:1.2px;text-transform:uppercase;color:var(--soft-ink)}
+.history-row{transition:background-color 140ms ease}
+.history-row:hover{background:color-mix(in srgb,var(--panel-soft) 70%,transparent)}
+.history-row .history-item{color:var(--secondary-ink)}
+.history-row:hover .history-item{color:var(--ink)}
+.history-row.active .history-item{color:var(--accent-ink)}
+.history-item svg{opacity:.7}
+.local-state{color:var(--soft-ink)}
+
+/* ---------- Messages: no rules between turns, quiet meta, actions on hover ---------- */
+.message,body[data-layout=studio] .message{border:0;padding:14px 0}
+.message+.message.assistant{padding-top:14px}
+.message-meta{margin-bottom:8px;font-size:11.5px;font-weight:550;color:var(--secondary-ink)}
+.message-meta .avatar{display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center;background:none;border:0;padding:0}
+.message-meta .avatar img{display:block;width:16px;height:16px;border-radius:4px}
+.message-actions{gap:2px;opacity:0;transition:opacity 140ms ease}
+.message:hover .message-actions,.message:focus-within .message-actions{opacity:1}
+.message-actions button{font-size:10.5px;padding:3px 7px;border-radius:5px;color:var(--secondary-ink)}
+.message-actions button:hover{background:var(--panel-soft);color:var(--ink)}
+/* User turn: a soft block, no "You" label; its actions float in the corner on hover. */
+.message.user,body[data-layout=studio] .message.user{position:relative;margin:14px 0 6px;padding:13px 18px;border:1px solid var(--border);border-radius:var(--radius-l);background:var(--panel-soft)}
+.message.user .message-meta{position:absolute;top:6px;right:8px;margin:0}
+.message.user .message-meta>.avatar,.message.user .message-meta>span:not(.avatar){display:none}
+.message.user .message-actions{background:var(--panel-soft);border-radius:6px}
+.message.user .message-body{color:var(--ink)}
+.message-body{color:var(--ink)}
+.message-body h2,.message-body h3{font-weight:600;letter-spacing:-.15px}
+.message-body li+li{margin-top:3px}
+.message-body :not(pre)>code{font:.86em var(--mono);color:var(--accent-ink);background:var(--panel-soft);border:1px solid var(--border);padding:1px 5px;border-radius:5px}
+.code-block{border-radius:var(--radius-m);border-color:var(--border)}
+.code-heading{font:10px var(--mono);letter-spacing:.3px;color:var(--soft-ink);padding:7px 12px}
+.code-heading button{font:10px var(--mono);color:var(--secondary-ink);padding:2px 6px;border-radius:4px}
+.code-heading button:hover{background:var(--panel);color:var(--ink)}
+.interrupted{color:var(--soft-ink);font-size:10.5px}
+
+/* ---------- Empty state ---------- */
+.empty-kicker{color:var(--soft-ink)}
+.starter-list button{transition:color 140ms ease,background-color 140ms ease,border-color 140ms ease}
+.starter-list button:hover{color:var(--ink)}
+.starter-list button:hover svg{color:var(--accent-ink)}
+
+/* ---------- Composer: calmer at rest, a soft ring on focus ---------- */
+.composer,body[data-layout=studio] .composer{border-color:var(--border);box-shadow:0 1px 2px #0000000d;transition:border-color 160ms ease,box-shadow 160ms ease,background-color 160ms ease}
+.composer:focus-within,body[data-layout=studio] .composer:focus-within{border-color:color-mix(in srgb,var(--selection-line) 70%,var(--border));box-shadow:var(--ring)}
+.composer textarea{min-height:52px}
+.composer-local{color:var(--soft-ink);font-size:10.5px}
+.composer-add{background:transparent;border:1px solid var(--border);color:var(--secondary-ink)}
+.composer-add:hover,.composer-add[aria-expanded=true]{background:var(--panel-soft);color:var(--ink)}
+.composer #model-trigger{border:1px solid transparent;background:transparent}
+.composer #model-trigger:hover,.composer #model-trigger[aria-expanded=true]{background:var(--panel-soft);border-color:var(--border)}
+.composer-foot{color:var(--soft-ink)}
+.context-toggle{color:var(--soft-ink)}.context-toggle:hover{color:var(--ink)}
+
+/* ---------- Menus and popovers ---------- */
+.model-menu,.add-menu,.skill-menu,.context-panel{border-color:var(--border);border-radius:12px;box-shadow:0 16px 40px #00000033,0 1px 0 #ffffff08 inset}
+body[data-mode=light] .model-menu,body[data-mode=light] .add-menu,body[data-mode=light] .skill-menu,body[data-mode=light] .context-panel{box-shadow:0 14px 36px #3c2a1a1f}
+.model-option,.add-menu>button,.skill-picker-row{transition:background-color 120ms ease}
+.model-option.selected,.model-option[aria-selected=true]{background:var(--selection)}
+.add-menu svg{color:var(--accent-ink)}
+
+/* ---------- Fields: one focus treatment everywhere ---------- */
+input,select,textarea{transition:border-color 140ms ease,box-shadow 140ms ease}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;border-color:var(--selection-line)!important;box-shadow:var(--ring)}
+.composer textarea:focus-visible{box-shadow:none}
+select{border-radius:var(--radius-s);border-color:var(--border);background-color:var(--field);color:var(--ink)}
+
+/* ---------- Segmented controls (built in tools.js for short option lists) ---------- */
+.segmented{display:inline-flex;flex:none;gap:2px;padding:3px;border:1px solid var(--border);border-radius:8px;background:var(--field)}
+.segmented button{min-width:44px;padding:6px 11px;border-radius:5px;font-size:11px;color:var(--secondary-ink);white-space:nowrap}
+.segmented button:hover{color:var(--ink)}
+.segmented button[aria-checked=true]{background:var(--panel);color:var(--ink);box-shadow:0 1px 2px #0000001f,inset 0 0 0 1px var(--border)}
+body[data-mode=dark] .segmented button[aria-checked=true]{background:var(--selection);color:var(--accent-ink);box-shadow:inset 0 0 0 1px var(--selection-line)}
+select.has-segmented{display:none}
+
+/* ---------- Switch: token colors in both modes ---------- */
+.switch span{background:var(--border)}
+.switch span:before{background:var(--panel);box-shadow:0 1px 2px #00000040}
+.switch input:checked+span{background:var(--button-bg)}
+.switch input:checked+span:before{background:var(--button-ink)}
+
+/* ---------- Settings ---------- */
+.settings-heading .eyebrow{display:none}
+.settings-heading h1{letter-spacing:-.5px}
+.settings-heading p{color:var(--secondary-ink)}
+.setting-row{border-bottom-color:color-mix(in srgb,var(--border) 75%,transparent)}
+.setting-row h3{font-weight:550}
+.settings-nav>button[data-setting]{transition:background-color 120ms ease,color 120ms ease}
+
+/* ---------- Buttons ---------- */
+.primary,.secondary{transition:background-color 140ms ease,border-color 140ms ease,filter 140ms ease}
+.secondary{border-color:var(--border)}
+#toast{top:104px;bottom:auto;border-color:var(--border);background:var(--panel);color:var(--ink);border-radius:var(--radius-m);box-shadow:var(--shadow)}
+body[data-layout=studio] #toast{top:112px}
+
+/* ---------- Welcome ---------- */
+.welcome-brand{font-size:24px;gap:12px}
+.welcome-card{border-radius:var(--radius-l)}
+
+/* ---------- Scrollbars ---------- */
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--soft-ink) 35%,transparent)}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--soft-ink) 55%,transparent)}
