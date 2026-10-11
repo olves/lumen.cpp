@@ -97,7 +97,7 @@ Opening, page/conversation transitions, sidebar, dialogs and menus have short, f
 
 ## Settings and reusable skills
 
-Settings is a separate workspace with General, Chat behavior, Appearance, Skills, Explore, Library, Runtime and Speed lab. Back to chat returns to the conversation rail. Appearance supports warm charcoal or graphite and 13–16px chat text. Context and system instructions are under Chat behavior.
+Settings is a separate workspace with General, Chat behavior, Appearance, Skills, Explore, Library, Runtime and Speed lab. Back to chat returns to the conversation rail. Appearance offers eight accent colors (warm charcoal, graphite, ocean, forest, plum, rose, teal, gold) or any color of your own, plus 13–16px chat text. Context and system instructions are under Chat behavior.
 
 **What a skill is.** A skill is a named set of instructions plus optional reference notes that you select for a conversation. Selected skills are added to the model's instructions for that conversation. A skill cannot run code, install anything or change what the model is allowed to do.
 
@@ -126,6 +126,7 @@ Every model step must be a JSON object that matches a schema. Lumen enforces thi
 Sources under an answer are only pages that a tool actually returned or opened. Citations to unknown ids are removed. Each source shows its site, its date when known (Wikipedia shows "updated", not "published") and whether the page was read or only seen as a snippet. Click a source or an inline citation to open it in the browser panel, or use the arrow to open it in your default browser. The activity line expands to show each task: its status, the model, the searches and page reads, and the result. Model reasoning is shown only when Thinking is on (see above). Activity and sources are stored in `conversation-activity.json` and included in Markdown export.
 
 **Search providers** (Settings → Search):
+- **DuckDuckGo** (default) searches the whole web with no account or key. It uses DuckDuckGo's public results page, not an official API. Under heavy use it can ask for a pause; Lumen then says so and never tries to get around that check. Tavily or Brave are steadier if you search a lot.
 - **Wikipedia** works without a key, but finds **Wikipedia articles only**. The research chip says "Wikipedia articles only" while it is selected.
 - **Tavily** is general web search built for AI tools. It needs a Tavily API key (`tvly-…`); the free plan includes 1,000 searches per month without a card (per Tavily's documentation).
 - **Brave Search** is general web search and needs a Brave Search API key.
@@ -208,7 +209,7 @@ The window shows a static brand frame from the first paint while the local engin
 
 Desk keeps compact edge-to-edge navigation and a simple conversation column. Studio uses inset navigation, a separate conversation canvas, centered start page and cards, and a distinct user-message treatment. Both retain the same models, conversations, settings and shortcuts; changing the layout does not copy or migrate your data. Both support Light and Dark.
 
-Change the layout, display mode or accent under Settings → Appearance. The one-time chooser has English/Turkish labels, keyboard navigation and real local screenshots for each layout/mode. The selection is written to desktop-preferences.json as layout, colorMode and designChosen; changing other preferences preserves these values. A saved onboarding flag cannot be accidentally cleared by older preference controls. GPU setup follows design selection when needed. The saved theme is applied to the initial HTML and window background before the workspace becomes interactive.
+Change the layout, display mode or accent under Settings → Appearance. For a custom accent, click the last circle and pick a color. Lumen derives the dark and light variants itself and adjusts them until text on the accent stays readable (at least 4.5:1 contrast). The one-time chooser has English/Turkish labels, keyboard navigation and real local screenshots for each layout/mode. The selection is written to desktop-preferences.json as layout, colorMode and designChosen; changing other preferences preserves these values. A saved onboarding flag cannot be accidentally cleared by older preference controls. GPU setup follows design selection when needed. The saved theme is applied to the initial HTML and window background before the workspace becomes interactive.
 
 ## Performance settings
 

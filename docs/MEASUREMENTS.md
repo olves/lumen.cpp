@@ -23,6 +23,19 @@ Implementation checks: no external fonts/frameworks, no idle animation loop, sho
 
 Raw development measurements and screenshots are in `work`; no test conversations or screenshots are bundled in the portable application. The app's Electron baseline is heavier than the previous WPF build.
 
+## Web search without a key, accent themes (2026-10-11)
+
+| Check | Kind | Result |
+| --- | --- | --- |
+| DuckDuckGo provider: a Turkish query (Turkish sites, ~1.2 s) and two English queries (~0.6–0.7 s) return 5 direct links each, with no ads or redirect links; the first result page was read by the guarded reader (3,778 characters) | Real network | Pass (`test-duckduckgo.mjs`) |
+| Settings migration: a never-chosen Wikipedia moves to DuckDuckGo, a provider chosen by hand is kept, and fresh settings default to DuckDuckGo | Fixture | Pass |
+| Research run with a model and DuckDuckGo | Real | **Not completed.** The GPU was in use by a game (7 of 8 GB, 82%) and the 7B run timed out, so the test was stopped. |
+| Eight accent presets: tokens applied and saved; keyboard arrows move between swatches; Turkish names; 800×600 without overflow; 0 console errors | Fixture UI | Pass (`test-themes-ui.cjs`) |
+| Preset contrast: accent text on the darkest/lightest surfaces of both layouts and text on accent buttons, all ≥ 6.1:1 | Calculation | Pass (`check-theme-contrast.mjs`) |
+| Custom color (#00ff66, #fff5b0, #3355ff): computed dark/light tokens, button text ≥ 5.5:1 and accent text ≥ 6.1:1; saved and restored after reloading preferences; a partial preference save keeps the theme | Fixture UI | Pass |
+
+Regression after the change: photos, design, explore, composer-clicks, chat-controls, settings-skills and the visual matrix all pass.
+
 ## Updates, setup and release signing (2026-10-11)
 
 All checks used a local stand-in for the GitHub Releases API and a throwaway test key. **The real GitHub repository was not published yet, so a check against github.com has not run.**

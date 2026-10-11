@@ -1,0 +1,35 @@
+/* Accent themes. Only accent tokens change; surfaces stay those of the layout and display mode. Loaded after polish.css,
+   so these win over the layout defaults. Text on accents meets WCAG 4.5:1 (work/check-theme-contrast.mjs).
+   "custom" gets its tokens from themes.js (computed from the chosen color with the same contrast rule). */
+body[data-theme=ocean]{--button-bg:#8fb4d9;--button-ink:#14202b;--accent-ink:#a9c8e8;--selection:#243039;--selection-line:#557a9c;--accent:#8fb4d9}
+body[data-theme=ocean][data-mode=light]{--button-bg:#2f5f8a;--button-ink:#ffffff;--accent-ink:#24527a;--selection:#e0e9f2;--selection-line:#6d93b6;--accent:#2f5f8a}
+body[data-theme=forest]{--button-bg:#9cc49a;--button-ink:#172414;--accent-ink:#b3d6b0;--selection:#263228;--selection-line:#5d8460;--accent:#9cc49a}
+body[data-theme=forest][data-mode=light]{--button-bg:#3d6a3c;--button-ink:#ffffff;--accent-ink:#355d34;--selection:#e2ebdf;--selection-line:#7aa077;--accent:#3d6a3c}
+body[data-theme=plum]{--button-bg:#c3a6d9;--button-ink:#241a2c;--accent-ink:#d4bfe6;--selection:#30283a;--selection-line:#806896;--accent:#c3a6d9}
+body[data-theme=plum][data-mode=light]{--button-bg:#6a4a85;--button-ink:#ffffff;--accent-ink:#5d3f76;--selection:#ece4f2;--selection-line:#9c82b3;--accent:#6a4a85}
+body[data-theme=rose]{--button-bg:#e0a3b0;--button-ink:#2c1a1e;--accent-ink:#edbcc6;--selection:#3a2a2e;--selection-line:#96626e;--accent:#e0a3b0}
+body[data-theme=rose][data-mode=light]{--button-bg:#984358;--button-ink:#ffffff;--accent-ink:#86394c;--selection:#f4e3e7;--selection-line:#c08593;--accent:#984358}
+body[data-theme=teal]{--button-bg:#86c7c0;--button-ink:#132624;--accent-ink:#a3d9d3;--selection:#223432;--selection-line:#4f8a84;--accent:#86c7c0}
+body[data-theme=teal][data-mode=light]{--button-bg:#2a6c66;--button-ink:#ffffff;--accent-ink:#245e59;--selection:#ddedea;--selection-line:#6fa39d;--accent:#2a6c66}
+body[data-theme=gold]{--button-bg:#d9bf7a;--button-ink:#2a2312;--accent-ink:#e6d09a;--selection:#353023;--selection-line:#8f7a45;--accent:#d9bf7a}
+body[data-theme=gold][data-mode=light]{--button-bg:#765e1d;--button-ink:#ffffff;--accent-ink:#665118;--selection:#f1e9d5;--selection-line:#b39a5c;--accent:#765e1d}
+
+/* Older rules paint hover states in the warm accent; keep every theme on its own button color. */
+body:not([data-theme=warm]) .primary:hover,body:not([data-theme=warm]) .send:hover,body:not([data-theme=warm]) .composer .send:hover{background:var(--button-bg);filter:brightness(1.07)}
+
+/* Swatch picker (Settings → Appearance) */
+.theme-swatches{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;max-width:380px}
+.theme-swatch{position:relative;width:30px;height:30px;padding:0;border:1px solid var(--border);border-radius:50%;background:var(--panel);display:grid;place-items:center;cursor:pointer}
+.theme-swatch::before{content:"";width:18px;height:18px;border-radius:50%;background:var(--swatch)}
+.theme-swatch[aria-checked=true]{border-color:var(--ink);box-shadow:0 0 0 2px var(--panel) inset}
+.theme-swatch:focus-visible{outline:none;box-shadow:var(--ring)}
+.theme-swatch.custom::before{background:var(--panel);border:1px dashed var(--secondary-ink)}.theme-swatch.custom[data-set=true]::before{background:var(--swatch)}
+.theme-swatch.custom[data-set=true]::before{border:none}
+.theme-swatch.custom input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.theme-swatch-warm{--swatch:#dbaa87}.theme-swatch-graphite{--swatch:#c1c2b8}.theme-swatch-ocean{--swatch:#8fb4d9}.theme-swatch-forest{--swatch:#9cc49a}
+.theme-swatch-plum{--swatch:#c3a6d9}.theme-swatch-rose{--swatch:#e0a3b0}.theme-swatch-teal{--swatch:#86c7c0}.theme-swatch-gold{--swatch:#d9bf7a}
+body[data-mode=light] .theme-swatch-warm{--swatch:#a4582d}body[data-mode=light] .theme-swatch-graphite{--swatch:#414f48}body[data-mode=light] .theme-swatch-ocean{--swatch:#2f5f8a}body[data-mode=light] .theme-swatch-forest{--swatch:#3d6a3c}
+body[data-mode=light] .theme-swatch-plum{--swatch:#6a4a85}body[data-mode=light] .theme-swatch-rose{--swatch:#984358}body[data-mode=light] .theme-swatch-teal{--swatch:#2a6c66}body[data-mode=light] .theme-swatch-gold{--swatch:#765e1d}
+.theme-name{display:block;margin-top:4px;font-size:12px;color:var(--secondary-ink);text-align:right}
+/* The dark active-item stripe was drawn in the warm accent; follow the theme instead (light mode already uses tokens). */
+body:not([data-mode=light]) .settings-nav>button.active{box-shadow:inset 2px 0 var(--accent)}

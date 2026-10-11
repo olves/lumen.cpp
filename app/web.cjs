@@ -170,6 +170,32 @@ const providers={
    return (data.results||[]).slice(0,count).map(r=>({title:r.title,url:r.url,snippet:r.content,published:r.publishedDate||null,dateKind:'published'}));
   }
  },
+ // DuckDuckGo's HTML results page: general web search without an account or key. It is not an official API, so it can
+ // change or ask for a human check under heavy use; Lumen then says so and never tries to get around the check.
+ duckduckgo:{
+  label:'DuckDuckGo',needsKey:false,scope:'web',
+  async search(query,{count,language,signal}){
+   const body=Buffer.from(new URLSearchParams({q:query,kl:language==='tr'?'tr-tr':'us-en'}).toString());
+   const response=await guardedFetch('https://html.duckduckgo.com/html/',{method:'POST',body,signal,timeoutMs:12000,maxBytes:1048576,headers:{accept:'text/html','content-type':'application/x-www-form-urlencoded','content-length':String(body.length)}});
+   if(response.status===429||response.status===503)throw busy('DuckDuckGo',response);
+   const html=response.body.toString('utf8');
+   if(response.status===202||/anomaly-modal|bots use DuckDuckGo|challenge-form/i.test(html))throw webError('rate-limit','DuckDuckGo is asking for a human check right now. Try again in a few minutes, or use Tavily or Brave in Settings → Search.');
+   if(response.status!==200)throw webError('provider','DuckDuckGo search is unavailable ('+response.status+').');
+   const results=[];
+   for(const block of html.split(/<div class="result results_links/).slice(1)){
+    if(/result--ad\b/.test(block.slice(0,200)))continue;
+    const link=/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/.exec(block);if(!link)continue;
+    let url=decodeEntities(link[1]);
+    // Older pages wrap links in a redirect (//duckduckgo.com/l/?uddg=<target>); use the target itself.
+    if(/^(https?:)?\/\/duckduckgo\.com\/l\//.test(url)){try{url=new URL(url,'https://duckduckgo.com').searchParams.get('uddg')||'';}catch{url='';}}
+    if(!/^https?:\/\//.test(url))continue;
+    const snippet=/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/.exec(block)?.[1]||'';
+    results.push({title:link[2],url,snippet,published:null});
+    if(results.length>=count)break;
+   }
+   return results;
+  }
+ },
  // Tavily search API (https://docs.tavily.com): POST /search with a Bearer key; basic depth costs one credit per search.
  tavily:{
   label:'Tavily',needsKey:true,scope:'web',

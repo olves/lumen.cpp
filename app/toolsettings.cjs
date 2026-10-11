@@ -2,9 +2,9 @@
 // Agent / Search / Browser preferences in <data>/tools-settings.json. API keys are encrypted with Electron safeStorage
 // (DPAPI on Windows) and never leave the main process; the renderer only learns whether a key is stored.
 const fs=require('node:fs'),path=require('node:path');
-const defaults={agent:{enabled:true,auto:true,maxSubtasks:3,maxToolCalls:4,taskSeconds:120},search:{enabled:false,provider:'wikipedia',results:5,language:'auto',endpoint:''},browser:{render:true,panel:true,searchEngine:'duckduckgo',homePage:'',javascript:true,zoom:100,privacySignals:true,popups:'panel',panelWidth:'medium',clearOnExit:false}};
+const defaults={agent:{enabled:true,auto:true,maxSubtasks:3,maxToolCalls:4,taskSeconds:120},search:{enabled:false,provider:'duckduckgo',providerChosen:false,results:5,language:'auto',endpoint:''},browser:{render:true,panel:true,searchEngine:'duckduckgo',homePage:'',javascript:true,zoom:100,privacySignals:true,popups:'panel',panelWidth:'medium',clearOnExit:false}};
 const engines=['duckduckgo','google','bing','brave','startpage'],zooms=[80,90,100,110,125,150];
-const providers=['wikipedia','brave','tavily','searxng'];
+const providers=['duckduckgo','wikipedia','brave','tavily','searxng'];
 
 function createToolSettings(data,safeStorage){
  const file=path.join(data,'tools-settings.json');let cache=null;
@@ -17,7 +17,9 @@ function createToolSettings(data,safeStorage){
   let endpoint='';if(typeof s.endpoint==='string'&&s.endpoint.trim()){try{const u=new URL(s.endpoint.trim());if(['http:','https:'].includes(u.protocol)&&!u.username&&!u.password)endpoint=u.href.slice(0,500);}catch{}}
   return {
    agent:{enabled:a.enabled!==false,auto:a.auto!==false,maxSubtasks:int(a.maxSubtasks,1,4,3),maxToolCalls:int(a.maxToolCalls,1,8,4),taskSeconds:int(a.taskSeconds,30,300,120)},
-   search:{enabled:s.enabled===true,provider:providers.includes(s.provider)?s.provider:'wikipedia',results:int(s.results,1,8,5),language:['auto','en','tr'].includes(s.language)?s.language:'auto',endpoint},
+   // Before DuckDuckGo existed, Wikipedia was the only keyless choice and the default. Settings whose provider was never
+   // picked by hand move to general web search; a provider chosen in Settings is kept.
+   search:{enabled:s.enabled===true,provider:providers.includes(s.provider)&&!(s.provider==='wikipedia'&&s.providerChosen!==true)?s.provider:'duckduckgo',providerChosen:s.providerChosen===true,results:int(s.results,1,8,5),language:['auto','en','tr'].includes(s.language)?s.language:'auto',endpoint},
    browser:{render:b.render!==false,panel:b.panel!==false,searchEngine:engines.includes(b.searchEngine)?b.searchEngine:'duckduckgo',homePage:home(b.homePage),javascript:b.javascript!==false,zoom:zooms.includes(Number(b.zoom))?Number(b.zoom):100,privacySignals:b.privacySignals!==false,popups:b.popups==='block'?'block':'panel',panelWidth:['narrow','medium','wide'].includes(b.panelWidth)?b.panelWidth:'medium',clearOnExit:b.clearOnExit===true}
   };
  }
@@ -27,7 +29,7 @@ function createToolSettings(data,safeStorage){
   get(){const c=read();return {agent:{...c.agent},search:{...c.search,key:decrypt(c.search.provider)},browser:{...c.browser}};},
   // Renderer view: no secrets.
   public(){const c=read();return {agent:{...c.agent},search:{...c.search,keys:Object.fromEntries(providers.map(p=>[p,!!c.keys[p]]))},browser:{...c.browser},encryption:safeStorage.isEncryptionAvailable()};},
-  update(patch){const c=read();const next=sanitize({agent:{...c.agent,...(patch?.agent||{})},search:{...c.search,...(patch?.search||{})},browser:{...c.browser,...(patch?.browser||{})}});cache={...next,keys:c.keys};write();return this.public();},
+  update(patch){const c=read();const chosen=typeof patch?.search?.provider==='string'?{providerChosen:true}:{};const next=sanitize({agent:{...c.agent,...(patch?.agent||{})},search:{...c.search,...(patch?.search||{}),...chosen},browser:{...c.browser,...(patch?.browser||{})}});cache={...next,keys:c.keys};write();return this.public();},
   setKey(provider,key){if(!providers.includes(provider))throw Error('Unknown provider.');if(typeof key!=='string'||!key.trim()||key.length>512||/\s/.test(key.trim()))throw Error('Enter a valid API key.');if(!safeStorage.isEncryptionAvailable())throw Error('Secure storage is not available on this system, so the key was not saved.');const c=read();c.keys[provider]=safeStorage.encryptString(key.trim()).toString('base64');write();return this.public();},
   clearKey(provider){const c=read();delete c.keys[provider];write();return this.public();}
  };

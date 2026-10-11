@@ -14,10 +14,10 @@ A local AI chat workspace for Windows. Lumen runs open models (GGUF) on your own
 - **Performance**: automatic GPU/RAM placement (large MoE models work on 8 GB GPUs), compact 8-bit context cache, speculative decoding (n-gram and MTP draft models), contexts up to 32K, and an Auto context size per model.
 - **Thinking models** (Qwen3, Gemma 4…): optional reasoning shown in a collapsible block. Lumen detects which models support it.
 - **Photos**: OCR on Windows, and real image input for vision models with a projector (mmproj).
-- **Web research (optional, off by default)**: a planner and sequential subagents search and read pages, then answer with citations. Providers: Wikipedia (no key), Tavily, Brave Search, or your own SearXNG.
+- **Web research (optional, off by default)**: a planner and sequential subagents search and read pages, then answer with citations. Providers: DuckDuckGo (whole web, no key), Tavily, Brave Search, Wikipedia, or your own SearXNG.
 - **Project folder (read-only)**: let a model list, find, search and read files in a folder, with file citations. It cannot write, delete or run anything.
 - **Skills**: reusable instructions and reference notes you select per conversation.
-- **Desk / Studio layouts, light and dark, English and Turkish.**
+- **Desk / Studio layouts, light and dark, eight accent colors or your own, English and Turkish.**
 
 ## Download and run
 
