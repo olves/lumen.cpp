@@ -15,7 +15,7 @@ A local AI chat workspace for Windows. Lumen runs open models (GGUF) on your own
 - **Thinking models** (Qwen3, Gemma 4…): optional reasoning shown in a collapsible block. Lumen detects which models support it.
 - **Photos**: OCR on Windows, and real image input for vision models with a projector (mmproj).
 - **Web research (optional, off by default)**: a planner and sequential subagents search and read pages, then answer with citations. Providers: DuckDuckGo (whole web, no key), Tavily, Brave Search, Wikipedia, or your own SearXNG.
-- **Browser commands in chat**: "open github.com", "youtube'da lofi ara", "giriş yap'a bas" / "click sign in", "aşağı kaydır", or chained ("discord'u aç ve giriş yap'a bas"). Carried out directly in the built-in browser panel. Lumen never types into pages, and asks before buttons that pay, send or delete.
+- **Browser commands in chat**: "open github.com", "search lofi on youtube", "click sign in", "scroll down", or chained ("open discord and press sign in"). Carried out directly in the built-in browser panel. Lumen never types into pages, and asks before buttons that pay, send or delete.
 - **Project folder (read-only)**: let a model list, find, search and read files in a folder, with file citations. It cannot write, delete or run anything.
 - **Skills**: reusable instructions and reference notes you select per conversation.
 - **Desk / Studio layouts, light and dark, eight accent colors or your own, English and Turkish.**
