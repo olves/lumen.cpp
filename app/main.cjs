@@ -16,7 +16,9 @@ const contextSizes=[2048,4096,8192,16384,32768];
 const accentThemes=['warm','graphite','ocean','forest','plum','rose','teal','gold','custom'],hexColor=/^#[0-9a-f]{6}$/i;
 const modelInfo=require('./modelinfo.cjs').createModelInfo(data,{log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}}});
 let knownModels=[],loaded=null;const autoChoices=new Map();
-function emitWindow(channel,payload){if(win&&!win.isDestroyed())win.webContents.send(channel,payload);}
+// When a message is about the browser or a website, tell the model what Lumen's own browser commands can do, so it points
+// the user to them instead of saying nothing can be done. Not added to other messages (it would cost context for nothing).
+function browserHint(chat){const last=[...(chat?.Messages||[])].reverse().find(m=>m.Role==='user')?.Content||'';if(!/tarayıcı|browser|web ?site|sitesi|sayfa|tıkla|\bbas\b|click|open .*\.(com|org|net|io)|\.com\b/i.test(last))return '';return 'About Lumen (the app you run in): the user can control Lumen\'s built-in browser panel with short chat messages that Lumen carries out itself, for example "discord\'u aç" / "open github.com", "youtube\'da lofi ara", "giriş yap\'a bas" / "click sign in", "aşağı kaydır", "geri git", "tarayıcıyı kapat", or several joined with "ve" / "and". You cannot operate the browser yourself. If the user wants something done in the browser, give them the exact short command to send. Lumen never types passwords or fills in forms; the user types those in the panel.';}function emitWindow(channel,payload){if(win&&!win.isDestroyed())win.webContents.send(channel,payload);}
 // Reads GGUF metadata in the background; the renderer gets decorated models again when new files were read.
 function refreshModelMeta(models){knownModels=models;const unread=models.filter(m=>m.Installed&&!modelInfo.meta(m)).length;if(!unread)return;modelInfo.read(models).then(()=>{autoChoices.clear();emitWindow('models-meta',modelInfo.decorate(knownModels));}).catch(()=>{});}
 // What the model Lumen has loaded is estimated to use on the GPU (weights, KV cache, buffers); added back to free VRAM so a
@@ -59,7 +61,7 @@ function coreRequest(action,args={},onEvent=null){if(action==='rename')return re
 async function request(action,args={}){
  if(['save','send'].includes(action)&&args.chat)photoStore.remember(args.chat);
  if(action==='send'){
-  if(skillFlight)throw Error('A response is already running.');const prepared=hostReady?{chat:args.chat,applied:false}:skillStore.prepare(args.chat);const skillGuidance=hostReady?skillStore.guidance(skillStore.idsFor(args.chat.Id)).text:'';skillFlight={id:args.chat.Id,snapshot:args.chat};
+  if(skillFlight)throw Error('A response is already running.');const prepared=hostReady?{chat:args.chat,applied:false}:skillStore.prepare(args.chat);const skillGuidance=hostReady?[skillStore.guidance(skillStore.idsFor(args.chat.Id)).text,browserHint(args.chat)].filter(Boolean).join('\n\n'):'';skillFlight={id:args.chat.Id,snapshot:args.chat};
   let reasoning='',firstThought=0,firstText=0,lastSaved=null,sentImages=[];
   try{
    if(!hostReady)return await coreRequest('send',{...args,contextSize:Math.min(args.contextSize,16384),chat:prepared.chat});
@@ -234,6 +236,10 @@ app.whenReady().then(async()=>{
   if(action==='zoom')return browser?browser.zoom(args.step):{open:false};
   if(action==='bounds')return browser||args.rect?getBrowser().bounds(args.rect||null):true;
   if(action==='external')return getBrowser().external(args.url);
+  // Chat commands: click a named link/button (never typing), scroll, and wait for a page to finish loading.
+  if(action==='click'){const labels=Array.isArray(args.labels)?args.labels.filter(l=>typeof l==='string'&&l.trim()&&l.length<=80).slice(0,4):[];if(!labels.length)throw Error('Invalid request.');return browser?browser.click(labels,{force:args.force===true}):{status:'closed'};}
+  if(action==='scroll')return browser?browser.scroll(String(args.direction||'')):{status:'closed'};
+  if(action==='settle')return browser?browser.settle(Math.min(20000,Math.max(0,Number(args.ms)||15000))):{open:false};
   throw Error('Invalid browser action.');
  });
  // Regenerate: begin keeps the current reply as a version and clears its reasoning/activity; commit adds the new reply;

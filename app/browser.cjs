@@ -113,6 +113,42 @@ function createBrowser({getWindow,emit,getSettings=()=>({})}){
   if(/\s/.test(text)||!/^[^\s/]+\.[^\s/]{2,}/.test(text)&&!/^localhost(?::|\/|$)/i.test(text)){const engine=searchEngines[getSettings().searchEngine]||searchEngines.duckduckgo;return engine[0]+encodeURIComponent(text);}
   return checkUrl('https://'+text).href;
  }
+ // ---------- Clicking a link or button the user names in chat ----------
+ // The page is searched in an isolated world (page scripts cannot see or change the search) for a visible link/button whose
+ // text matches; it is clicked with a real mouse event at its center. Lumen never types into pages. Buttons that look like
+ // paying, sending, deleting, posting or confirming report "confirm" first, so the user decides.
+ const PAGE_WORLD=1101;
+ const RISKY=String.raw`(^|\s)(satın al|hemen al|öde|ödeme yap|ödemeyi tamamla|siparişi (ver|tamamla|onayla)|sipariş ver|gönder|sil|kaldır|onayla|paylaş|yayınla|abone ol|aboneliği iptal|hesabı (sil|kapat)|transfer|buy|buy now|purchase|pay|pay now|checkout|place order|order now|send|delete|remove|confirm|submit|publish|post|share|subscribe|unsubscribe|transfer)($|\s)`;
+ const finder=labels=>`(()=>{const n=s=>String(s||'').replace(/\\s+/g,' ').trim().toLocaleLowerCase('tr-TR').replace(/ı/g,'i').replace(/[.:…!?]+$/,'');const want=${JSON.stringify(labels)}.map(n).filter(Boolean);
+  const list=[];for(const el of document.querySelectorAll('a[href],button,[role=button],[role=link],[role=tab],[role=menuitem],input[type=submit],input[type=button],summary')){const r=el.getBoundingClientRect();if(r.width<2||r.height<2)continue;const cs=getComputedStyle(el);if(cs.visibility==='hidden'||cs.display==='none'||el.disabled||el.getAttribute('aria-disabled')==='true')continue;const text=n(el.innerText||el.value||el.getAttribute('aria-label')||el.title);if(!text||text.length>120)continue;list.push({el,text});}
+  let best=null;for(const c of list)for(const w of want){let s=0;if(c.text===w)s=3;else if(c.text.startsWith(w+' ')||c.text.endsWith(' '+w))s=2;else if(w.length>=3&&c.text.includes(w))s=1;if(s&&(!best||s>best.s||(s===best.s&&c.text.length<best.c.text.length)))best={c,s};}
+  if(!best)return {status:'missing',seen:[...new Set(list.map(c=>c.text).filter(t=>t.length<=40))].slice(0,12)};
+  const el=best.c.el,form=el.closest('form');const risky=new RegExp(${JSON.stringify(RISKY)}).test(best.c.text)||!!(form&&form.querySelector('[autocomplete^="cc-"]'));
+  el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});const r=el.getBoundingClientRect();const token=Math.random().toString(36).slice(2);el.setAttribute('data-lumen-target',token);window.__lumenHit=null;el.addEventListener('click',()=>{window.__lumenHit=token;},{capture:true,once:true});
+  return {status:'found',token,text:String(el.innerText||el.value||el.getAttribute('aria-label')||el.title||'').replace(/\\s+/g,' ').trim().slice(0,80),risky,x:r.left+r.width/2,y:r.top+r.height/2};})()`;
+ function idle(wc,ms){if(!wc.isLoading())return Promise.resolve();return new Promise(resolve=>{const done=()=>{clearTimeout(timer);wc.removeListener('did-stop-loading',done);resolve();};const timer=setTimeout(done,ms);wc.on('did-stop-loading',done);});}
+ async function click(labels,{force=false}={}){
+  const wc=view?.webContents;if(!wc||wc.isDestroyed())return {status:'closed'};
+  if(getSettings().javascript===false)return {status:'no-script'};
+  await idle(wc,15000);
+  let found;try{found=await wc.executeJavaScriptInIsolatedWorld(PAGE_WORLD,[{code:finder(labels)}]);}catch{return {status:'unavailable'};}
+  if(!found||found.status!=='found')return found||{status:'unavailable'};
+  if(found.risky&&!force)return {status:'confirm',text:found.text,url:wc.getURL()};
+  const zoomFactor=wc.getZoomFactor(),x=Math.round(found.x*zoomFactor),y=Math.round(found.y*zoomFactor);
+  wc.sendInputEvent({type:'mouseMove',x,y});wc.sendInputEvent({type:'mouseDown',x,y,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',x,y,button:'left',clickCount:1});
+  await new Promise(r=>setTimeout(r,250));
+  // If the mouse click did not reach the element (an overlay, or the panel is not on screen), click the element itself.
+  let how='mouse';try{how=await wc.executeJavaScriptInIsolatedWorld(PAGE_WORLD,[{code:`(()=>{const el=document.querySelector('[data-lumen-target="${found.token}"]');const hit=window.__lumenHit===${JSON.stringify(found.token)};if(!hit&&el)el.click();el&&el.removeAttribute('data-lumen-target');return hit?'mouse':'element';})()`}]);}catch{}
+  await new Promise(r=>setTimeout(r,500));
+  return {status:'clicked',how,text:found.text,url:wc.getURL()};
+ }
+ async function scroll(direction){
+  const wc=view?.webContents;if(!wc||wc.isDestroyed())return {status:'closed'};
+  const code={down:'window.scrollBy({top:innerHeight*0.8,behavior:"instant"})',up:'window.scrollBy({top:-innerHeight*0.8,behavior:"instant"})',top:'window.scrollTo({top:0,behavior:"instant"})',bottom:'window.scrollTo({top:document.scrollingElement.scrollHeight,behavior:"instant"})'}[direction];
+  if(!code)return {status:'invalid'};
+  try{await wc.executeJavaScriptInIsolatedWorld(PAGE_WORLD,[{code:code+';0'}]);}catch{return {status:'unavailable'};}
+  return {status:'scrolled'};
+ }
  const zoomSteps=[50,67,75,80,90,100,110,125,150,175,200];
  function zoom(step){const wc=view?.webContents;if(!wc||wc.isDestroyed())return state();const current=Math.round(wc.getZoomFactor()*100);let next=getSettings().zoom||100;
   if(step>0)next=zoomSteps.find(z=>z>current)||200;else if(step<0)next=[...zoomSteps].reverse().find(z=>z<current)||50;
@@ -131,6 +167,9 @@ function createBrowser({getWindow,emit,getSettings=()=>({})}){
   forward(){if(view?.webContents.navigationHistory.canGoForward())view.webContents.navigationHistory.goForward();return state();},
   reload(){if(view){lastError=null;view.webContents.reload();}return state();},
   stop(){view?.webContents.stop();return state();},
+  click,scroll,
+  // Waits (bounded) until the panel page has finished loading, for chained commands such as "open X and click Y".
+  async settle(ms=15000){const wc=view?.webContents;if(wc&&!wc.isDestroyed())await idle(wc,ms);return state();},
   close,
   bounds(rect){if(rect&&[rect.x,rect.y,rect.width,rect.height].every(Number.isFinite)&&rect.width>=80&&rect.height>=80)bounds={x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.width),height:Math.round(rect.height)};else bounds=null;place();return true;},
   async external(url){const target=normalize(url);await shell.openExternal(target);return true;},

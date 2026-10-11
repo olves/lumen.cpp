@@ -145,7 +145,16 @@ Results are capped (3/5/8). Identical queries are cached for 10 minutes and conc
 - "youtube'da lofi müzik ara", "search llama.cpp on github";
 - "geri git" / "go back", "sayfayı yenile" / "reload", "tarayıcıyı kapat" / "close the browser".
 
-Lumen acts only on a web address, a well-known site, or a message that names the browser or a website. "dosyayı aç", "main.py aç" and ordinary questions still go to the model. A short note such as "discord.com opened in the browser" is saved in the chat. Lumen does not sign in, fill in forms or click on pages for you.
+- "giriş yap'a bas" / "click sign in", "kayıt ol butonuna tıkla": clicks the visible link or button with that text. Common labels work in both languages ("giriş yap" also finds "Log In").
+- "aşağı kaydır", "en üste çık", "scroll to the bottom".
+- Several steps joined with "ve", "sonra", "and", "then" or a comma: "browserdan discord.com'u aç ve giriş yap'a bas". Each step waits for the page to load.
+
+Lumen acts only on a web address, a well-known site, or a message that names the browser or a website. "dosyayı aç", "main.py aç" and ordinary questions still go to the model. If a button is not found, Lumen lists the visible ones. A short note such as "discord.com opened in the browser. Clicked “Giriş Yap”." is saved in the chat.
+
+**Limits, on purpose:**
+- Lumen never types into pages, fills in forms or enters passwords. Click into the panel and type yourself.
+- Buttons that look like paying, ordering, sending, deleting, posting or confirming ("Satın al", "Öde", "Gönder", "Sil", "Submit order"…) are not clicked until you reply "evet" / "yes".
+- When a message about the browser is not a command, the model is told which commands exist, so it can tell you the exact one to send.
 
 You can also use the panel on its own. The globe button in the header opens and closes it. Panel features:
 - **Address bar**: words without a domain are searched with the address bar search engine (DuckDuckGo by default; Google, Bing, Brave or Startpage).

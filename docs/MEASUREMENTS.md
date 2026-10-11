@@ -30,6 +30,9 @@ Raw development measurements and screenshots are in `work`; no test conversation
 | Command parser: 30 sentences (Turkish case endings, domains, known sites, site searches, back/reload/close, English); ordinary requests such as "dosyayı aç", "main.py aç" and questions are not treated as commands | Unit | 30/30 (`test-browse-intent.mjs`) |
 | Real app and network: "browserdan discord.com sitesini aç" opened discord.com in the panel with no model call and saved two messages; YouTube search; back; close; English "open github.com"; 0 console errors | Real UI | Pass (`test-browse-ui.cjs`) |
 | Turkish text in Settings → General → Updates was garbled in build 1 (updates.js had been saved with the wrong encoding). Repaired for build 2; the release script now refuses double-encoded files and the themes UI test checks this text | Fix + guard | Pass |
+| Clicks and chained commands on real sites: "browserdan discord.com'u aç ve giriş yapa bas" → discord.com/login; "open github.com and click sign in" → github.com/login; scrolling; a missing button lists the visible ones; a typing request is refused with an explanation; httpbin.org's "Submit order" waited for "evet" and was clicked only after it | Real UI + network | Pass (`test-browse-click-ui.cjs`) |
+| Parser: 51 sentences incl. clicks, scrolling, typing requests, confirmation and chained commands | Unit | 51/51 |
+| A browser request that is not a command reaches the model with the command hint (prompt 192 vs 43 tokens for an unrelated question); Gemma 4 E2B answered with the exact command "discord'u aç ve giriş yap'a bas" | Real inference | Pass (`test-browse-hint-ui.cjs`) |
 | Research with a model and DuckDuckGo after the game closed: Coder-7B, 36 s, correct facts with citations; a made-up URL was refused | Real inference + network | Pass |
 
 ## Web search without a key, accent themes (2026-10-11)
