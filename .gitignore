@@ -8,6 +8,10 @@ dist/
 *.dll
 *.pdb
 
+# Release signing keys must never be committed
+*.pem
+*.key
+
 # Test hook and local diagnostics
 app/ui-check.cjs
 debug.log

@@ -21,17 +21,31 @@ A local AI chat workspace for Windows. Lumen runs open models (GGUF) on your own
 
 ## Download and run
 
-1. Download `lumen-beta-portable.zip` from the [Releases](../../releases) page.
-2. Extract it anywhere and run `lumen.cpp.exe`.
+From the [Releases](../../releases) page, pick one:
+
+- **`lumen-beta-setup.exe`** installs Lumen for your user, with no administrator rights. It adds a Start menu entry and an uninstaller.
+- **`lumen-beta-portable.zip`** can be extracted anywhere. Run `lumen.cpp.exe`.
 
 Requirements: Windows 10/11 x64, .NET Framework 4.8 (built into current Windows). A GPU is optional.
 
-Your data lives in `%LOCALAPPDATA%\lumen.cpp` (chats, models, settings). Deleting the app folder does not delete it.
+Your data lives in `%LOCALAPPDATA%\lumen.cpp` (chats, models, settings). Updating never touches it. Uninstalling asks before deleting it.
+
+### Updates
+
+Lumen checks this repository's releases at most once a day; the check can be turned off in Settings → General. When a newer Beta build exists, Lumen offers it and downloads only when you click.
+
+Each release includes `lumen-update.json`, signed with an Ed25519 release key, plus its `.sig`. Lumen installs an update only if:
+- the signature matches the public key built into the app;
+- the downloaded file's size and SHA-256 match the manifest.
+
+A small updater (`app/backend/LumenUpdater.cs`) then:
+- runs the new setup silently for installed copies;
+- swaps the folder for portable copies, restoring the old one if anything fails.
 
 ## Privacy and safety
 
 - The model server listens on loopback only and uses a random key per launch.
-- Nothing leaves your computer unless you turn on web research. Then only search queries go to the provider you chose, and pages are fetched from their own sites. API keys are encrypted with Windows DPAPI.
+- Your chats never leave your computer. The only automatic network request is the once-a-day update check (it reads the public release list and can be turned off); downloads happen when you ask. With web research on, search queries go to the provider you chose, and pages are fetched from their own sites. API keys are encrypted with Windows DPAPI.
 - Model output is never executed as HTML. Web pages are read as untrusted data, with private and local network addresses blocked.
 - Project folders are read-only. Keys, `.env` files and similar stay unreadable unless you allow a specific file.
 
@@ -55,6 +69,14 @@ The UI is plain HTML, CSS and JavaScript with no build step. Renderer scripts sh
 ```
 
 The script downloads Electron 44.5.1 and checks it against a pinned SHA-256. It then copies `app/` into place and compiles `lumen-host.exe` and `lumen-image-ocr.exe` with the .NET Framework compiler included in Windows.
+
+Making a release (maintainers): raise the build number in `app/package.json` (`0.1.0-beta.N`), build the portable folder, then run:
+
+```powershell
+.\scripts\release.ps1 -AppDir <portable folder> -OutDir <folder> -NotesEn "..." -NotesTr "..."
+```
+
+It produces the portable ZIP, the Inno Setup installer (`scripts/lumen.iss`), and the signed `lumen-update.json` with its `.sig`. Upload all four files to a new pre-release. The signing key stays outside the repository (`%USERPROFILE%\.lumen-release`).
 
 The native backend `lumen-core-beta.exe` comes from an earlier stage of the project, and its source is not available. Take it from the release ZIP (`resources/app/backend/`). `LumenHost.cs` uses it as a library and adds the newer engine features.
 

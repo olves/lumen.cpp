@@ -93,3 +93,14 @@ body.no-motion .message.search-hit{animation:none;outline:1px solid var(--select
 .skill-budget{display:block;width:100%;font-size:11px;margin-top:2px}
 .skill-budget.warning{color:var(--accent-ink,#cf6a55)}
 .skill-reference-view{max-height:60vh;overflow:auto}
+/* Updates (updates.js) */
+.update-box{margin:4px 0 6px;padding:12px 14px;border:1px solid var(--border);border-radius:10px}
+.update-box p{margin:0;color:var(--secondary-ink);font-size:13px;line-height:1.5}
+.update-box[data-state=available],.update-box[data-state=ready]{border-color:var(--selection-line)}
+.update-box[data-state=available] #update-status,.update-box[data-state=ready] #update-status{color:var(--ink)}
+.update-notes{margin-top:6px!important;white-space:pre-wrap;max-height:160px;overflow:auto}
+.update-progress{height:3px;margin-top:10px;border-radius:2px;background:var(--border);overflow:hidden}
+.update-progress span{display:block;height:100%;background:var(--button-bg);transform-origin:left;transform:scaleX(0);transition:transform .2s}
+.update-actions{display:flex;gap:8px;margin-top:10px}.update-actions:not(:has(button:not([hidden]))){display:none}
+.update-pill{color:var(--accent-ink);border-color:var(--selection-line)}
+@media (prefers-reduced-motion:reduce){.update-progress span{transition:none}}

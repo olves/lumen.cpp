@@ -4,6 +4,25 @@ Open **lumen.cpp.exe**. On the first launch after this update, choose Desk or St
 
 The workspace uses a compact conversation rail, a quiet charcoal surface, warm orange accents, an anchored composer, and short opening/page transitions. English is the default; Turkish and reduced motion are available in Settings. There are no permanent decorative animation loops or remote fonts/scripts. Conversations have no dividing rules: your messages sit in a soft block, and Copy/Branch appear when you hover or focus a message. Settings with only a few choices (language, design, display mode, accent, text size, context window, search results and language) use segmented buttons that work with the arrow keys.
 
+## Installing and updating
+
+Lumen comes in two forms on the GitHub Releases page (github.com/olves/lumen.cpp/releases):
+- **lumen-beta-setup.exe** installs Lumen for your Windows user, with no administrator rights, into `%LOCALAPPDATA%\Programs\lumen.cpp`. It adds a Start menu entry, an optional desktop shortcut and an uninstaller. Setup is available in English and Turkish.
+- **lumen-beta-portable.zip** runs from any folder you extract it to.
+
+Both are unsigned Beta builds, so Windows SmartScreen may warn the first time. Your chats, models and settings are kept in `%LOCALAPPDATA%\lumen.cpp` in both cases, and updating never touches them. Uninstalling asks whether to delete them as well; the default is No.
+
+**Updates** (Settings → General → Updates):
+- **Version.** The section shows your Beta build number.
+- **Checking.** With *Check automatically* on (the default), Lumen asks GitHub at most once a day whether a newer Beta build exists. The request only reads the public release list; nothing about you or your chats is sent. You can also press *Check for updates*.
+- **When a newer build exists.** An "Update" button appears in the header and the release notes are shown in Settings. Nothing is downloaded until you click *Download update*. The download can be cancelled and resumes where it stopped.
+- **Verification.** Every release carries a manifest signed with the Lumen release key. Lumen installs a file only if the signature is valid and the file's size and SHA-256 match. A modified or corrupted download is deleted.
+- **Installing.** *Restart and update* closes Lumen and a small updater installs the new build:
+  - installed copies run the new setup silently;
+  - portable copies swap the folder, and the old version is restored if anything fails.
+  Then Lumen starts again.
+- **Portable copies** can only update themselves if Lumen can write to their folder. Otherwise, download the new ZIP yourself.
+
 ## Chat and models
 
 Pick a model under the composer. If needed, Lumen downloads and verifies it before the first response. Chats are stored locally, responses stream, and the stop button cancels generation. Copy text/code, export Markdown, edit a message into a new branch, or branch after an answer. Settings → Explore contains the curated GGUF library and public Hugging Face repository discovery; Settings → Library shows downloaded models. Model compatibility and licensing still depend on the individual model.

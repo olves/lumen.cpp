@@ -53,5 +53,7 @@ try {
   $wm = Join-Path $env:WINDIR 'System32\WinMetadata'
   & $csc /nologo /target:exe /out:lumen-image-ocr.exe "/r:$wm\Windows.Foundation.winmd" "/r:$wm\Windows.Storage.winmd" "/r:$wm\Windows.Graphics.winmd" "/r:$wm\Windows.Media.winmd" "/r:$wm\Windows.Globalization.winmd" "/r:$fw\System.Runtime.WindowsRuntime.dll" "/r:$fw\System.Web.Extensions.dll" /r:System.Runtime.dll /r:System.Threading.Tasks.dll ImageOcr.cs
   if ($LASTEXITCODE) { throw 'lumen-image-ocr.exe did not compile.' }
+  & $csc /nologo /target:winexe /out:lumen-updater.exe /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:System.Windows.Forms.dll LumenUpdater.cs
+  if ($LASTEXITCODE) { throw 'lumen-updater.exe did not compile.' }
 } finally { Pop-Location }
 Write-Host "Done: $Out\lumen.cpp.exe"
