@@ -23,6 +23,10 @@ Implementation checks: no external fonts/frameworks, no idle animation loop, sho
 
 Raw development measurements and screenshots are in `work`; no test conversations or screenshots are bundled in the portable application. The app's Electron baseline is heavier than the previous WPF build.
 
+## Version names (2026-10-11)
+
+Versions are now named `vX.Y.Z-beta` (Beta 2 = v1.0.2-beta). Real Beta 1, downloaded from the GitHub release (internally 0.1.0-beta.1, which compares only build numbers), found v1.0.2-beta through the local release server, downloaded it, swapped its folder and started again: pass (`run-update-compat.ps1`). v1.0.2-beta → v1.0.3-beta passes for the portable folder and the installed copy (`run-update-e2e.ps1`). Version order checks: 1.0.10 > 1.0.9, and a final release > its beta.
+
 ## Browser commands in chat (2026-10-11)
 
 | Check | Kind | Result |

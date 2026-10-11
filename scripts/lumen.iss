@@ -1,5 +1,5 @@
 ; Inno Setup script for lumen.cpp Beta (compiled by scripts\release.ps1).
-;   iscc /DSourceDir=<portable folder> /DAppVersion=0.1.0-beta.N /DBuild=N /DOutputDir=<folder> lumen.iss
+;   iscc /DSourceDir=<portable folder> /DAppVersion=1.0.2-beta /DNumericVersion=1.0.2.0 /DBuild=N /DOutputDir=<folder> lumen.iss
 ; Per-user install (no administrator rights) into %LOCALAPPDATA%\Programs\lumen.cpp, so Lumen can update itself.
 ; User data (%LOCALAPPDATA%\lumen.cpp: chats, models, settings) is never part of the install and is kept on uninstall
 ; unless the user explicitly chooses to remove it.
@@ -13,6 +13,9 @@
 #ifndef Build
   #define Build "0"
 #endif
+#ifndef NumericVersion
+  #define NumericVersion "0.0.0.0"
+#endif
 #ifndef OutputDir
   #define OutputDir "."
 #endif
@@ -21,12 +24,12 @@
 AppId={{D07F95B4-B9ED-4405-A43A-E3C97A4C7453}
 AppName=lumen.cpp
 AppVersion={#AppVersion}
-AppVerName=lumen.cpp Beta (build {#Build})
+AppVerName=lumen.cpp v{#AppVersion}
 AppPublisher=olves
 AppPublisherURL=https://github.com/olves/lumen.cpp
 AppSupportURL=https://github.com/olves/lumen.cpp/issues
 AppUpdatesURL=https://github.com/olves/lumen.cpp/releases
-VersionInfoVersion=0.1.0.{#Build}
+VersionInfoVersion={#NumericVersion}
 VersionInfoProductName=lumen.cpp Beta
 DefaultDirName={localappdata}\Programs\lumen.cpp
 DisableProgramGroupPage=yes
@@ -39,7 +42,7 @@ OutputDir={#OutputDir}
 OutputBaseFilename=lumen-beta-setup
 SetupIconFile={#SourceDir}\resources\app\lumen.ico
 UninstallDisplayIcon={app}\lumen.cpp.exe
-UninstallDisplayName=lumen.cpp Beta
+UninstallDisplayName=lumen.cpp
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern

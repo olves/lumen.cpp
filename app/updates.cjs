@@ -14,13 +14,20 @@ const PUBLIC_KEY = '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAG9kSVLeuTmPYrxSi
 const MANIFEST = 'lumen-update.json', DAY = 86400000, MAX_JSON = 2 * 1048576, MAX_FILE = 2 * 1073741824;
 
 function updateError(code, message) { return Object.assign(new Error(message), {code}); }
+// Versions are "1.0.2-beta" (since 1.0.2-beta; the first build was "0.1.0-beta.1"). Releases also carry a build number that
+// only ever grows: Beta 1 compares that number alone, so it must keep increasing for those installs to see updates.
 function buildOf(version) { const m = /-beta\.(\d+)$/.exec(String(version || '')); return m ? Number(m[1]) : 0; }
+function parseVersion(version) { const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)(?:\.(\d+))?)?$/i.exec(String(version || '').trim()); return m ? [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? 0 : 1, Number(m[5] || 0)] : null; }
+function compareVersions(a, b) { const x = parseVersion(a), y = parseVersion(b); if (!x || !y) return null; for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] > y[i] ? 1 : -1; return 0; }
 
-function createUpdater({dataDir, appDir, version, emit = () => {}, log = () => {}, test = false, apiBase, publicKey}) {
+function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => {}, log = () => {}, test = false, apiBase, publicKey}) {
   // Overrides exist only for the isolated UI tests; the product always uses GitHub and the embedded key.
   const api = test && apiBase ? apiBase.replace(/\/$/, '') : 'https://api.github.com';
   const key = crypto.createPublicKey(test && publicKey ? publicKey : PUBLIC_KEY);
-  const build = buildOf(version), dir = path.join(dataDir, 'updates'), statePath = path.join(dataDir, 'update-state.json');
+  const build = Number.isSafeInteger(ownBuild) && ownBuild > 0 ? ownBuild : buildOf(version), dir = path.join(dataDir, 'updates'), statePath = path.join(dataDir, 'update-state.json');
+  // A release is newer when its version is higher; the build number decides only if a version cannot be read.
+  const newer = r => { if (!r) return false; const c = compareVersions(r.version, version); return c === null ? r.build > build : c > 0; };
+  const later = (a, b) => { const c = compareVersions(a.version, b.version); return c === null ? a.build > b.build : c > 0; };
   const installed = fs.existsSync(path.join(appDir, 'unins000.exe'));
   let checking = null, download = null, lastError = null;
 
@@ -29,7 +36,7 @@ function createUpdater({dataDir, appDir, version, emit = () => {}, log = () => {
   function writable() { try { fs.accessSync(path.dirname(appDir), fs.constants.W_OK); fs.accessSync(appDir, fs.constants.W_OK); return true; } catch { return false; } }
 
   function status() {
-    const s = readState(), latest = s.latest && s.latest.build > build ? s.latest : null;
+    const s = readState(), latest = newer(s.latest) ? s.latest : null;
     const ready = download?.phase === 'ready' || (latest && s.downloaded?.build === latest.build && fs.existsSync(s.downloaded.file || ''));
     return {version, build, repo: REPO, mode: installed ? 'installed' : 'portable', writable: installed || writable(), auto: s.auto !== false,
       lastCheck: s.lastCheck || null, checking: !!checking, error: lastError,
@@ -91,7 +98,7 @@ function createUpdater({dataDir, appDir, version, emit = () => {}, log = () => {
           if (!manifest || !sig) continue;
           try {
             const info = readManifest(await getBuffer(manifest.browser_download_url, 65536), await getBuffer(sig.browser_download_url, 4096), assets);
-            if (!best || info.build > best.build) best = info;
+            if (!best || later(info, best)) best = info;
           } catch (error) { rejected = error; log('[update] release ' + (release.tag_name || '?') + ' rejected: ' + error.message); }
         }
         if (!best && rejected) throw rejected;
@@ -109,7 +116,7 @@ function createUpdater({dataDir, appDir, version, emit = () => {}, log = () => {
 
   async function startDownload() {
     const s = readState(), latest = s.latest;
-    if (!latest || latest.build <= build) throw updateError('none', 'There is no newer version to download.');
+    if (!newer(latest)) throw updateError('none', 'There is no newer version to download.');
     if (download && ['downloading', 'verifying'].includes(download.phase)) return status();
     const file = path.join(dir, latest.asset.name.replace(/(\.[a-z]+)$/i, `-build${latest.build}$1`)), partial = file + '.partial';
     if (s.downloaded?.build === latest.build && fs.existsSync(file) && fs.statSync(file).size === latest.asset.size) { download = {phase: 'ready'}; publish(); return status(); }
@@ -137,7 +144,7 @@ function createUpdater({dataDir, appDir, version, emit = () => {}, log = () => {
         download.phase = 'verifying'; publish();
         if (await sha256(partial) !== latest.asset.sha256) { await fsp.rm(partial, {force: true}); throw updateError('verify', 'The downloaded update failed verification and was removed. Try again.'); }
         await fsp.rm(file, {force: true}); await fsp.rename(partial, file);
-        writeState({downloaded: {build: latest.build, file, sha256: latest.asset.sha256, mode: installed ? 'setup' : 'zip'}});
+        writeState({downloaded: {build: latest.build, version: latest.version, file, sha256: latest.asset.sha256, mode: installed ? 'setup' : 'zip'}});
         download = {phase: 'ready'};
       } catch (error) {
         download = {...download, phase: error.code === 'aborted' ? 'cancelled' : 'failed', error: error.code === 'aborted' ? null : error.message, speed: 0};
@@ -167,7 +174,7 @@ function createUpdater({dataDir, appDir, version, emit = () => {}, log = () => {
 
   // Leftovers from earlier updates: old downloads, helper copies and folders the updater could not remove.
   async function cleanup() {
-    try { const s = readState(); if (s.downloaded && s.downloaded.build <= build) { await fsp.rm(s.downloaded.file, {force: true}); writeState({downloaded: null}); }
+    try { const s = readState(); if (s.downloaded && !newer({version: s.downloaded.version, build: s.downloaded.build})) { await fsp.rm(s.downloaded.file, {force: true}); writeState({downloaded: null}); }
       for (const name of await fsp.readdir(dir).catch(() => [])) if (/-build(\d+)\./.test(name) && Number(/-build(\d+)\./.exec(name)[1]) <= build) await fsp.rm(path.join(dir, name), {force: true}); } catch {}
     try { for (const name of await fsp.readdir(os.tmpdir())) if (/^lumen-updater-[a-f0-9]{12}\.exe$/.test(name)) await fsp.rm(path.join(os.tmpdir(), name), {force: true}).catch(() => {}); } catch {}
     try { const parent = path.dirname(appDir), base = path.basename(appDir).toLowerCase(); for (const name of await fsp.readdir(parent)) if (name.toLowerCase().startsWith(base + '.old-') || name.toLowerCase().startsWith(base + '.new-')) await fsp.rm(path.join(parent, name), {recursive: true, force: true}).catch(() => {}); } catch {}
@@ -185,4 +192,4 @@ function createUpdater({dataDir, appDir, version, emit = () => {}, log = () => {
   };
 }
 
-module.exports = {createUpdater, buildOf, REPO};
+module.exports = {createUpdater, buildOf, compareVersions, REPO};

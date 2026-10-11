@@ -3,8 +3,7 @@
 #
 #   .\scripts\release.ps1 -AppDir <portable Lumen-Beta folder> -OutDir <folder> -NotesEn "..." -NotesTr "..."
 #
-# The build number comes from resources/app/package.json ("0.1.0-beta.N"); raise it before every release, because Lumen
-# only offers builds newer than its own. lumen-update.json is signed with the offline release key
+# The version (vX.Y.Z-beta) and the "build" number come from resources/app/package.json; raise both before every release. lumen-update.json is signed with the offline release key
 # (%USERPROFILE%\.lumen-release\update-signing-key.pem by default). Keep that key private and backed up: without it, future
 # releases cannot be installed as updates. Never commit it.
 param(
@@ -20,9 +19,14 @@ $ErrorActionPreference = 'Stop'
 $AppDir = (Resolve-Path $AppDir).Path
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
-$version = (Get-Content (Join-Path $AppDir 'resources\app\package.json') -Raw | ConvertFrom-Json).version
-if ($version -notmatch '-beta\.(\d+)$') { throw "package.json version must end in -beta.N (found $version)." }
-$build = [int]$Matches[1]
+# Versions are vX.Y.Z-beta (package.json "1.0.2-beta"). "build" is a number that grows with every release: Beta 1 installs
+# (0.1.0-beta.1) compare only that number, so it must stay higher than every earlier release.
+$package = Get-Content (Join-Path $AppDir 'resources\app\package.json') -Raw | ConvertFrom-Json
+$version = $package.version
+if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)-beta$') { throw "package.json version must look like 1.0.2-beta (found $version)." }
+$numeric = "$($Matches[1]).$($Matches[2]).$($Matches[3]).0"
+$build = [int]$package.build
+if ($build -lt 1) { throw 'package.json needs a "build" number that is higher than the previous release.' }
 foreach ($f in 'lumen.cpp.exe', 'resources\app\main.cjs', 'resources\app\backend\lumen-updater.exe', 'resources\app\backend\lumen-host.exe') {
   if (-not (Test-Path (Join-Path $AppDir $f))) { throw "Missing $f in $AppDir" }
 }
@@ -44,7 +48,7 @@ $garbled = Get-ChildItem (Join-Path $AppDir 'resources\app') -Recurse -File -Inc
   Where-Object { [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) -match ([string][char]0xC3 + '[' + [char]0x80 + '-' + [char]0xBF + [char]0xBC + [char]0xA7 + [char]0xB6 + [char]0xB1 + ']|' + [char]0xC4 + [char]0xB1 + '|' + [char]0xC5 + [char]0x178 + '|' + [char]0xE2 + [char]0x20AC) }
 if ($garbled) { throw "Garbled (double-encoded) text in: $($garbled.Name -join ', ')" }
 
-Write-Host "Beta build $build ($version)"
+Write-Host "v$version (build $build)"
 $zip = Join-Path $OutDir 'lumen-beta-portable.zip'
 Remove-Item $zip -ErrorAction SilentlyContinue
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
@@ -58,7 +62,7 @@ try {
 Write-Host "ZIP: $zip"
 
 Remove-Item (Join-Path $OutDir 'lumen-beta-setup.exe') -ErrorAction SilentlyContinue
-& $Iscc /Qp "/DSourceDir=$AppDir" "/DAppVersion=$version" "/DBuild=$build" "/DOutputDir=$OutDir" (Join-Path $PSScriptRoot 'lumen.iss')
+& $Iscc /Qp "/DSourceDir=$AppDir" "/DAppVersion=$version" "/DBuild=$build" "/DNumericVersion=$numeric" "/DOutputDir=$OutDir" (Join-Path $PSScriptRoot 'lumen.iss')
 if ($LASTEXITCODE) { throw 'Inno Setup failed.' }
 $setup = Join-Path $OutDir 'lumen-beta-setup.exe'
 Write-Host "Setup: $setup"

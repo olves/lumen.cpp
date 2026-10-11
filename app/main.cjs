@@ -314,7 +314,7 @@ app.whenReady().then(async()=>{
   throw Error('Invalid vision action.');
  });
  // Version check and updates (updates.cjs). Test runs may point at a local release server and test key; the product cannot.
- const updater=require('./updates.cjs').createUpdater({dataDir:data,appDir:path.dirname(process.execPath),version:app.getVersion(),emit:s=>emitWindow('update-event',s),log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}},test,apiBase:process.env.LUMEN_UPDATE_API,publicKey:test&&process.env.LUMEN_UPDATE_KEY?fs.readFileSync(process.env.LUMEN_UPDATE_KEY,'utf8'):undefined});
+ const updater=require('./updates.cjs').createUpdater({dataDir:data,appDir:path.dirname(process.execPath),version:app.getVersion(),build:require('./package.json').build,emit:s=>emitWindow('update-event',s),log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}},test,apiBase:process.env.LUMEN_UPDATE_API,publicKey:test&&process.env.LUMEN_UPDATE_KEY?fs.readFileSync(process.env.LUMEN_UPDATE_KEY,'utf8'):undefined});
  ipcMain.handle('updates',async(e,action,args={})=>{
   sender(e);if(JSON.stringify(args).length>200)throw Error('Invalid request.');
   if(action==='status')return updater.status();

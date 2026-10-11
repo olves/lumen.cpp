@@ -5,24 +5,24 @@
 Object.assign(translations,{
  updatesLabel:['Updates','Güncellemeler'],
  versionTitle:['Version','Sürüm'],
- versionLine:['Beta build {build} · {version} · {mode}','Beta derleme {build} · {version} · {mode}'],
+ versionLine:['v{version} · {mode}','v{version} · {mode}'],
  modeInstalled:['installed','kurulu'],modePortable:['portable folder','taşınabilir klasör'],
  checkUpdates:['Check for updates','Güncellemeleri denetle'],checkingUpdates:['Checking…','Denetleniyor…'],
- upToDate:['You have the latest Beta build.','En son Beta derlemesini kullanıyorsun.'],
+ upToDate:['You have the latest version.','En son sürümü kullanıyorsun.'],
  checkedAgo:['Last checked {when}.','Son denetim: {when}.'],neverChecked:['Not checked yet.','Henüz denetlenmedi.'],
- updateAvailable:['Beta build {build} is available · {size}','Beta derleme {build} hazır · {size}'],
+ updateAvailable:['v{version} is available · {size}','v{version} hazır · {size}'],
  downloadUpdate:['Download update','Güncellemeyi indir'],cancelUpdate:['Cancel','İptal'],
  updateDownloading:['Downloading {pct}% · {speed}/s','İndiriliyor %{pct} · {speed}/sn'],updateVerifying:['Verifying…','Doğrulanıyor…'],
- updateReady:['Beta build {build} is downloaded and verified.','Beta derleme {build} indirildi ve doğrulandı.'],
+ updateReady:['v{version} is downloaded and verified.','v{version} indirildi ve doğrulandı.'],
  restartUpdate:['Restart and update','Yeniden başlat ve güncelle'],
  updateInstalling:['Closing Lumen to install the update…','Güncelleme için Lumen kapatılıyor…'],
  updateFailed:['Update failed: {error}','Güncelleme başarısız: {error}'],
  updateNotWritable:['Lumen cannot write to its own folder, so it cannot update itself here. Download the new version from GitHub.','Lumen kendi klasörüne yazamıyor, bu yüzden burada kendini güncelleyemez. Yeni sürümü GitHub’dan indir.'],
  autoUpdates:['Check automatically','Otomatik denetle'],
- autoUpdatesHint:['Once a day Lumen asks GitHub whether a newer Beta build exists. Nothing about you or your chats is sent. Updates are only downloaded when you choose.','Lumen günde bir kez GitHub’a daha yeni bir Beta derlemesi olup olmadığını sorar. Sen veya sohbetlerin hakkında hiçbir şey gönderilmez. Güncellemeler yalnızca sen seçince indirilir.'],
+ autoUpdatesHint:['Once a day Lumen asks GitHub whether a newer version exists. Nothing about you or your chats is sent. Updates are only downloaded when you choose.','Lumen günde bir kez GitHub’a daha yeni bir sürüm olup olmadığını sorar. Sen veya sohbetlerin hakkında hiçbir şey gönderilmez. Güncellemeler yalnızca sen seçince indirilir.'],
  updateSafety:['Updates are signed with the Lumen release key and checked before installing. Your chats, models and settings stay where they are.','Güncellemeler Lumen yayın anahtarıyla imzalıdır ve kurulmadan önce doğrulanır. Sohbetlerin, modellerin ve ayarların yerinde kalır.'],
  updatePill:['Update','Güncelleme'],updatePillReady:['Restart to update','Güncellemek için yeniden başlat'],
- updateToast:['Beta build {build} is available. Open Settings → General to update.','Beta derleme {build} hazır. Güncellemek için Ayarlar → Genel’i aç.'],
+ updateToast:['v{version} is available. Open Settings → General to update.','v{version} hazır. Güncellemek için Ayarlar → Genel’i aç.'],
  justNow:['just now','az önce'],minutesAgo:['{n} min ago','{n} dk önce'],hoursAgo:['{n} h ago','{n} sa önce'],daysAgo:['{n} days ago','{n} gün önce']
 });
 
@@ -58,15 +58,15 @@ function paintUpdates(s){
  if(!s)return;updateState=s;buildUpdateSection();
  const box=$('update-status');if(!box)return;
  const d=s.download,a=s.available;
- $('update-version').textContent=updateFill('versionLine',{build:s.build,version:s.version,mode:t(s.mode==='installed'?'modeInstalled':'modePortable')});
+ $('update-version').textContent=updateFill('versionLine',{version:s.version,mode:t(s.mode==='installed'?'modeInstalled':'modePortable')});
  $('update-auto').checked=s.auto;$('update-check').textContent=t(s.checking?'checkingUpdates':'checkUpdates');$('update-check').disabled=s.checking||['downloading','verifying'].includes(d?.phase);
  let text;
  if(s.error)text=updateFill('updateFailed',{error:s.error});
- else if(d?.phase==='ready'&&a)text=updateFill('updateReady',{build:a.build});
+ else if(d?.phase==='ready'&&a)text=updateFill('updateReady',{version:a.version});
  else if(d?.phase==='downloading')text=updateFill('updateDownloading',{pct:d.total?Math.floor(d.bytes/d.total*100):0,speed:updateSize(d.speed||0)});
  else if(d?.phase==='verifying')text=t('updateVerifying');
  else if(d?.phase==='failed')text=updateFill('updateFailed',{error:d.error||''});
- else if(a)text=updateFill('updateAvailable',{build:a.build,size:updateSize(a.size)});
+ else if(a)text=updateFill('updateAvailable',{version:a.version,size:updateSize(a.size)});
  else if(s.checking)text=t('checkingUpdates');
  else text=s.lastCheck?t('upToDate')+' '+updateFill('checkedAgo',{when:updateAgo(s.lastCheck)}):t('neverChecked');
  if(a&&!s.writable)text+=' '+t('updateNotWritable');
@@ -78,8 +78,8 @@ function paintUpdates(s){
  $('update-install').hidden=!(a&&d?.phase==='ready'&&s.writable);$('update-install').disabled=false;
  $('update-cancel').hidden=d?.phase!=='downloading';
  $('update-box').dataset.state=a?(d?.phase==='ready'?'ready':'available'):'idle';
- const pill=updatePill();pill.hidden=!a;pill.textContent=t(d?.phase==='ready'?'updatePillReady':'updatePill');pill.title=a?updateFill('updateAvailable',{build:a.build,size:updateSize(a.size)}):'';
- if(a&&!d&&updateToastShown!==a.build&&!(state.page==='settings'&&state.setting==='general')){updateToastShown=a.build;toast(updateFill('updateToast',{build:a.build}));}
+ const pill=updatePill();pill.hidden=!a;pill.textContent=t(d?.phase==='ready'?'updatePillReady':'updatePill');pill.title=a?updateFill('updateAvailable',{version:a.version,size:updateSize(a.size)}):'';
+ if(a&&!d&&updateToastShown!==a.build&&!(state.page==='settings'&&state.setting==='general')){updateToastShown=a.build;toast(updateFill('updateToast',{version:a.version}));}
 }
 
 const localizeBeforeUpdates=localize;

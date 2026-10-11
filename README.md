@@ -33,7 +33,7 @@ Your data lives in `%LOCALAPPDATA%\lumen.cpp` (chats, models, settings). Updatin
 
 ### Updates
 
-Lumen checks this repository's releases at most once a day; the check can be turned off in Settings → General. When a newer Beta build exists, Lumen offers it and downloads only when you click.
+Lumen checks this repository's releases at most once a day; the check can be turned off in Settings → General. When a newer version exists, Lumen offers it and downloads only when you click.
 
 Each release includes `lumen-update.json`, signed with an Ed25519 release key, plus its `.sig`. Lumen installs an update only if:
 - the signature matches the public key built into the app;
@@ -71,7 +71,7 @@ The UI is plain HTML, CSS and JavaScript with no build step. Renderer scripts sh
 
 The script downloads Electron 44.5.1 and checks it against a pinned SHA-256. It then copies `app/` into place and compiles `lumen-host.exe` and `lumen-image-ocr.exe` with the .NET Framework compiler included in Windows.
 
-Making a release (maintainers): raise the build number in `app/package.json` (`0.1.0-beta.N`), build the portable folder, then run:
+Making a release (maintainers): set `app/package.json` to the new version (`1.0.3-beta`) and raise its `build` number by one, build the portable folder, then run:
 
 ```powershell
 .\scripts\release.ps1 -AppDir <portable folder> -OutDir <folder> -NotesEn "..." -NotesTr "..."
