@@ -140,6 +140,13 @@ Results are capped (3/5/8). Identical queries are cached for 10 minutes and conc
 
 **Browser panel.** It has an address field, back/forward, reload/stop, loading and error states, open in your default browser, and close. It sits beside the chat; in windows narrower than 1000 px it covers the chat until you close it. Pages run in a separate `persist:lumen-web` session with no Lumen preload, IPC or Node access. Camera, microphone, clipboard and other permissions, downloads, pop-ups and dialogs are refused, and local/private addresses are blocked. Lumen never signs in, submits forms, posts or buys for you. Settings → Browser → *Clear browsing data* clears that session's cookies, storage and cache.
 
+**Browser commands in chat.** Short commands are carried out directly in the browser panel, without asking the model:
+- "discord'u aç", "browserdan discord.com sitesini aç", "open github.com", "go to youtube";
+- "youtube'da lofi müzik ara", "search llama.cpp on github";
+- "geri git" / "go back", "sayfayı yenile" / "reload", "tarayıcıyı kapat" / "close the browser".
+
+Lumen acts only on a web address, a well-known site, or a message that names the browser or a website. "dosyayı aç", "main.py aç" and ordinary questions still go to the model. A short note such as "discord.com opened in the browser" is saved in the chat. Lumen does not sign in, fill in forms or click on pages for you.
+
 You can also use the panel on its own. The globe button in the header opens and closes it. Panel features:
 - **Address bar**: words without a domain are searched with the address bar search engine (DuckDuckGo by default; Google, Bing, Brave or Startpage).
 - **Home button**: opens your home page, or the search engine's page.

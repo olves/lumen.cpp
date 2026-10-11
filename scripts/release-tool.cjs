@@ -1,7 +1,7 @@
 'use strict';
 // Release helper, run with Electron as Node (see release.ps1):
 //   keygen <private.pem> <public.pem>         create the Ed25519 update signing key (refuses to overwrite)
-//   manifest <out.json> <build> <version> <notes-en> <notes-tr> <zip> <setup>
+//   manifest <out.json> <build> <version> <notes.json {en,tr}> <zip> <setup>
 //                                             write lumen-update.json for the two release files
 //   sign <private.pem> <file>                 write <file>.sig (base64 Ed25519 signature of the exact bytes)
 //   verify <public.pem> <file>                check <file>.sig
@@ -20,11 +20,12 @@ const fail = message => { fs.writeFileSync(path.join(process.env.TEMP || '.', 'l
     fs.writeFileSync(privatePath, privateKey.export({ type: 'pkcs8', format: 'pem' }), { flag: 'wx' });
     fs.writeFileSync(publicPath, publicKey.export({ type: 'spki', format: 'pem' }));
   } else if (command === 'manifest') {
-    const [out, build, version, notesEn, notesTr, zip, setup] = args;
+    const [out, build, version, notesFile, zip, setup] = args;
+    const notes = JSON.parse(fs.readFileSync(notesFile, 'utf8'));
     if (!/^\d+$/.test(build)) fail('Build must be a number.');
     const asset = async file => ({ name: path.basename(file), size: fs.statSync(file).size, sha256: await sha256(file) });
     const manifest = { product: 'lumen.cpp', channel: 'beta', build: Number(build), version, published: new Date().toISOString(),
-      notes: { en: notesEn || '', tr: notesTr || '' }, assets: { zip: await asset(zip), setup: await asset(setup) } };
+      notes: { en: String(notes.en || ''), tr: String(notes.tr || '') }, assets: { zip: await asset(zip), setup: await asset(setup) } };
     fs.writeFileSync(out, JSON.stringify(manifest, null, 2) + '\n');
   } else if (command === 'sign') {
     const [privatePath, file] = args;

@@ -1,29 +1,29 @@
 'use strict';
-// Version and updates: Settings â†’ General shows the running Beta build, checks GitHub (at most once a day when automatic
+// Version and updates: Settings → General shows the running Beta build, checks GitHub (at most once a day when automatic
 // checks are on), downloads a newer build on request and installs it on restart. A small header button appears only while
 // an update is available or ready. Main process: updates.cjs (signed manifest, SHA-256, lumen-updater.exe).
 Object.assign(translations,{
- updatesLabel:['Updates','GÃ¼ncellemeler'],
- versionTitle:['Version','SÃ¼rÃ¼m'],
- versionLine:['Beta build {build} Â· {version} Â· {mode}','Beta derleme {build} Â· {version} Â· {mode}'],
- modeInstalled:['installed','kurulu'],modePortable:['portable folder','taÅŸÄ±nabilir klasÃ¶r'],
- checkUpdates:['Check for updates','GÃ¼ncellemeleri denetle'],checkingUpdates:['Checkingâ€¦','Denetleniyorâ€¦'],
- upToDate:['You have the latest Beta build.','En son Beta derlemesini kullanÄ±yorsun.'],
- checkedAgo:['Last checked {when}.','Son denetim: {when}.'],neverChecked:['Not checked yet.','HenÃ¼z denetlenmedi.'],
- updateAvailable:['Beta build {build} is available Â· {size}','Beta derleme {build} hazÄ±r Â· {size}'],
- downloadUpdate:['Download update','GÃ¼ncellemeyi indir'],cancelUpdate:['Cancel','Ä°ptal'],
- updateDownloading:['Downloading {pct}% Â· {speed}/s','Ä°ndiriliyor %{pct} Â· {speed}/sn'],updateVerifying:['Verifyingâ€¦','DoÄŸrulanÄ±yorâ€¦'],
- updateReady:['Beta build {build} is downloaded and verified.','Beta derleme {build} indirildi ve doÄŸrulandÄ±.'],
- restartUpdate:['Restart and update','Yeniden baÅŸlat ve gÃ¼ncelle'],
- updateInstalling:['Closing Lumen to install the updateâ€¦','GÃ¼ncelleme iÃ§in Lumen kapatÄ±lÄ±yorâ€¦'],
- updateFailed:['Update failed: {error}','GÃ¼ncelleme baÅŸarÄ±sÄ±z: {error}'],
- updateNotWritable:['Lumen cannot write to its own folder, so it cannot update itself here. Download the new version from GitHub.','Lumen kendi klasÃ¶rÃ¼ne yazamÄ±yor, bu yÃ¼zden burada kendini gÃ¼ncelleyemez. Yeni sÃ¼rÃ¼mÃ¼ GitHubâ€™dan indir.'],
+ updatesLabel:['Updates','Güncellemeler'],
+ versionTitle:['Version','Sürüm'],
+ versionLine:['Beta build {build} · {version} · {mode}','Beta derleme {build} · {version} · {mode}'],
+ modeInstalled:['installed','kurulu'],modePortable:['portable folder','taşınabilir klasör'],
+ checkUpdates:['Check for updates','Güncellemeleri denetle'],checkingUpdates:['Checking…','Denetleniyor…'],
+ upToDate:['You have the latest Beta build.','En son Beta derlemesini kullanıyorsun.'],
+ checkedAgo:['Last checked {when}.','Son denetim: {when}.'],neverChecked:['Not checked yet.','Henüz denetlenmedi.'],
+ updateAvailable:['Beta build {build} is available · {size}','Beta derleme {build} hazır · {size}'],
+ downloadUpdate:['Download update','Güncellemeyi indir'],cancelUpdate:['Cancel','İptal'],
+ updateDownloading:['Downloading {pct}% · {speed}/s','İndiriliyor %{pct} · {speed}/sn'],updateVerifying:['Verifying…','Doğrulanıyor…'],
+ updateReady:['Beta build {build} is downloaded and verified.','Beta derleme {build} indirildi ve doğrulandı.'],
+ restartUpdate:['Restart and update','Yeniden başlat ve güncelle'],
+ updateInstalling:['Closing Lumen to install the update…','Güncelleme için Lumen kapatılıyor…'],
+ updateFailed:['Update failed: {error}','Güncelleme başarısız: {error}'],
+ updateNotWritable:['Lumen cannot write to its own folder, so it cannot update itself here. Download the new version from GitHub.','Lumen kendi klasörüne yazamıyor, bu yüzden burada kendini güncelleyemez. Yeni sürümü GitHub’dan indir.'],
  autoUpdates:['Check automatically','Otomatik denetle'],
- autoUpdatesHint:['Once a day Lumen asks GitHub whether a newer Beta build exists. Nothing about you or your chats is sent. Updates are only downloaded when you choose.','Lumen gÃ¼nde bir kez GitHubâ€™a daha yeni bir Beta derlemesi olup olmadÄ±ÄŸÄ±nÄ± sorar. Sen veya sohbetlerin hakkÄ±nda hiÃ§bir ÅŸey gÃ¶nderilmez. GÃ¼ncellemeler yalnÄ±zca sen seÃ§ince indirilir.'],
- updateSafety:['Updates are signed with the Lumen release key and checked before installing. Your chats, models and settings stay where they are.','GÃ¼ncellemeler Lumen yayÄ±n anahtarÄ±yla imzalÄ±dÄ±r ve kurulmadan Ã¶nce doÄŸrulanÄ±r. Sohbetlerin, modellerin ve ayarlarÄ±n yerinde kalÄ±r.'],
- updatePill:['Update','GÃ¼ncelleme'],updatePillReady:['Restart to update','GÃ¼ncellemek iÃ§in yeniden baÅŸlat'],
- updateToast:['Beta build {build} is available. Open Settings â†’ General to update.','Beta derleme {build} hazÄ±r. GÃ¼ncellemek iÃ§in Ayarlar â†’ Genelâ€™i aÃ§.'],
- justNow:['just now','az Ã¶nce'],minutesAgo:['{n} min ago','{n} dk Ã¶nce'],hoursAgo:['{n} h ago','{n} sa Ã¶nce'],daysAgo:['{n} days ago','{n} gÃ¼n Ã¶nce']
+ autoUpdatesHint:['Once a day Lumen asks GitHub whether a newer Beta build exists. Nothing about you or your chats is sent. Updates are only downloaded when you choose.','Lumen günde bir kez GitHub’a daha yeni bir Beta derlemesi olup olmadığını sorar. Sen veya sohbetlerin hakkında hiçbir şey gönderilmez. Güncellemeler yalnızca sen seçince indirilir.'],
+ updateSafety:['Updates are signed with the Lumen release key and checked before installing. Your chats, models and settings stay where they are.','Güncellemeler Lumen yayın anahtarıyla imzalıdır ve kurulmadan önce doğrulanır. Sohbetlerin, modellerin ve ayarların yerinde kalır.'],
+ updatePill:['Update','Güncelleme'],updatePillReady:['Restart to update','Güncellemek için yeniden başlat'],
+ updateToast:['Beta build {build} is available. Open Settings → General to update.','Beta derleme {build} hazır. Güncellemek için Ayarlar → Genel’i aç.'],
+ justNow:['just now','az önce'],minutesAgo:['{n} min ago','{n} dk önce'],hoursAgo:['{n} h ago','{n} sa önce'],daysAgo:['{n} days ago','{n} gün önce']
 });
 
 let updateState=null,updateToastShown=0;

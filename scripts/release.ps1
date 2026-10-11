@@ -38,6 +38,12 @@ function Tool([string[]]$arguments) {
   if ($p.ExitCode -ne 0) { throw "release-tool $($arguments[0]) failed: $(Get-Content $errorFile -Raw -ErrorAction SilentlyContinue)" }
 }
 
+# Refuse to ship text that was saved with the wrong encoding (UTF-8 read as a Windows code page and saved again).
+$garbled = Get-ChildItem (Join-Path $AppDir 'resources\app') -Recurse -File -Include *.js, *.cjs, *.css, *.html, *.json |
+  Where-Object { $_.FullName -notmatch '\\vendor\\' } |
+  Where-Object { [IO.File]::ReadAllText($_.FullName, [Text.Encoding]::UTF8) -match ([string][char]0xC3 + '[' + [char]0x80 + '-' + [char]0xBF + [char]0xBC + [char]0xA7 + [char]0xB6 + [char]0xB1 + ']|' + [char]0xC4 + [char]0xB1 + '|' + [char]0xC5 + [char]0x178 + '|' + [char]0xE2 + [char]0x20AC) }
+if ($garbled) { throw "Garbled (double-encoded) text in: $($garbled.Name -join ', ')" }
+
 Write-Host "Beta build $build ($version)"
 $zip = Join-Path $OutDir 'lumen-beta-portable.zip'
 Remove-Item $zip -ErrorAction SilentlyContinue
@@ -58,7 +64,11 @@ $setup = Join-Path $OutDir 'lumen-beta-setup.exe'
 Write-Host "Setup: $setup"
 
 $manifest = Join-Path $OutDir 'lumen-update.json'
-Tool @('manifest', $manifest, "$build", $version, $NotesEn, $NotesTr, $zip, $setup)
+# Notes go through a UTF-8 file: quotes and non-ASCII text do not survive a Windows command line reliably.
+$notesFile = Join-Path $env:TEMP 'lumen-release-notes.json'
+[IO.File]::WriteAllText($notesFile, (@{ en = $NotesEn; tr = $NotesTr } | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+Tool @('manifest', $manifest, "$build", $version, $notesFile, $zip, $setup)
+Remove-Item $notesFile -ErrorAction SilentlyContinue
 Tool @('sign', $Key, $manifest)
 if (Test-Path $PublicKey) { Tool @('verify', $PublicKey, $manifest) }
 Write-Host ''

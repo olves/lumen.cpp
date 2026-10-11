@@ -23,6 +23,15 @@ Implementation checks: no external fonts/frameworks, no idle animation loop, sho
 
 Raw development measurements and screenshots are in `work`; no test conversations or screenshots are bundled in the portable application. The app's Electron baseline is heavier than the previous WPF build.
 
+## Browser commands in chat (2026-10-11)
+
+| Check | Kind | Result |
+| --- | --- | --- |
+| Command parser: 30 sentences (Turkish case endings, domains, known sites, site searches, back/reload/close, English); ordinary requests such as "dosyayı aç", "main.py aç" and questions are not treated as commands | Unit | 30/30 (`test-browse-intent.mjs`) |
+| Real app and network: "browserdan discord.com sitesini aç" opened discord.com in the panel with no model call and saved two messages; YouTube search; back; close; English "open github.com"; 0 console errors | Real UI | Pass (`test-browse-ui.cjs`) |
+| Turkish text in Settings → General → Updates was garbled in build 1 (updates.js had been saved with the wrong encoding). Repaired for build 2; the release script now refuses double-encoded files and the themes UI test checks this text | Fix + guard | Pass |
+| Research with a model and DuckDuckGo after the game closed: Coder-7B, 36 s, correct facts with citations; a made-up URL was refused | Real inference + network | Pass |
+
 ## Web search without a key, accent themes (2026-10-11)
 
 | Check | Kind | Result |
