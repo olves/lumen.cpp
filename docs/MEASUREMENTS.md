@@ -23,6 +23,21 @@ Implementation checks: no external fonts/frameworks, no idle animation loop, sho
 
 Raw development measurements and screenshots are in `work`; no test conversations or screenshots are bundled in the portable application. The app's Electron baseline is heavier than the previous WPF build.
 
+## Updates, setup and release signing (2026-10-11)
+
+All checks used a local stand-in for the GitHub Releases API and a throwaway test key. **The real GitHub repository was not published yet, so a check against github.com has not run.**
+
+| Check | Kind | Result |
+| --- | --- | --- |
+| Newer signed build offered; older or equal build and drafts ignored | Module, local server | Pass |
+| Manifest signed with another key, or asset size different from the manifest, is rejected; a bad release does not hide a good one | Module | Pass |
+| Download resumes from a partial file (Range request seen), is verified, and stays "ready" after a restart | Module | Pass |
+| Server sends different bytes than the manifest promises: verification fails and the partial file is removed | Module | Pass |
+| Portable folder, real app: build 1 → Check → Download (189 MB) → Restart and update → updater swapped the folder and started build 2. Took about 3 s after Lumen closed; no leftover folders; Turkish labels; 0 console errors | Real app, real `release.ps1` output | Pass |
+| Installed copy: setup build 1 installed silently into `work/`, the updater ran the build 2 setup into the same folder, the uninstaller remained, Lumen was started again; silent uninstall removed the app and its uninstall entry but kept `%LOCALAPPDATA%\lumen.cpp` | Real setup | Pass |
+
+Release build 1 artifacts: portable ZIP 189.3 MB, setup 151.5 MB (Inno Setup LZMA2). Regression after the change: photos, design, explore, composer-clicks, chat-controls, settings-skills and the visual matrix all pass. `settings-skills-check` now uses an installed model from the test data, because the 0.5B model it used was deleted at the user's request.
+
 ## Review round: names, formatting, versions, search, Auto context, project folder, providers, skills (2026-10-10)
 
 Machine: RTX 5060 Laptop (8 GB), CUDA13 engine, Electron diagnostic flags as above. **Real** = real host, real llama.cpp and installed models (hard links) or real network. **Fixture** = local test data or a scripted model, no real inference.
