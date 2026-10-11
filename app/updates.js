@@ -19,7 +19,7 @@ Object.assign(translations,{
  updateFailed:['Update failed: {error}','Güncelleme başarısız: {error}'],
  updateNotWritable:['Lumen cannot write to its own folder, so it cannot update itself here. Download the new version from GitHub.','Lumen kendi klasörüne yazamıyor, bu yüzden burada kendini güncelleyemez. Yeni sürümü GitHub’dan indir.'],
  autoUpdates:['Check automatically','Otomatik denetle'],
- autoUpdatesHint:['Once a day Lumen asks GitHub whether a newer version exists. Nothing about you or your chats is sent. Updates are only downloaded when you choose.','Lumen günde bir kez GitHub’a daha yeni bir sürüm olup olmadığını sorar. Sen veya sohbetlerin hakkında hiçbir şey gönderilmez. Güncellemeler yalnızca sen seçince indirilir.'],
+ autoUpdatesHint:['Each time it starts, Lumen asks GitHub whether a newer version exists. Nothing about you or your chats is sent. Updates are only downloaded when you choose.','Lumen her açılışta GitHub’a daha yeni bir sürüm olup olmadığını sorar. Sen veya sohbetlerin hakkında hiçbir şey gönderilmez. Güncellemeler yalnızca sen seçince indirilir.'],
  updateSafety:['Updates are signed with the Lumen release key and checked before installing. Your chats, models and settings stay where they are.','Güncellemeler Lumen yayın anahtarıyla imzalıdır ve kurulmadan önce doğrulanır. Sohbetlerin, modellerin ve ayarların yerinde kalır.'],
  updatePill:['Update','Güncelleme'],updatePillReady:['Restart to update','Güncellemek için yeniden başlat'],
  updateToast:['v{version} is available. Open Settings → General to update.','v{version} hazır. Güncellemek için Ayarlar → Genel’i aç.'],
@@ -79,7 +79,6 @@ function paintUpdates(s){
  $('update-cancel').hidden=d?.phase!=='downloading';
  $('update-box').dataset.state=a?(d?.phase==='ready'?'ready':'available'):'idle';
  const pill=updatePill();pill.hidden=!a;pill.textContent=t(d?.phase==='ready'?'updatePillReady':'updatePill');pill.title=a?updateFill('updateAvailable',{version:a.version,size:updateSize(a.size)}):'';
- if(a&&!d&&updateToastShown!==a.build&&!(state.page==='settings'&&state.setting==='general')){updateToastShown=a.build;toast(updateFill('updateToast',{version:a.version}));}
 }
 
 const localizeBeforeUpdates=localize;

@@ -164,20 +164,50 @@ static class LumenHost {
   Exception last=null;
   foreach(var backend in order){
    if(!(bool)readyMethod.Invoke(null,new object[]{backend}))continue;
-   string exe=(string)executableMethod.Invoke(null,new object[]{backend});
-   foreach(bool plain in new[]{false,true}){
-    bool extras=options.Kv!="f16"||options.Speculative;if(plain&&!extras)continue;
-    progress("Loading engine · "+backend.ToUpperInvariant(),0);
-    NativeServer server=null;
-    try{
-     server=await Launch(exe,backend,Arguments(model,context,projector,plain?"":draft,backend,options,plain),ct);
-     if(backend!="cpu"&&!(bool)gpuActiveField.GetValue(server)){server.Dispose();last=new Exception("The GPU engine did not use the GPU.");break;}
-     progress("Engine · "+backend.ToUpperInvariant(),100);return server;
-    }catch(OperationCanceledException){if(server!=null)server.Dispose();throw;}
-    catch(Exception e){if(server!=null)server.Dispose();if(ct.IsCancellationRequested)throw new OperationCanceledException();last=e;Console.Error.WriteLine("lumen-host: "+backend+(plain?" (plain)":"")+" start failed: "+e.Message);}
+   string standard=(string)executableMethod.Invoke(null,new object[]{backend});
+   // An engine update installed by Lumen (engine-override.json) is tried first; if it cannot start or does not use the GPU,
+   // it is marked as failed and the bundled engine runs instead, so an update can never leave chat without an engine.
+   string custom=OverrideExe(backend);
+   foreach(string exe in custom!=null?new[]{custom,standard}:new[]{standard}){
+    bool isCustom=custom!=null&&exe==custom;Exception attempt=null;
+    foreach(bool plain in new[]{false,true}){
+     bool extras=options.Kv!="f16"||options.Speculative;if(plain&&!extras)continue;
+     progress("Loading engine · "+backend.ToUpperInvariant(),0);
+     NativeServer server=null;
+     try{
+      server=await Launch(exe,backend,Arguments(model,context,projector,plain?"":draft,backend,options,plain),ct);
+      if(backend!="cpu"&&!(bool)gpuActiveField.GetValue(server)){server.Dispose();last=attempt=new Exception("The GPU engine did not use the GPU.");break;}
+      progress("Engine · "+backend.ToUpperInvariant(),100);return server;
+     }catch(OperationCanceledException){if(server!=null)server.Dispose();throw;}
+     catch(Exception e){if(server!=null)server.Dispose();if(ct.IsCancellationRequested)throw new OperationCanceledException();last=attempt=e;Console.Error.WriteLine("lumen-host: "+backend+(isCustom?" (updated engine)":"")+(plain?" (plain)":"")+" start failed: "+e.Message);}
+    }
+    if(isCustom)MarkOverrideFailed(attempt);
    }
   }
   throw new Exception("Unable to start the local engine. Try a smaller model or CPU mode."+(last!=null?" ("+(last.Message.Length>200?last.Message.Substring(0,200):last.Message)+")":""));
+ }
+
+ // <data>/engine-override.json: {"build","backend","path"} written by Lumen after it verified and tested a newer llama.cpp.
+ // Only a llama-server.exe under <data>/runtime is accepted, and only for the engine it was installed for.
+ static string OverrideFile(){return Path.Combine(NativeEngine.Data,"engine-override.json");}
+ static string OverrideExe(string backend){
+  try{
+   if(!File.Exists(OverrideFile()))return null;
+   var o=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(OverrideFile()));
+   if(o==null||!o.ContainsKey("path")||!o.ContainsKey("backend")||Convert.ToString(o["backend"])!=backend)return null;
+   if(o.ContainsKey("failed")&&Convert.ToBoolean(o["failed"]))return null;
+   string exe=Path.GetFullPath(Convert.ToString(o["path"])),root=Path.GetFullPath(Path.Combine(NativeEngine.Data,"runtime"))+Path.DirectorySeparatorChar;
+   if(!exe.StartsWith(root,StringComparison.OrdinalIgnoreCase)||!string.Equals(Path.GetFileName(exe),"llama-server.exe",StringComparison.OrdinalIgnoreCase)||!File.Exists(exe))return null;
+   return exe;
+  }catch{return null;}
+ }
+ static void MarkOverrideFailed(Exception e){
+  try{
+   var o=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(OverrideFile()));
+   string message=e==null?"The updated engine did not start.":e.Message;
+   o["failed"]=true;o["error"]=message.Length>300?message.Substring(0,300):message;o["failedAt"]=DateTime.UtcNow.ToString("o");
+   File.WriteAllText(OverrideFile(),new JavaScriptSerializer().Serialize(o));
+  }catch{}
  }
 
  static string Arguments(string model,int context,string projector,string draft,string backend,EngineOptions options,bool plain){

@@ -23,6 +23,17 @@ Both are unsigned Beta builds, so Windows SmartScreen may warn the first time. Y
   Then Lumen starts again.
 - **Portable copies** can only update themselves if Lumen can write to their folder. Otherwise, download the new ZIP yourself.
 
+**At startup.** While the opening animation plays, Lumen checks for a newer Lumen and a newer llama.cpp engine; each check runs only when its automatic check is on. The animation waits for these checks, at most about four seconds, and shows "Checking for updates…" under the mark. With Motion off nothing waits. When the workspace appears, each result gets its own notice in the top-right corner:
+- **Lumen v… is available**: *Update* downloads it and opens Settings → General; *Later* closes the notice.
+- **New llama.cpp engine**: *Update* installs it; *Remind me in 7 days* stays quiet for a week (llama.cpp publishes several builds a day).
+
+**llama.cpp engine updates** (Settings → Runtime → llama.cpp engine). Lumen ships with llama.cpp b11438 and keeps it as a fallback.
+- **What gets downloaded.** A newer official build from github.com/ggml-org/llama.cpp, only when you click *Update*. It is checked against the SHA-256 digest GitHub publishes for that file.
+- **Size.** For CUDA, the large CUDA runtime is reused when it has not changed, so an update is about 150 MB instead of about 550 MB. Vulkan is about 30 MB, CPU about 20 MB.
+- **Testing.** The new engine is unpacked into its own folder and tested: it must report its version and, for GPU engines, find the GPU. Only then is it used, from the next reply on.
+- **Rollback.** If it later fails to start or does not use the GPU, Lumen goes back to the previous engine by itself and tells you once. *Use the previous engine* switches back by hand.
+- **Testing caveat.** Newer llama.cpp builds support newer models and bring fixes, but Lumen has not tested each of them in advance.
+
 ## Chat and models
 
 Pick a model under the composer. If needed, Lumen downloads and verifies it before the first response. Chats are stored locally, responses stream, and the stop button cancels generation. Copy text/code, export Markdown, edit a message into a new branch, or branch after an answer. Settings → Explore contains the curated GGUF library and public Hugging Face repository discovery; Settings → Library shows downloaded models. Model compatibility and licensing still depend on the individual model.

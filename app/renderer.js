@@ -94,7 +94,16 @@ let draftFiles=[],renameTarget=null;
 const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');reducedMotion.addEventListener('change',()=>{if(!motionAllowed())document.getAnimations().forEach(animation=>animation.cancel());});
 function motionAllowed(){return state.prefs.motion&&!reducedMotion.matches;}
 // The splash is painted by index.html before scripts run. Hold it until its own entrance has finished, then hand the mark to the titlebar.
-function openingHold(){const wait=600-(performance.now()-started);return motionAllowed()&&wait>0?new Promise(resolve=>setTimeout(resolve,wait)):Promise.resolve();}
+// Startup checks (Lumen and llama.cpp updates, see notices.js) start with the window. With motion on, the splash also waits for
+// them, at most a few seconds, and says so under the mark; with motion off nothing waits.
+const startupChecks=typeof api.updates==='function'?api.updates('startup',{wait:4000}).catch(()=>null):Promise.resolve(null);
+Object.assign(translations,{splashChecking:['Checking for updates…','Güncellemeler denetleniyor…']});
+function openingHold(){
+ const wait=600-(performance.now()-started),minimum=motionAllowed()&&wait>0?new Promise(resolve=>setTimeout(resolve,wait)):Promise.resolve();
+ if(!motionAllowed())return minimum;
+ return minimum.then(()=>{let line=null;const caption=setTimeout(()=>{const splash=$('splash');if(!splash)return;line=document.createElement('div');line.className='splash-status';line.textContent=t('splashChecking');splash.append(line);},250);
+  return Promise.race([startupChecks,new Promise(resolve=>setTimeout(resolve,4500))]).finally(()=>{clearTimeout(caption);line?.remove();});});
+}
 function playOpening(){const splash=$('splash');if(!motionAllowed()){splash?.remove();return;}const ease='cubic-bezier(.22,1,.36,1)',delay=splash?140:0;
  const rise=(node,from,offset)=>{if(node&&!node.hidden)node.animate([{opacity:0,transform:from},{opacity:1,transform:'none'}],{duration:420,easing:ease,delay:delay+offset,fill:'backwards'});};
  if(splash){const mark=splash.querySelector('.splash-mark'),target=document.querySelector('.titlebar .app-mark'),from=mark.getBoundingClientRect(),to=target.getBoundingClientRect();const x=to.left+to.width/2-from.left-from.width/2,y=to.top+to.height/2-from.top-from.height/2;

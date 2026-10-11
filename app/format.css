@@ -104,3 +104,14 @@ body.no-motion .message.search-hit{animation:none;outline:1px solid var(--select
 .update-actions{display:flex;gap:8px;margin-top:10px}.update-actions:not(:has(button:not([hidden]))){display:none}
 .update-pill{color:var(--accent-ink);border-color:var(--selection-line)}
 @media (prefers-reduced-motion:reduce){.update-progress span{transition:none}}
+/* Startup notices (notices.js) and the splash status line */
+.notices{position:fixed;top:104px;right:16px;z-index:60;display:flex;flex-direction:column;gap:10px;width:min(360px,calc(100vw - 32px));pointer-events:none}
+.notice{pointer-events:auto;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--dialog-bg,var(--panel));box-shadow:var(--shadow);color:var(--ink)}
+.notice-head{display:flex;align-items:flex-start;gap:8px}.notice-head strong{flex:1;font-size:13px;font-weight:600;line-height:1.4}
+.notice-close{border:0;background:none;color:var(--secondary-ink);font-size:16px;line-height:1;padding:0 2px;cursor:pointer}.notice-close:hover{color:var(--ink)}
+.notice-text{margin:4px 0 0;font-size:12px;line-height:1.5;color:var(--secondary-ink)}
+.notice-actions{display:flex;gap:8px;margin-top:10px}.notice-actions:not(:has(button:not([hidden]))){display:none}
+.notice-actions .primary{padding:6px 12px;font-size:12px}
+.splash-status{position:absolute;left:0;right:0;bottom:22%;text-align:center;font:10px var(--mono);letter-spacing:.6px;color:var(--secondary-ink);opacity:0;animation:splash-status-in .3s .05s ease-out forwards}
+@keyframes splash-status-in{to{opacity:.8}}
+@media (prefers-reduced-motion:reduce){.splash-status{animation:none;opacity:.8}}

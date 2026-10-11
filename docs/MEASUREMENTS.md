@@ -23,6 +23,18 @@ Implementation checks: no external fonts/frameworks, no idle animation loop, sho
 
 Raw development measurements and screenshots are in `work`; no test conversations or screenshots are bundled in the portable application. The app's Electron baseline is heavier than the previous WPF build.
 
+## Startup checks and llama.cpp engine updates (2026-10-11)
+
+| Check | Kind | Result |
+| --- | --- | --- |
+| CPU engine b11438 → b11556 from GitHub: SHA-256 against GitHub's digest, unpack, --version; the host answered a real Gemma 4 E2B request with the new llama-server (process path checked); rollback to b11438 | Real download + inference | Pass (`test-engine-update.mjs`) |
+| Broken engine as the update (an exe that is not llama-server): the host fell back to b11438, the reply still came, the update was marked failed and the notice is shown once | Real host | Pass |
+| CUDA 13 engine b11556: 146 MB download, CUDA runtime DLLs reused (GitHub's digest unchanged, so 404 MB not downloaded again), --version and --list-devices found the RTX 5060; 82 s in total | Real download | Pass (`test-engine-cuda.mjs`). **No model was run on the new CUDA engine**: the GPU was in use by a game. |
+| First attempt: the CUDA download stalled at 0 bytes and never timed out. Fixed: 30 s without data aborts and retries, up to 3 times, resuming | Fix | — |
+| Startup: the splash waited for the checks (1.3–4.4 s in test runs) with "Checking for updates…", then two separate notices (Lumen v1.0.3-beta from the local test server, llama.cpp b11556 from GitHub). "Remind me in 7 days" snoozes the engine notice. Notices sit below the header; the old duplicate toast was removed | Real UI + GitHub API | Pass (`run-notices-ui.ps1`) |
+
+GitHub's unauthenticated API allows 60 requests an hour; a start uses 2 (3 the first time).
+
 ## Version names (2026-10-11)
 
 Versions are now named `vX.Y.Z-beta` (Beta 2 = v1.0.2-beta). Real Beta 1, downloaded from the GitHub release (internally 0.1.0-beta.1, which compares only build numbers), found v1.0.2-beta through the local release server, downloaded it, swapped its folder and started again: pass (`run-update-compat.ps1`). v1.0.2-beta → v1.0.3-beta passes for the portable folder and the installed copy (`run-update-e2e.ps1`). Version order checks: 1.0.10 > 1.0.9, and a final release > its beta.

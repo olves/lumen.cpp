@@ -11,6 +11,7 @@ A local AI chat workspace for Windows. Lumen runs open models (GGUF) on your own
 - **Chat** with streaming answers, stop, branches, regenerate with versions, local chat search (Ctrl+K), Markdown with highlighted code, tables and math.
 - **Models**: browse Hugging Face GGUF repositories, download with resume and SHA-256 checks, and see an estimate of whether a model fits your GPU, RAM or both.
 - **GPU setup**: picks CUDA 13 / CUDA 12 / Vulkan / CPU automatically. AMD and Intel GPUs use Vulkan.
+- **llama.cpp engine updates**: checked at startup with Lumen's own update; newer official builds are verified, tested and can be rolled back. The bundled engine stays as a fallback.
 - **Performance**: automatic GPU/RAM placement (large MoE models work on 8 GB GPUs), compact 8-bit context cache, speculative decoding (n-gram and MTP draft models), contexts up to 32K, and an Auto context size per model.
 - **Thinking models** (Qwen3, Gemma 4…): optional reasoning shown in a collapsible block. Lumen detects which models support it.
 - **Photos**: OCR on Windows, and real image input for vision models with a projector (mmproj).
