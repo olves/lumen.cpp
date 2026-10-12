@@ -146,7 +146,7 @@ send=async function(){
  const chosen=state.models.find(m=>m.Name===$('model-picker').value);
  if(chosen&&!chosen.Installed&&!await download(chosen.Name))return;
  let route={route:'chat'};
- if(researchMode||toolsConfig?.search.enabled){try{route=await api.agent('route',{prompt:text,mode:researchMode?'research':'auto'});}catch{}}
+ if(researchMode||toolsConfig?.search.enabled){try{route=await api.agent('route',{prompt:text,mode:researchMode?'research':'auto',model:$('model-picker').value});}catch{}}
  if(route.route!=='agent'){if(researchMode){toast(t(route.reason==='unavailable'?'toolsUnavailable':'webOffToast'));return;}return toolsSend();}
  return sendWithAgent(text);
 };

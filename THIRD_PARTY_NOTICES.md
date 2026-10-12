@@ -15,4 +15,4 @@ Lumen's own code is under the Apache License 2.0 (see `LICENSE` and `NOTICE`). I
 
 **Models** are not part of this repository. Each model you download keeps the license published on its Hugging Face page.
 
-**Backend.** `lumen-core-beta.exe` (in the release ZIP) is a .NET Framework 4.8 program from an earlier stage of this project; its source is not included here. `app/backend/LumenHost.cs` uses it as a library and adds the newer engine features.
+**Engine process.** `lumen-host.exe` is built from `app/backend/LumenHost.cs` and `LumenCore.cs` in this repository (since v1.0.4-beta; earlier releases also contained a closed `lumen-core-beta.exe`, which is no longer used or shipped).

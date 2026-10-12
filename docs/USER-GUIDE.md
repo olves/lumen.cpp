@@ -217,6 +217,42 @@ Choose **+ → Documents** to add PDF, Word (.docx) or text files (Markdown, CSV
 - **Document text is untrusted.** The model is told that instructions inside documents are data, not commands.
 - Limits: 64 MB per file, 2,000 pages, 10 documents per conversation. Documents are stored in `documents/` inside the data folder, linked per conversation (`conversation-documents.json`) and per reply (`conversation-docsources.json`); a document no conversation uses any more is deleted. Branches keep the documents. Research and project answers do not read documents yet.
 
+## Assistants
+
+An assistant is a saved starting point: instructions, an optional model, run settings (temperature, response length, thinking) and up to four skills. Three come with Lumen (Translator, Writing editor, Study tutor); add and edit your own in Settings → **Assistants**.
+- **Start one** from the **Assistant** button under the composer. On an empty conversation it applies there; otherwise a new conversation starts with it. An "Assistant · name" chip shows which one the chat started from.
+- **Copied, not linked.** Starting copies the values into the conversation (its instructions, its run settings and its skill selection). Changing the chat later does not change the assistant, and editing or deleting the assistant never rewrites chats you already started.
+- `{{current_date}}` in the instructions becomes today's date for each reply.
+
+## Cloud models (optional)
+
+Off by default. Settings → **Cloud models** lets you add models from OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, Mistral or any OpenAI-compatible address, with your own API key.
+- **What is sent, and where.** Only conversations where you pick a cloud model are sent, and only to that provider: the messages, the conversation's instructions, selected skills and document excerpts. Photos go as their recognized text (OCR), not as images. The composer says "Cloud · provider" instead of "Local response" while a cloud model is selected. Turning the feature on asks for confirmation once.
+- **Stays local.** Web research, project folders and connected tools always run on local models; with a cloud model selected Lumen asks you to pick a local one for those. The local API never offers cloud models.
+- **Keys** are encrypted with Windows DPAPI and never shown again; the key field only says whether one is saved.
+- **Models.** "Load models" lists what your key can use; pick the ones to show in the model menu, or type a model ID. "Test" sends one short message. Run settings apply where the provider supports them (temperature, Top P, penalties, seed, response length); Top K, Min P and repeat penalty are local-only. A provider that refuses one of these fields gets the request again without the optional fields.
+- Token counts come from the provider when it reports them; there is no local context window for cloud models.
+- Not built in: cloud model costs, image input to cloud models, ChatGPT or Claude subscriptions (these need the providers' paid APIs).
+
+## Connected tools (MCP)
+
+Settings → **MCP servers** connects Lumen to tool servers that speak the Model Context Protocol over HTTP (Streamable HTTP).
+- **Lumen never starts programs.** Run a local MCP server yourself and add its address (http is allowed only for this computer; https anywhere). An optional access token is encrypted like API keys.
+- **Off until you turn each tool on.** After adding a server Lumen lists its tools; every tool starts off. Read-only tools are marked when the server says so.
+- **Using them.** Choose **+ → Connected tools** to send messages through the tool loop with a local model: the model picks a tool and arguments, and Lumen shows an approval card with the tool, server and exact arguments. **Allow once**, **Always allow this tool** (stops asking for that tool) or **Deny**; no answer in 2 minutes counts as Deny. Nothing is called before you allow it.
+- **Results** are cited as [T1], [T2]…; click one to see the arguments and the result the model was given. Tool results are treated as untrusted data.
+- What a tool does is up to its server: a server you connect can read or change things on its side. Keep "Ask every time" for tools that change anything.
+
+## Local API
+
+Settings → **Local API** (off by default) lets other programs on this computer use your local models through an OpenAI-compatible API: `GET /v1/models` and `POST /v1/chat/completions`, with streaming.
+- Listens on `127.0.0.1` only (default port 11500) and requires the key shown on that page (`Authorization: Bearer …`). "New key" replaces it. Requests from web pages are refused (no CORS, the Host must be this computer).
+- Requests share the engine with your chats and run one at a time, with the same context rules. Text messages only (no images or tool calls); up to 4,096 response tokens per request. Cloud models are not offered.
+
+## Preview (HTML and SVG)
+
+HTML and SVG code blocks in replies have a **Preview** button. The page opens in its own window, separate from Lumen: scripts run, but the page has no network access at all (every request other than the page itself is blocked), cannot open windows or navigate away, cannot download or ask for permissions, and nothing is saved.
+
 ## Models on this computer
 
 Settings → Library → **Models on this computer** looks for GGUF models other apps already downloaded: LM Studio, the Hugging Face cache, Ollama, GPT4All, Jan and llama.cpp's cache, plus any folder you choose. Lumen only reads those folders.

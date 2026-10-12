@@ -9,6 +9,46 @@ const {createAgent,createActivityStore,createReasoningStore}=require('./agent.cj
 const activityStore=createActivityStore(data),reasoningStore=createReasoningStore(data);
 const {createRunSettings,cleanDefaults}=require('./runsettings.cjs'),runSettings=createRunSettings(data);
 const documents=require('./documents.cjs').createDocuments(data);
+const assistants=require('./assistants.cjs').createAssistants(data);
+// Connections (connections.cjs): cloud models, MCP servers and the local API. All off until the user turns them on.
+let connections=null,cloud=null,mcpClient=null,apiServer=null,artifacts=null,cloudFlight=null;
+// Cloud models join the model list as "cloud:<provider>/<model>" entries; they have no file and are never loaded locally.
+function cloudModelEntries(){if(!connections)return [];try{return connections.cloudModels().map(c=>({Name:c.name,Display:c.model+' · '+c.providerLabel,Detail:c.providerLabel+' · '+c.model+' · cloud',Repo:'cloud/'+c.provider,File:c.model,Sha:'',Bytes:0,Installed:true,Cloud:{provider:c.provider,label:c.providerLabel,model:c.model}}));}catch{return [];}}
+function withCloud(models){return Array.isArray(models)?[...models.filter(m=>!m.Cloud),...cloudModelEntries()]:models;}
+// A cloud reply: the conversation (instructions, skills, document excerpts, messages) goes to the provider chosen for this
+// chat and nowhere else. The user message is saved first; a stopped reply keeps what arrived, marked as interrupted.
+async function cloudSend(args){
+ const chat=args.chat,target=connections?.parseCloud(chat?.Model);
+ if(!target)throw Error('Unknown cloud model.');if(!connections.public().cloud.enabled)throw Error('Cloud models are turned off. Turn them on in Settings → Cloud models.');
+ if(skillFlight||agent?.active())throw Error('A response is already running.');
+ const emit=e=>{if(win&&!win.isDestroyed())win.webContents.send('engine-event',e);};
+ skillFlight={id:chat.Id,snapshot:chat};const controller=new AbortController();cloudFlight=controller;let streamed='',reasoning='',firstThought=0,firstText=0;
+ try{
+  const base=await coreRequest('save',{chat});emit({type:'saved',data:base});
+  const p=prefs(),run=runSettings.effective(chat.Id,p),req=runSettings.request(run),vars=promptVariables(p);
+  const system=String(chat.SystemPrompt||'').replace(/\{\{\s*(current_date|current_time)\s*\}\}/g,(m,k)=>vars[k]);
+  const lastUser=[...chat.Messages].reverse().find(m=>m.Role==='user');const docContext=documents.context(chat.Id,String(lastUser?.DisplayText||lastUser?.Content||''),60000);
+  const guidance=[skillStore.guidance(skillStore.idsFor(chat.Id)).text,docContext?.guidance].filter(Boolean).join('\n\n');
+  let history=chat.Messages.filter(m=>m.Content).map(m=>({role:m.Role==='assistant'?'assistant':'user',content:String(m.Content)}));
+  let total=history.reduce((n,m)=>n+m.content.length,0),omitted=0;while(total>300000&&history.length>1){total-=history[0].content.length;history.shift();omitted++;}
+  const messages=[...([system,guidance].filter(Boolean).length?[{role:'system',content:[system,guidance].filter(Boolean).join('\n\n')}]:[]),...history];
+  const result=await cloud.chat({provider:target.provider,model:target.model,messages,maxTokens:run.responseTokens,temperature:req.temperature,sampling:req.sampling,signal:controller.signal,
+   onChunk:t=>{if(!firstText)firstText=Date.now();streamed+=t;emit({type:'chunk',data:t});},onReasoning:t=>{if(!firstThought)firstThought=Date.now();reasoning+=t;emit({type:'reasoning',data:t});}});
+  if(!result.content.trim())throw Error(connections.providerLabel(target.provider)+' returned an empty reply'+(result.finish==='length'?' (the response length ran out).':'.'));
+  const saved=await coreRequest('save',{chat:{...base,Messages:[...base.Messages,{Role:'assistant',Content:result.content,Interrupted:result.finish==='length'}]}});
+  const index=saved.Messages.length-1;
+  if(docContext?.sources.length)documents.recordUse(saved.Id,index,docContext.sources,result.content);
+  if(reasoning)reasoningStore.record(saved.Id,index,{text:reasoning.slice(0,30000),seconds:Math.max(1,Math.round(((firstText||Date.now())-firstThought)/1000))});
+  const u=result.usage;emit({type:'context',data:{Prompt:Number(u?.prompt_tokens)||0,Generated:Number(u?.completion_tokens)||0,Capacity:0,ModelCapacity:0,OmittedMessages:omitted,Reserved:run.responseTokens,Cloud:connections.providerLabel(target.provider),Counted:!!u}});
+  return decorateChat(saved);
+ }catch(error){
+  if(controller.signal.aborted){
+   if(streamed.trim()){try{const saved=await coreRequest('save',{chat:{...chat,Messages:[...chat.Messages,{Role:'assistant',Content:streamed,Interrupted:true}]}});emit({type:'saved',data:decorateChat(saved)});}catch{}}
+   throw Object.assign(Error('Cancelled'),{cancelled:true});
+  }
+  throw error;
+ }finally{skillFlight=null;cloudFlight=null;}
+}
 // {{current_date}} in a system prompt, written out in the interface language (request only; the saved chat keeps the placeholder).
 // The conversation's run settings for agent turns: thinking, response length, temperature and sampling for the final answer.
 function runOptions(chat){const p=prefs(),run=runSettings.effective(chat.Id,p),req=runSettings.request(run);return {thinking:thinkingFor(chat.Model,{...p,thinking:run.thinking}),responseTokens:run.responseTokens,temperature:req.temperature,sampling:req.sampling};}
@@ -63,7 +103,7 @@ const namesPath=path.join(data,'conversation-names.json');
 function manualNames(){try{const parsed=JSON.parse(fs.readFileSync(namesPath,'utf8'));return Object.fromEntries(Object.entries(parsed).filter(([id,title])=>/^[a-fA-F0-9]{32}$/.test(id)&&typeof title==='string'&&title.length>0&&title.length<=120));}catch{return {};}}
 function saveManualNames(names){const temp=namesPath+'.tmp';fs.writeFileSync(temp,JSON.stringify(names));fs.renameSync(temp,namesPath);}
 async function decodeWebp(buffer){if(!win||win.isDestroyed())throw Error('The workspace is unavailable.');const base64=buffer.toString('base64');const script='(async()=>{const bytes=Uint8Array.from(atob('+JSON.stringify(base64)+'),c=>c.charCodeAt(0));const image=await createImageBitmap(new Blob([bytes],{type:"image/webp"}));try{if(image.width*image.height>50000000)throw Error("Use a photo with at most 50 million pixels.");const scale=Math.min(1,1600/Math.max(image.width,image.height)),canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));canvas.getContext("2d").drawImage(image,0,0,canvas.width,canvas.height);return canvas.toDataURL("image/png").split(",")[1];}finally{image.close();}})()';return Buffer.from(await win.webContents.executeJavaScript(script),'base64');}
-function decorateChat(chat){return decorateDocuments(decorateProject(variantStore.decorate(visionStore.decorate(reasoningStore.decorate(activityStore.decorate(photoStore.decorate(skillStore.decorate(chat))))))));}
+function decorateChat(chat){return assistants.decorate(decorateDocuments(decorateProject(variantStore.decorate(visionStore.decorate(reasoningStore.decorate(activityStore.decorate(photoStore.decorate(skillStore.decorate(chat)))))))));}
 // Excerpts each reply was given from attached documents ([D#] sources).
 function decorateDocuments(chat){if(!chat?.Id||!Array.isArray(chat.Messages))return chat;const used=documents.usedFor(chat.Id);if(!Object.keys(used).length)return chat;return {...chat,Messages:chat.Messages.map((m,i)=>used[i]&&m.Role==='assistant'?{...m,DocSources:used[i]}:m)};}
 // The attached project (name and folder) travels with the chat so the renderer can show it; the binding lives in main.
@@ -76,6 +116,8 @@ function coreRequest(action,args={},onEvent=null){if(action==='rename')return re
 
 async function request(action,args={}){
  if(['save','send'].includes(action)&&args.chat)photoStore.remember(args.chat);
+ if(action==='send'&&/^cloud:/.test(String(args.chat?.Model||'')))return cloudSend(args);
+ if(action==='cancel'&&cloudFlight){cloudFlight.abort();return true;}
  if(action==='send'){
   if(skillFlight)throw Error('A response is already running.');const prepared=hostReady?{chat:args.chat,applied:false}:skillStore.prepare(args.chat);const skillGuidance=hostReady?[skillStore.guidance(skillStore.idsFor(args.chat.Id)).text,browserHint(args.chat)].filter(Boolean).join('\n\n'):'';skillFlight={id:args.chat.Id,snapshot:args.chat};
   let reasoning='',firstThought=0,firstText=0,lastSaved=null,sentImages=[];
@@ -112,21 +154,22 @@ async function request(action,args={}){
  }
  const result=await coreRequest(action,args);
  if(action==='bench'&&result&&typeof result==='object'){const legacy={...result,Protocol:'legacy'};saveBenchmark(legacy);return legacy;}
- if(action==='bootstrap'&&result&&Array.isArray(result.models)){modelInfo.setBackendHardware(result.hardware);refreshModelMeta(result.models);return {...result,models:modelInfo.decorate(result.models)};}
- if(action==='models'&&Array.isArray(result)){refreshModelMeta(result);return modelInfo.decorate(result);}
+ if(action==='bootstrap'&&result&&Array.isArray(result.models)){modelInfo.setBackendHardware(result.hardware);refreshModelMeta(result.models);return {...result,models:withCloud(modelInfo.decorate(result.models))};}
+ if(action==='models'&&Array.isArray(result)){refreshModelMeta(result);return withCloud(modelInfo.decorate(result));}
+ if(action==='download'&&Array.isArray(result))return withCloud(modelInfo.decorate(result));
  if(action==='unload')loaded=null;
- if(action==='branch'){photoStore.branch(args.chat.Id,result.Id,args.count);activityStore.branch(args.chat.Id,result.Id,args.count);reasoningStore.branch(args.chat.Id,result.Id,args.count);runSettings.branch(args.chat.Id,result.Id);documents.branch(args.chat.Id,result.Id);visionStore.branch(args.chat.Id,result.Id,args.count);variantStore.branch(args.chat.Id,result.Id,args.count);projectStore.branch(args.chat.Id,result.Id);skillStore.select(result.Id,decorateChat(args.chat).SkillIds,args.chat.SystemPrompt);return decorateChat(result);}
+ if(action==='branch'){photoStore.branch(args.chat.Id,result.Id,args.count);activityStore.branch(args.chat.Id,result.Id,args.count);reasoningStore.branch(args.chat.Id,result.Id,args.count);runSettings.branch(args.chat.Id,result.Id);documents.branch(args.chat.Id,result.Id);visionStore.branch(args.chat.Id,result.Id,args.count);variantStore.branch(args.chat.Id,result.Id,args.count);projectStore.branch(args.chat.Id,result.Id);assistants.branch(args.chat.Id,result.Id);skillStore.select(result.Id,decorateChat(args.chat).SkillIds,args.chat.SystemPrompt);return decorateChat(result);}
  return result;
 }
 
 function sender(event){if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame)throw Error('Invalid IPC sender');}
 app.setName('lumen.cpp');app.setAppUserModelId('Lumen.Beta.Desktop');
-protocol.registerSchemesAsPrivileged([{scheme:'lumen',privileges:{standard:true,secure:true,supportFetchAPI:true}}]);
+protocol.registerSchemesAsPrivileged([{scheme:'lumen',privileges:{standard:true,secure:true,supportFetchAPI:true}},{scheme:'lumen-artifact',privileges:{standard:true,secure:true}}]);
 if(!test&&!app.requestSingleInstanceLock()){app.quit();}else{
 app.on('second-instance',()=>{if(win){if(win.isMinimized())win.restore();win.show();win.focus();}});
 app.whenReady().then(async()=>{
  fs.mkdirSync(data,{recursive:true});skillStore.recover();
- protocol.handle('lumen',req=>{const u=new URL(req.url);const file=u.pathname==='/'?'index.html':u.pathname.slice(1);const types={'lumen.svg':'image/svg+xml','index.html':'text/html; charset=utf-8','style.css':'text/css; charset=utf-8','renderer.js':'text/javascript; charset=utf-8','workspace.js':'text/javascript; charset=utf-8','explore.js':'text/javascript; charset=utf-8','explore.css':'text/css; charset=utf-8','design.js':'text/javascript; charset=utf-8','tools.js':'text/javascript; charset=utf-8','tools.css':'text/css; charset=utf-8','controls.js':'text/javascript; charset=utf-8','vision.js':'text/javascript; charset=utf-8','speed.js':'text/javascript; charset=utf-8','models.js':'text/javascript; charset=utf-8','lab.js':'text/javascript; charset=utf-8','format.js':'text/javascript; charset=utf-8','regen.js':'text/javascript; charset=utf-8','search.js':'text/javascript; charset=utf-8','project.js':'text/javascript; charset=utf-8','skillsui.js':'text/javascript; charset=utf-8','updates.js':'text/javascript; charset=utf-8','themes.js':'text/javascript; charset=utf-8','browse.js':'text/javascript; charset=utf-8','notices.js':'text/javascript; charset=utf-8','run.js':'text/javascript; charset=utf-8','picks.js':'text/javascript; charset=utf-8','imports.js':'text/javascript; charset=utf-8','docs.js':'text/javascript; charset=utf-8','run.css':'text/css; charset=utf-8','engineui.js':'text/javascript; charset=utf-8','themes.css':'text/css; charset=utf-8','format.css':'text/css; charset=utf-8','vendor/markdown-it.min.js':'text/javascript; charset=utf-8','vendor/highlight.min.js':'text/javascript; charset=utf-8','vendor/katex.min.js':'text/javascript; charset=utf-8','vendor/katex.min.css':'text/css; charset=utf-8','controls.css':'text/css; charset=utf-8','polish.css':'text/css; charset=utf-8','photos.js':'text/javascript; charset=utf-8','photos.css':'text/css; charset=utf-8','design.css':'text/css; charset=utf-8','previews/desk-dark.png':'image/png','previews/desk-light.png':'image/png','previews/studio-dark.png':'image/png','previews/studio-light.png':'image/png',"logos/qwen.webp":"image/webp","logos/llama.webp":"image/webp","logos/mistral.webp":"image/webp","logos/deepseek.webp":"image/webp","logos/gemma.webp":"image/webp","logos/phi.webp":"image/webp","logos/tinyllama.webp":"image/webp"};if(u.hostname==='app'){const match=file.match(/^(photo|photo-thumb)\/([a-f0-9]{64})\.png$/);if(match){try{return new Response(fs.readFileSync(photoStore.file(match[2],match[1]==='photo-thumb'?'thumb':'image')),{headers:{'content-type':'image/png','cache-control':'private, max-age=86400'}});}catch{return new Response('Not found',{status:404});}}}if(/^vendor\/fonts\/KaTeX_[A-Za-z0-9-]+\.woff2$/.test(file))types[file]='font/woff2';if(u.hostname!=='app'||!types[file])return new Response('Not found',{status:404});let content=fs.readFileSync(path.join(__dirname,file));if(file==='index.html'){const p=prefs();content=content.toString('utf8').replace('<body>','<body'+(p.motion===false?' class="no-motion"':'')+' data-layout="'+(p.layout==='studio'?'studio':'desk')+'" data-mode="'+(p.colorMode==='light'?'light':'dark')+'" data-theme="'+(accentThemes.includes(p.theme)?p.theme:'warm')+'">');}return new Response(content,{headers:{'content-type':types[file]}});});
+ protocol.handle('lumen',req=>{const u=new URL(req.url);const file=u.pathname==='/'?'index.html':u.pathname.slice(1);const types={'lumen.svg':'image/svg+xml','index.html':'text/html; charset=utf-8','style.css':'text/css; charset=utf-8','renderer.js':'text/javascript; charset=utf-8','workspace.js':'text/javascript; charset=utf-8','explore.js':'text/javascript; charset=utf-8','explore.css':'text/css; charset=utf-8','design.js':'text/javascript; charset=utf-8','tools.js':'text/javascript; charset=utf-8','tools.css':'text/css; charset=utf-8','controls.js':'text/javascript; charset=utf-8','vision.js':'text/javascript; charset=utf-8','speed.js':'text/javascript; charset=utf-8','models.js':'text/javascript; charset=utf-8','lab.js':'text/javascript; charset=utf-8','format.js':'text/javascript; charset=utf-8','regen.js':'text/javascript; charset=utf-8','search.js':'text/javascript; charset=utf-8','project.js':'text/javascript; charset=utf-8','skillsui.js':'text/javascript; charset=utf-8','updates.js':'text/javascript; charset=utf-8','themes.js':'text/javascript; charset=utf-8','browse.js':'text/javascript; charset=utf-8','notices.js':'text/javascript; charset=utf-8','run.js':'text/javascript; charset=utf-8','picks.js':'text/javascript; charset=utf-8','imports.js':'text/javascript; charset=utf-8','docs.js':'text/javascript; charset=utf-8','run.css':'text/css; charset=utf-8','assistants.js':'text/javascript; charset=utf-8','connect.js':'text/javascript; charset=utf-8','artifacts.js':'text/javascript; charset=utf-8','extras.css':'text/css; charset=utf-8','engineui.js':'text/javascript; charset=utf-8','themes.css':'text/css; charset=utf-8','format.css':'text/css; charset=utf-8','vendor/markdown-it.min.js':'text/javascript; charset=utf-8','vendor/highlight.min.js':'text/javascript; charset=utf-8','vendor/katex.min.js':'text/javascript; charset=utf-8','vendor/katex.min.css':'text/css; charset=utf-8','controls.css':'text/css; charset=utf-8','polish.css':'text/css; charset=utf-8','photos.js':'text/javascript; charset=utf-8','photos.css':'text/css; charset=utf-8','design.css':'text/css; charset=utf-8','previews/desk-dark.png':'image/png','previews/desk-light.png':'image/png','previews/studio-dark.png':'image/png','previews/studio-light.png':'image/png',"logos/qwen.webp":"image/webp","logos/llama.webp":"image/webp","logos/mistral.webp":"image/webp","logos/deepseek.webp":"image/webp","logos/gemma.webp":"image/webp","logos/phi.webp":"image/webp","logos/tinyllama.webp":"image/webp"};if(u.hostname==='app'){const match=file.match(/^(photo|photo-thumb)\/([a-f0-9]{64})\.png$/);if(match){try{return new Response(fs.readFileSync(photoStore.file(match[2],match[1]==='photo-thumb'?'thumb':'image')),{headers:{'content-type':'image/png','cache-control':'private, max-age=86400'}});}catch{return new Response('Not found',{status:404});}}}if(/^vendor\/fonts\/KaTeX_[A-Za-z0-9-]+\.woff2$/.test(file))types[file]='font/woff2';if(u.hostname!=='app'||!types[file])return new Response('Not found',{status:404});let content=fs.readFileSync(path.join(__dirname,file));if(file==='index.html'){const p=prefs();content=content.toString('utf8').replace('<body>','<body'+(p.motion===false?' class="no-motion"':'')+' data-layout="'+(p.layout==='studio'?'studio':'desk')+'" data-mode="'+(p.colorMode==='light'?'light':'dark')+'" data-theme="'+(accentThemes.includes(p.theme)?p.theme:'warm')+'">');}return new Response(content,{headers:{'content-type':types[file]}});});
  // lumen-host (backend/LumenHost.cs + LumenCore.cs) is the local engine process: chats, models, engine setup and llama-server.
  const fail=e=>{for(const p of pending.values())p.reject(e);pending.clear();if(win&&!win.isDestroyed())win.webContents.send('engine-event',{type:'fatal',data:{message:e.message}});};
  function startCore(){
@@ -146,7 +189,7 @@ app.whenReady().then(async()=>{
  ipcMain.on('window',(e,action)=>{sender(e);if(action==='minimize')win.minimize();if(action==='maximize')win.isMaximized()?win.unmaximize():win.maximize();if(action==='close')win.close();});
  ipcMain.handle('export',async(e,text)=>{sender(e);if(typeof text!=='string'||text.length>4000000)throw Error('Invalid export');const result=await dialog.showSaveDialog(win,{defaultPath:'lumen-chat.md',filters:[{name:'Markdown',extensions:['md']}]});if(!result.canceled)fs.writeFileSync(result.filePath,text,'utf8');return !result.canceled;});
  ipcMain.handle('copy',(e,text)=>{sender(e);if(typeof text!=='string'||text.length>4000000)throw Error('Invalid clipboard content');clipboard.writeText(text);return true;});
- ipcMain.handle('delete-chat',async(e,id,title,language)=>{sender(e);if(typeof id!=='string'||!/^[a-fA-F0-9]{32}$/.test(id))throw Error('Invalid conversation ID');const tr=language==='tr';const answer=await dialog.showMessageBox(win,{type:'warning',title:tr?'Sohbeti sil':'Delete conversation',message:tr?'Bu sohbet silinsin mi?':'Delete this conversation?',detail:`“${String(title||'').slice(0,200)}”\n\n`+(tr?'Sohbet ve kayıtlı mesajları kalıcı olarak silinecek. Bu işlem geri alınamaz.':'The conversation and its saved messages will be permanently deleted. This cannot be undone.'),buttons:tr?['Vazgeç','Sil']:['Cancel','Delete'],defaultId:0,cancelId:0,noLink:true});if(answer.response!==1)return {deleted:false};await request('delete',{id});skillStore.forget(id);photoStore.forget(id);activityStore.forget(id);reasoningStore.forget(id);runSettings.remove(id);documents.forget(id);visionStore.forget(id);variantStore.forget(id);projectStore.forget(id);const names=manualNames();if(names[id]){delete names[id];saveManualNames(names);}return {deleted:true};});
+ ipcMain.handle('delete-chat',async(e,id,title,language)=>{sender(e);if(typeof id!=='string'||!/^[a-fA-F0-9]{32}$/.test(id))throw Error('Invalid conversation ID');const tr=language==='tr';const answer=await dialog.showMessageBox(win,{type:'warning',title:tr?'Sohbeti sil':'Delete conversation',message:tr?'Bu sohbet silinsin mi?':'Delete this conversation?',detail:`“${String(title||'').slice(0,200)}”\n\n`+(tr?'Sohbet ve kayıtlı mesajları kalıcı olarak silinecek. Bu işlem geri alınamaz.':'The conversation and its saved messages will be permanently deleted. This cannot be undone.'),buttons:tr?['Vazgeç','Sil']:['Cancel','Delete'],defaultId:0,cancelId:0,noLink:true});if(answer.response!==1)return {deleted:false};await request('delete',{id});skillStore.forget(id);photoStore.forget(id);activityStore.forget(id);reasoningStore.forget(id);runSettings.remove(id);documents.forget(id);visionStore.forget(id);variantStore.forget(id);projectStore.forget(id);assistants.forget(id);const names=manualNames();if(names[id]){delete names[id];saveManualNames(names);}return {deleted:true};});
  ipcMain.handle('attach-text',async(e,language)=>{sender(e);const tr=language==='tr';const result=await dialog.showOpenDialog(win,{title:tr?'Metin veya kod dosyası ekle':'Attach text or code files',properties:['openFile','multiSelections'],filters:[{name:tr?'UTF-8 metin ve kod':'UTF-8 text & code',extensions:['txt','md','json','js','ts','tsx','jsx','py','cs','cpp','c','h','html','css','yaml','yml','toml','xml','csv','log','rs','go','java','sql','sh','ps1']}]});if(result.canceled)return [];if(result.filePaths.length>5)throw Error(tr?'En fazla 5 dosya ekleyebilirsin.':'Attach up to 5 files.');const files=[];let chars=0;for(const file of result.filePaths){const stat=await fs.promises.stat(file);if(!stat.isFile()||stat.size>1048576)throw Error(tr?'Her dosya en fazla 1 MB olmalı.':'Each file must be at most 1 MB.');const buffer=await fs.promises.readFile(file);if(buffer.includes(0))throw Error(tr?'Yalnızca metin ve kod dosyaları destekleniyor.':'Only text and code files are supported.');const text=new TextDecoder('utf-8',{fatal:true}).decode(buffer);chars+=text.length;if(chars>45000)throw Error(tr?'Dosyaların toplamı 45.000 karakteri aşamaz.':'Files must total at most 45,000 characters.');files.push({name:path.basename(file),text,bytes:stat.size});}return files;});
  
  ipcMain.handle('photos',async(e,action,args={})=>{sender(e);if(JSON.stringify(args).length>10000)throw Error('Invalid photo request.');if(action==='info')return args.retain===true?photoStore.retain({id:args.id,name:args.name}):photoStore.publicPhoto({id:args.id,name:args.name});if(action==='release'){if(!Array.isArray(args.ids)||args.ids.length>4)throw Error('Invalid photo IDs.');photoStore.release(args.ids);return true;}if(action==='choose'){if(skillFlight)throw Error('Wait until the response finishes.');const tr=args.language==='tr';const choice=await dialog.showOpenDialog(win,{title:tr?'Fotoğraf ekle':'Add photos',properties:['openFile','multiSelections'],filters:[{name:tr?'Fotoğraflar':'Photos',extensions:['png','jpg','jpeg','webp']}]});if(choice.canceled)return [];return photoStore.importFiles(choice.filePaths,args.language);}if(action==='paste'){if(skillFlight)throw Error('Wait until the response finishes.');const items=await clipboard.read();for(const item of items){const type=item.types.find(type=>['image/png','image/jpeg','image/webp'].includes(type));if(!type)continue;const blob=await item.getType(type);if(blob.size>12582912)throw Error('Each photo must be at most 12 MB.');return photoStore.importBuffer(Buffer.from(await blob.arrayBuffer()),'Screenshot.'+(type==='image/jpeg'?'jpg':type==='image/webp'?'webp':'png'),args.language);}return [];}throw Error('Invalid photo action.');});
@@ -210,6 +253,10 @@ app.whenReady().then(async()=>{
  // ---------- Tools: settings, web, browser, agent runtime and the model downloader ----------
  const send=(channel,payload)=>{if(win&&!win.isDestroyed())win.webContents.send(channel,payload);};
  toolSettings=createToolSettings(data,safeStorage);
+ connections=require('./connections.cjs').createConnections(data,safeStorage);
+ cloud=require('./cloud.cjs').createCloud({connections,version:app.getVersion()});
+ mcpClient=require('./mcp.cjs').createMcp({version:app.getVersion()});
+ artifacts=require('./artifacts.cjs').createArtifacts({BrowserWindow,session,getWindow:()=>win,icon:path.join(__dirname,'lumen.ico')});
  // The web session (persist:lumen-web), its request filter and views are created on first use, not at startup.
  const getBrowser=()=>browser||(browser=createBrowser({getWindow:()=>win,emit:state=>send('browser-event',state),getSettings:()=>toolSettings.get().browser}));
  webTools=createWeb({render:(url,options)=>toolSettings.get().browser.render?getBrowser().render(url,options):Promise.reject(Object.assign(Error('JavaScript rendering is off.'),{code:'disabled'}))});
@@ -237,16 +284,21 @@ app.whenReady().then(async()=>{
  });
  ipcMain.handle('agent',async(e,action,args={})=>{
   sender(e);if(JSON.stringify(args).length>4000000)throw Error('Invalid request.');
-  if(action==='route'){const config=toolSettings.get(),prompt=String(args.prompt||'').slice(0,90000);if(!hostReady)return {route:'chat',reason:'unavailable'};if(args.mode==='research')return config.search.enabled?{route:'agent'}:{route:'chat',reason:'web-off'};return {route:config.search.enabled&&config.agent.auto&&agent.needsTools(prompt)?'agent':'chat'};}
+  if(action==='route'){const config=toolSettings.get(),prompt=String(args.prompt||'').slice(0,90000);if(/^cloud:/.test(String(args.model||'')))return {route:'chat',reason:'cloud'};if(!hostReady)return {route:'chat',reason:'unavailable'};if(args.mode==='research')return config.search.enabled?{route:'agent'}:{route:'chat',reason:'web-off'};return {route:config.search.enabled&&config.agent.auto&&agent.needsTools(prompt)?'agent':'chat'};}
   if(action==='run'){
    const {runId,chat,prompt,mode,contextSize}=args;
-   if(typeof runId!=='string'||!/^[a-f0-9-]{36}$/.test(runId)||!validChat(chat)||typeof prompt!=='string'||!prompt.trim()||prompt.length>90000||!['auto','research','project'].includes(mode)||!contextSizes.includes(contextSize)||!hostReady&&contextSize>16384)throw Error('Invalid research request.');
+   if(typeof runId!=='string'||!/^[a-f0-9-]{36}$/.test(runId)||!validChat(chat)||typeof prompt!=='string'||!prompt.trim()||prompt.length>90000||!['auto','research','project','tools'].includes(mode)||!contextSizes.includes(contextSize)||!hostReady&&contextSize>16384)throw Error('Invalid research request.');
    if(skillFlight)throw Error('A response is already running.');
+   if(/^cloud:/.test(chat.Model))throw Error(prefs().language==='tr'?'Araştırma, proje ve araçlar yerel modellerle çalışır. Bu sohbet için yerel bir model seç.':'Research, project folders and tools run on local models. Choose a local model for this conversation.');
    let systemPrompt=String(chat.SystemPrompt||'').slice(0,12000);try{systemPrompt=skillStore.compile(systemPrompt,Array.isArray(chat.SkillIds)?chat.SkillIds:[]).prompt;}catch{}
    const p=prefs(),context=await contextFor(chat.Model,contextSize);loaded={model:chat.Model,context:context.value};
    if(mode==='project'){const binding=projectStore.get(chat.Id);if(!binding)throw Error('No project folder is attached to this conversation.');if(!fs.existsSync(binding.root))throw Error('The project folder was not found: '+binding.root);return agent.runProject({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',project:createProjectTools(binding),research:args.research===true,systemPrompt,...runOptions(chat)});}
+   if(mode==='tools'){const tools=connections.activeTools();return agent.runTools({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',tools,
+    callTool:(serverId,name,toolArgs,signal)=>mcpClient.callTool(connections.server(serverId),name,toolArgs,{signal}),
+    allowAlways:(serverId,name)=>{try{connections.updateServer(serverId,{tool:{name,ask:false}});}catch{}},systemPrompt,...runOptions(chat)});}
    return agent.run({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',mode,systemPrompt,...runOptions(chat)});
   }
+  if(action==='approve')return agent.approve(String(args.runId||''),String(args.callId||''),String(args.decision||'deny'));
   if(action==='cancel')return agent.cancel(String(args.runId||''));
   if(action==='record'){const record=activityStore.record(args.chatId,args.index,args.record);if(typeof args.reasoning?.text==='string'&&args.reasoning.text)reasoningStore.record(args.chatId,args.index,args.reasoning);return record;}
   throw Error('Invalid agent action.');
@@ -334,6 +386,47 @@ app.whenReady().then(async()=>{
    fs.writeFileSync(prefPath,JSON.stringify({...p,thinking:run.thinking,responseTokens:run.responseTokens,creativity:preset||p.creativity||'balanced',sampling:cleanDefaults(sampling)}));
    runSettings.reset(id);return {...view(),prefs:prefs()};
   }
+  throw Error('Invalid request');
+ });
+ // Assistants: saved instructions, model, run settings and skills. "start" copies one into a conversation.
+ ipcMain.handle('assistants',async(e,action,args={})=>{sender(e);if(JSON.stringify(args).length>40000)throw Error('Invalid request.');
+  if(action==='list')return assistants.list();
+  if(action==='save'){assistants.upsert(args.assistant);return assistants.list();}
+  if(action==='remove'){const a=assistants.get(String(args.id||''));if(!a)throw Error('Assistant not found.');const tr=prefs().language==='tr';const answer=await dialog.showMessageBox(win,{type:'warning',message:tr?'Asistan silinsin mi?':'Delete this assistant?',detail:`“${a.name}”\n\n`+(tr?'Bu asistanla başlatılmış sohbetler değişmez.':'Conversations started with it stay as they are.'),buttons:tr?['Vazgeç','Sil']:['Cancel','Delete'],defaultId:0,cancelId:0,noLink:true});if(answer.response!==1)return assistants.list();assistants.remove(a.id);return assistants.list();}
+  if(action==='start'){
+   const chatId=String(args.chatId||''),a=args.id?assistants.get(String(args.id)):null;if(!/^[a-fA-F0-9]{32}$/.test(chatId))throw Error('Invalid conversation ID.');if(args.id&&!a)throw Error('Assistant not found.');
+   if(skillFlight)throw Error('Wait for the current response to finish.');
+   if(!a){runSettings.reset(chatId);assistants.link(chatId,null);return {assistant:null};}
+   runSettings.set(chatId,a.run);const known=new Set(skillStore.list().map(s=>s.id));const skillIds=a.skillIds.filter(id=>known.has(id));
+   try{skillStore.select(chatId,skillIds,a.instructions);}catch{}assistants.link(chatId,a.id);
+   const models=withCloud(modelInfo.decorate(knownModels));const model=a.model&&models.some(m=>m.Name===a.model&&m.Installed)?a.model:'';
+   return {assistant:{id:a.id,name:a.name},instructions:a.instructions,model,modelMissing:!!a.model&&!model,skillIds};
+  }
+  throw Error('Invalid request');
+ });
+ // Connections: cloud providers, MCP servers and the local API (Settings → Connections / Cloud models).
+ const connectionsView=()=>({...connections.public(),api:{...connections.public().api,...(apiServer?.status()||{})}});
+ ipcMain.handle('connections',async(e,action,args={})=>{sender(e);if(JSON.stringify(args).length>40000)throw Error('Invalid request.');
+  if(action==='get')return connectionsView();
+  if(action==='cloud'){connections.setCloud(args);return connectionsView();}
+  if(action==='provider'){connections.setCloudProvider(String(args.provider||''),args);return connectionsView();}
+  if(action==='provider-models'){const list=await cloud.listModels(String(args.provider||''));return {models:list};}
+  if(action==='provider-test'){const target=String(args.provider||''),model=String(args.model||'');const r=await cloud.chat({provider:target,model,messages:[{role:'user',content:'Reply with the single word: ready'}],maxTokens:16,signal:AbortSignal.timeout(60000)});return {reply:String(r.content||'').slice(0,200)};}
+  if(action==='mcp-add'){const id=connections.addServer({name:args.name,url:args.url,token:args.token});try{const r=await mcpClient.listTools(connections.server(id));connections.updateServer(id,{tools:r.tools,serverName:r.serverName,checked:new Date().toISOString(),error:''});}catch(error){connections.updateServer(id,{error:error.message,checked:new Date().toISOString()});}return connectionsView();}
+  if(action==='mcp-refresh'){const id=String(args.id||'');try{const r=await mcpClient.listTools(connections.server(id));connections.updateServer(id,{tools:r.tools,serverName:r.serverName,checked:new Date().toISOString(),error:''});}catch(error){connections.updateServer(id,{error:error.message,checked:new Date().toISOString()});}return connectionsView();}
+  if(action==='mcp-update'){const id=String(args.id||'');connections.updateServer(id,{enabled:args.enabled,name:args.name,token:args.token,tool:args.tool});if(typeof args.token==='string')mcpClient.forget(id);return connectionsView();}
+  if(action==='mcp-remove'){const id=String(args.id||'');mcpClient.forget(id);connections.removeServer(id);return connectionsView();}
+  if(action==='api'){connections.setApi(args);await apiServer.start();return connectionsView();}
+  throw Error('Invalid request');
+ });
+ // The local API server reuses the engine: one request at a time, same models, same context rules.
+ apiServer=require('./apiserver.cjs').createApiServer({getConfig:()=>connections.api(),models:()=>request('models'),contextFor:async name=>(await contextFor(name,prefs().contextSize)).value,
+  complete:args=>engine.complete(args),cancel:()=>engine.cancel(),log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}}});
+ apiServer.start().catch(()=>{});
+ // Artifact preview: HTML/SVG from a reply in a separate, offline, sandboxed window (artifacts.cjs).
+ ipcMain.handle('artifact',async(e,action,args={})=>{sender(e);
+  if(action==='open'){if(typeof args.code!=='string'||args.code.length>2000000)throw Error('Nothing to preview.');return artifacts.open({code:args.code,kind:String(args.kind||''),title:String(args.title||''),dark:prefs().colorMode!=='light'});}
+  if(action==='close'){artifacts.close();return true;}
   throw Error('Invalid request');
  });
  ipcMain.handle('variants',async(e,action,args={})=>{
@@ -434,5 +527,5 @@ app.whenReady().then(async()=>{
  if(test){try{await require('./ui-check.cjs').run(win,app,request,prefs,data);}catch(e){fs.writeFileSync(path.join(process.env.LUMEN_CHECK_OUTPUT||data,'failure.txt'),e.stack);app.exitCode=1;}finally{app.quit();}}
 }).catch(e=>{fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'desktop-startup-error.log'),e.stack);if(core)core.stdin.end();app.exit(1);});}
 let shuttingDown=false;
-app.on('window-all-closed',()=>app.quit());app.on('before-quit',event=>{if(!core||shuttingDown)return;event.preventDefault();shuttingDown=true;if(win&&!win.isDestroyed())win.hide();agent?.cancelAll();downloader?.cancelAll();try{browser?.close();}catch{}const timeout=setTimeout(()=>{core?.kill();app.exit();},8000);Promise.resolve().then(()=>request('cancel')).then(()=>request('unload')).catch(()=>{}).then(()=>{if(toolSettings?.get().browser.clearOnExit){const web=session.fromPartition('persist:lumen-web');return Promise.all([web.clearStorageData(),web.clearCache()]).catch(()=>{});}}).finally(()=>{core.stdin.end();clearTimeout(timeout);app.exit();});});
+app.on('window-all-closed',()=>app.quit());app.on('before-quit',event=>{if(!core||shuttingDown)return;event.preventDefault();shuttingDown=true;if(win&&!win.isDestroyed())win.hide();agent?.cancelAll();cloudFlight?.abort();apiServer?.stop().catch(()=>{});try{artifacts?.close();}catch{}downloader?.cancelAll();try{browser?.close();}catch{}const timeout=setTimeout(()=>{core?.kill();app.exit();},8000);Promise.resolve().then(()=>request('cancel')).then(()=>request('unload')).catch(()=>{}).then(()=>{if(toolSettings?.get().browser.clearOnExit){const web=session.fromPartition('persist:lumen-web');return Promise.all([web.clearStorageData(),web.clearCache()]).catch(()=>{});}}).finally(()=>{core.stdin.end();clearTimeout(timeout);app.exit();});});
 

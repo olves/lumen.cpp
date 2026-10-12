@@ -41,7 +41,7 @@ renderModelSelector=function(){
  if(!matching.length)list.append(el('p','model-menu-empty',t('noMatch')));
  for(const m of matching){
   const chosen=m.Name===selected?.Name,option=el('button','model-option'+(chosen?' selected':''));option.type='button';option.title=modelDetail(m);option.setAttribute('role','option');option.setAttribute('aria-selected',String(chosen));option.disabled=state.busy;
-  const info=el('span','model-option-info');info.append(el('strong','',displayName(m)),el('small','',modelSize(m.Bytes)+' · '+t(m.Installed?'ready':'firstDownload')));
+  const info=el('span','model-option-info');info.append(el('strong','',displayName(m)),el('small','',m.Cloud?t('cloudModelTag')+' · '+m.Cloud.label:modelSize(m.Bytes)+' · '+t(m.Installed?'ready':'firstDownload')));
   option.append(modelLogo(m.Repo,m.Name),info,el('span','model-check',chosen?'✓':''));
   option.onclick=()=>{$('model-picker').value=m.Name;$('model-picker').dispatchEvent(new Event('change'));closeComposerMenus();$('model-trigger').focus();};list.append(option);
  }
@@ -52,7 +52,7 @@ const modelsMessageNode=messageNode;messageNode=function(m,index,stream=false){
  return result;
 };
 renderModels=function(){
- const list=$('model-list');list.replaceChildren();const installed=state.models.filter(m=>m.Installed);
+ const list=$('model-list');list.replaceChildren();const installed=state.models.filter(m=>m.Installed&&!m.Cloud);
  for(const m of installed){const row=repoRow(m.Repo,displayName(m),modelSize(m.Bytes),true);row.title=modelDetail(m);list.append(row);}
  if(!installed.length){list.append(el('p','library-empty',t('noInstalled')));const button=el('button','text-button',t('browseHf'));button.onclick=()=>openSettings('explore');list.append(button);}
  if($('settings-model-count'))$('settings-model-count').textContent=installed.length;

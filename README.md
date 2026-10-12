@@ -22,6 +22,11 @@ A local AI chat workspace for Windows. Lumen runs open models (GGUF) on your own
 - **Models you already have**: use GGUF files from LM Studio, Ollama, the Hugging Face cache, GPT4All or Jan without downloading them again (no extra disk space on the same drive).
 - **Project folder (read-only)**: let a model list, find, search and read files in a folder, with file citations. It cannot write, delete or run anything.
 - **Skills**: reusable instructions and reference notes you select per conversation.
+- **Assistants**: saved starting points (instructions, model, run settings, skills); starting one copies them into a new conversation.
+- **Connected tools (MCP), optional**: connect MCP servers by address (Streamable HTTP; Lumen never starts programs). Every tool starts off, and each call shows its arguments and waits for your approval unless you choose "Always allow" for that tool.
+- **Cloud models, optional and off by default**: OpenAI, Anthropic, Gemini, OpenRouter, Groq, Mistral or any OpenAI-compatible address with your own key. Only conversations where you pick a cloud model are sent, and only to that provider; research, project folders and tools stay on local models.
+- **Local API, off by default**: an OpenAI-compatible endpoint on 127.0.0.1 with a key, so other programs on your computer can use your local models.
+- **Preview**: HTML and SVG from replies open in a separate window with no network access.
 - **Desk / Studio layouts, light and dark, eight accent colors or your own, English and Turkish.**
 
 ## Download and run
@@ -50,7 +55,7 @@ A small updater (`app/backend/LumenUpdater.cs`) then:
 ## Privacy and safety
 
 - The model server listens on loopback only and uses a random key per launch.
-- Your chats never leave your computer. The only automatic network request is the once-a-day update check (it reads the public release list and can be turned off); downloads happen when you ask. With web research on, search queries go to the provider you chose, and pages are fetched from their own sites. API keys are encrypted with Windows DPAPI.
+- Your chats stay on your computer unless you choose a cloud model for a conversation (then that conversation goes to that provider only). The only automatic network request is the once-a-day update check (it reads the public release list and can be turned off); downloads happen when you ask. With web research on, search queries go to the provider you chose, and pages are fetched from their own sites. MCP tool calls go to the servers you added, after your approval. API keys and tokens are encrypted with Windows DPAPI.
 - Model output is never executed as HTML. Web pages are read as untrusted data, with private and local network addresses blocked.
 - Project folders are read-only. Keys, `.env` files and similar stay unreadable unless you allow a specific file.
 

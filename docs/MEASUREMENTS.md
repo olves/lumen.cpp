@@ -23,6 +23,24 @@ Implementation checks: no external fonts/frameworks, no idle animation loop, sho
 
 Raw development measurements and screenshots are in `work`; no test conversations or screenshots are bundled in the portable application. The app's Electron baseline is heavier than the previous WPF build.
 
+## Assistants, cloud models, MCP, local API, preview (2026-10-12, v1.0.5-beta)
+
+| Check | Kind | Result |
+| --- | --- | --- |
+| Connections store: everything off by default; keys, MCP tokens and the API key encrypted (never in `connections.json` or the renderer view); invalid addresses (non-https except loopback), model IDs and ports refused | Unit | Pass |
+| Cloud client against a local OpenAI-compatible mock: model list, streamed reply and reasoning, usage, standard sampling fields only, retry without optional fields after a 400, 401/404 messages, stop | Unit (mock) | Pass |
+| MCP client against a local Streamable HTTP mock: initialize + session header, tools/list over an event stream with pagination, invalid tool names dropped, wrong token refused, tools/call | Unit (mock) | Pass |
+| Tool loop with a scripted engine: allow → called, deny → not called and the model is told, "Always allow" stops asking for that tool in the same run and later, cancel while waiting → nothing called, unknown [T#] removed, results marked untrusted | Unit | Pass (found and fixed: "Always allow" kept asking within the same run) |
+| Local API with a mock engine: missing/wrong key 401, foreign Host header 403, no CORS, only installed local models, `developer` role, text parts, image parts refused, ranges, invalid JSON, stream with `[DONE]`, off = closed; a client that leaves before its reply streams does not cancel the engine (it may be running another reply), one that leaves while streaming does | Unit | Pass (found and fixed: leaving early could stop another reply) |
+| Assistants: three starters, a new assistant (Gemma, temperature 0.3, 1,024 tokens) from the settings editor; started on an empty chat → chip, instructions, run overrides copied; real Gemma 4 E2B reply followed the instructions ("The capital of France is Paris."); saved chat keeps `{{current_date}}`; from a used chat a new chat starts; reopened chat shows the chip | Real UI + model | Pass |
+| Cloud models in the app against the mock: consent before anything turns on, provider address/key/model list from the settings page, key not in the file, not in Library or Speed lab, "Cloud · Mock Cloud" in the composer, streamed reply saved with the cloud model, system + user sent, token count from the provider, Stop keeps the received part as interrupted, tools/research refused with a cloud model | Real UI + mock provider | Pass. No real provider key was used; real OpenAI/Anthropic/Gemini/OpenRouter/Groq/Mistral accounts are not verified |
+| MCP in the app: mock server added from the settings page, both tools off by default; with one tool on, Gemma 4 E2B chose `get_weather {"city":"Izmir"}`, the approval card showed it, nothing was called before Allow, the disabled tool was never called; reply "23 °C and sunny … [T1]"; result dialog | Real UI + model + mock server | Pass |
+| Local API in the app with the real engine: 401 without key, Gemma listed, cloud models not listed, "OK" reply (16 + 2 tokens), streamed reply (8 chunks + `[DONE]`), turning it off closes the port | Real UI + model | Pass |
+| Preview window: script runs; `fetch` to the internet fails, remote image not loaded, `require`/`process` undefined, navigation and `window.open` blocked, the same window reused for SVG; JS block has no Preview | Real UI | Pass |
+| Turkish labels for the new settings pages and menus | Real UI | Pass |
+
+Not verified: real cloud providers (only the mock), real third-party MCP servers, long runs of the local API next to an active chat (requests queue in the engine behind the chat).
+
 ## Run settings, For you, models on this computer, documents (2026-10-12)
 
 | Check | Kind | Result |
