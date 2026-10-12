@@ -57,7 +57,7 @@ More detail: [docs/USER-GUIDE.md](docs/USER-GUIDE.md). Measurements and test not
 
 ```text
 app/                 Electron app: main process (*.cjs), renderer (*.js, *.css, index.html), vendored libraries
-app/backend/         LumenHost.cs (engine host) and ImageOcr.cs (Windows OCR helper) sources
+app/backend/         LumenCore.cs + LumenHost.cs (local engine process), LumenUpdater.cs, ImageOcr.cs (Windows OCR helper)
 docs/                User guide, measurements, licenses
 scripts/             build-portable.ps1 and the pinned Electron download manifest
 ```
@@ -67,12 +67,12 @@ The UI is plain HTML, CSS and JavaScript with no build step. Renderer scripts sh
 ## Building from source
 
 ```powershell
-.\scripts\build-portable.ps1 -Backend <path to lumen-core-beta.exe>
+.\scripts\build-portable.ps1
 ```
 
-The script downloads Electron 44.5.1 and checks it against a pinned SHA-256. It then copies `app/` into place and compiles `lumen-host.exe` and `lumen-image-ocr.exe` with the .NET Framework compiler included in Windows.
+The script downloads Electron 44.5.1 and the official llama.cpp b11438 CPU and Vulkan builds, each checked against a pinned SHA-256. It then copies `app/` into place and compiles `lumen-host.exe`, `lumen-image-ocr.exe` and `lumen-updater.exe` with the .NET Framework compiler included in Windows. Everything in the release is built from this repository or taken unchanged from those pinned upstream releases.
 
-Making a release (maintainers): set `app/package.json` to the new version (`1.0.3-beta`) and raise its `build` number by one, build the portable folder, then run:
+Making a release (maintainers): set `app/package.json` to the new version (for example `1.0.5-beta`) and raise its `build` number by one, build the portable folder, then run:
 
 ```powershell
 .\scripts\release.ps1 -AppDir <portable folder> -OutDir <folder> -NotesEn "..." -NotesTr "..."
@@ -80,11 +80,9 @@ Making a release (maintainers): set `app/package.json` to the new version (`1.0.
 
 It produces the portable ZIP, the Inno Setup installer (`scripts/lumen.iss`), and the signed `lumen-update.json` with its `.sig`. Upload all four files to a new pre-release. The signing key stays outside the repository (`%USERPROFILE%\.lumen-release`).
 
-The native backend `lumen-core-beta.exe` comes from an earlier stage of the project, and its source is not available. Take it from the release ZIP (`resources/app/backend/`). `LumenHost.cs` uses it as a library and adds the newer engine features.
-
 ## License
 
-MIT. See [LICENSE](LICENSE). Third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Downloaded models keep their own licenses.
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Releases up to and including v1.0.3-beta were published under the MIT License. Third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Downloaded models keep their own licenses.
 
 ---
 

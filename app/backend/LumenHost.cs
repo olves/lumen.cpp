@@ -1,12 +1,12 @@
-// lumen-host: runs the unchanged lumen-core-beta bridge in-process and adds two bounded actions against the llama-server
-// the bridge already manages:
-//   "complete" - agent requests (planner, subagent steps, synthesis), optionally constrained by a JSON schema;
-//   "chat"     - a normal chat turn with the user's thinking, response length and temperature settings. The bridge itself
-//                always sends thinking off, 512 tokens and temperature 0.7. History selection and saving follow the bridge
-//                exactly (its own PromptMessages/Count, the same binary search over user turns, the same save order).
-// The model is never loaded twice: both actions reuse DesktopBridge.session and its single --parallel 1 server.
+// lumen-host: Lumen's local engine process. main.cjs talks to it over stdin/stdout, one JSON line per message
+// ({id, action, args} in; {id, type, data} out). Requests run one at a time; "cancel" stops the active one.
+//   Chats, catalog, hardware and engine setup: LumenCore.cs.
+//   "chat"      - a normal chat turn with the user's thinking, response length and temperature settings;
+//   "complete"  - agent requests (planner, subagent steps, synthesis), optionally constrained by a JSON schema;
+//   "benchmark" - the speed lab.
+// The model is never loaded twice: every action shares one session and its single --parallel 1 llama-server.
 // Build (.NET Framework 4.8 csc, C# 5):
-//   csc /nologo /target:exe /out:lumen-host.exe /r:lumen-core-beta.exe /r:System.Web.Extensions.dll /r:System.Net.Http.dll LumenHost.cs
+//   csc /nologo /target:exe /out:lumen-host.exe /r:System.Web.Extensions.dll /r:System.Net.Http.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll LumenHost.cs LumenCore.cs
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -17,7 +17,6 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -27,39 +26,17 @@ using System.Web.Script.Serialization;
 using Lumen;
 
 static class LumenHost {
- const BindingFlags Any=BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Static|BindingFlags.Instance;
- static readonly MethodInfo emitMethod=typeof(DesktopBridge).GetMethod("Emit",Any);
- static readonly MethodInfo handleMethod=typeof(DesktopBridge).GetMethod("Handle",Any);
- static readonly MethodInfo chatMethod=typeof(DesktopBridge).GetMethod("Chat",Any);
- static readonly MethodInfo saveMethod=typeof(ChatStore).GetMethod("Save",Any);
- static readonly MethodInfo promptMethod=typeof(NativeServer).GetMethod("PromptMessages",Any);
- static readonly MethodInfo countMethod=typeof(NativeServer).GetMethod("Count",Any);
- static readonly FieldInfo gateField=typeof(DesktopBridge).GetField("gate",Any);
- static readonly FieldInfo activeField=typeof(DesktopBridge).GetField("active",Any);
- static readonly FieldInfo sessionField=typeof(DesktopBridge).GetField("session",Any);
- static readonly FieldInfo serverField=typeof(ChatSession).GetField("server",Any);
- static readonly FieldInfo loadedField=typeof(ChatSession).GetField("loaded",Any);
- static readonly FieldInfo loadedContextField=typeof(ChatSession).GetField("loadedContext",Any);
- static readonly FieldInfo endpointField=typeof(NativeServer).GetField("endpoint",Any);
- static readonly FieldInfo keyField=typeof(NativeServer).GetField("key",Any);
- static readonly MethodInfo preferencesMethod=typeof(BackendManager).GetMethod("Preferences",Any);
- static readonly MethodInfo readyMethod=typeof(BackendManager).GetMethod("Ready",Any);
- static readonly MethodInfo executableMethod=typeof(BackendManager).GetMethod("Executable",Any);
- static readonly FieldInfo processField=typeof(NativeServer).GetField("process",Any);
- static readonly FieldInfo logField=typeof(NativeServer).GetField("log",Any);
- static readonly FieldInfo gpuActiveField=typeof(NativeServer).GetField("gpuActive",Any);
- static readonly FieldInfo serverBackendField=typeof(NativeServer).GetField("Backend",Any);
- static readonly FieldInfo liveField=typeof(NativeServer).GetField("live",Any);
  static readonly HttpClient http=new HttpClient{Timeout=Timeout.InfiniteTimeSpan};
  static readonly int[] contexts={2048,4096,8192,16384,32768};
+ static readonly object gate=new object(),writeGate=new object();
+ static CancellationTokenSource active;
+ static readonly ChatSession session=new ChatSession();
 
  static int Main(string[] args){
   if(args.Length<2||args[0]!="--bridge"){Console.Error.WriteLine("usage: lumen-host --bridge <data folder>");return 2;}
-  foreach(var member in new MemberInfo[]{emitMethod,handleMethod,chatMethod,saveMethod,promptMethod,countMethod,gateField,activeField,sessionField,serverField,loadedField,loadedContextField,endpointField,keyField,preferencesMethod,readyMethod,executableMethod,processField,logField,gpuActiveField,serverBackendField,liveField})
-   if(member==null){Console.Error.WriteLine("lumen-host: the bundled engine bridge is not compatible.");return 3;}
   ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
   KillChildrenWithHost();
-  NativeEngine.Data=Path.GetFullPath(args[1]);
+  Core.Data=Path.GetFullPath(args[1]);
   Run();
   return 0;
  }
@@ -81,14 +58,18 @@ static class LumenHost {
   }catch(Exception e){Console.Error.WriteLine("lumen-host: child cleanup job unavailable: "+e.Message);}
  }
 
- static object Gate{get{return gateField.GetValue(null);}}
- static void Emit(string id,string type,object data){emitMethod.Invoke(null,new object[]{id,type,data});}
+ static void Emit(string id,string type,object data){
+  lock(writeGate){
+   Console.WriteLine(new JavaScriptSerializer{MaxJsonLength=16000000}.Serialize(new Dictionary<string,object>{{"id",id},{"type",type},{"data",data}}));
+   Console.Out.Flush();
+  }
+ }
  static string Str(Dictionary<string,object> a,string key){return a!=null&&a.ContainsKey(key)&&a[key]!=null?Convert.ToString(a[key]):"";}
  static bool Bool(Dictionary<string,object> a,string key){return a.ContainsKey(key)&&a[key] is bool&&(bool)a[key];}
  static int Int(Dictionary<string,object> a,string key,int fallback,int min,int max){int value=fallback;if(a.ContainsKey(key)&&a[key]!=null){try{value=Convert.ToInt32(a[key]);}catch{throw new Exception("Invalid "+key+".");}}if(value<min||value>max)throw new Exception("Invalid "+key+".");return value;}
  static double Num(Dictionary<string,object> a,string key,double fallback,double min,double max){double value=fallback;if(a.ContainsKey(key)&&a[key]!=null){try{value=Convert.ToDouble(a[key]);}catch{throw new Exception("Invalid "+key+".");}}if(double.IsNaN(value)||value<min||value>max)throw new Exception("Invalid "+key+".");return value;}
 
- // Mirrors DesktopBridge.Run: one request at a time, "cancel" cancels the active request immediately.
+ // One request at a time; "cancel" cancels the active request immediately.
  static void Run(){
   Console.InputEncoding=new UTF8Encoding(false);Console.OutputEncoding=new UTF8Encoding(false);
   ModelDirectory.Load();
@@ -98,28 +79,66 @@ static class LumenHost {
     var json=new JavaScriptSerializer{MaxJsonLength=16000000};
     var message=json.Deserialize<Dictionary<string,object>>(line);
     string id=Str(message,"id"),action=Str(message,"action");
-    var a=message.ContainsKey("args")&&message["args"] is Dictionary<string,object>?(Dictionary<string,object>)message["args"]:new Dictionary<string,object>();
-    if(action=="cancel"){lock(Gate){var active=(CancellationTokenSource)activeField.GetValue(null);if(active!=null)active.Cancel();}Emit(id,"done",true);continue;}
+    var a=message.ContainsKey("args")?(Dictionary<string,object>)message["args"]:new Dictionary<string,object>();
+    if(action=="cancel"){lock(gate){if(active!=null)active.Cancel();}Emit(id,"done",true);continue;}
     chain=chain.ContinueWith(previous=>Execute(id,action,a)).Unwrap();
-   }catch(Exception e){Emit("","error",new{message=e.Message});}
+   }catch(Exception e){Emit("","error",new Dictionary<string,object>{{"message",e.Message}});}
   }
-  lock(Gate){var active=(CancellationTokenSource)activeField.GetValue(null);if(active!=null)active.Cancel();}
+  lock(gate){if(active!=null)active.Cancel();}
   try{chain.Wait(5000);}catch{}
-  ((ChatSession)sessionField.GetValue(null)).Dispose();
+  session.Dispose();
  }
 
  static async Task Execute(string id,string action,Dictionary<string,object> a){
-  var cts=new CancellationTokenSource();
-  lock(Gate)activeField.SetValue(null,cts);
-  try{
-   if(action=="complete")Emit(id,"done",await Complete(id,a,cts.Token));
-   else if(action=="chat")Emit(id,"done",await ChatTurn(id,a,cts.Token));
-   else if(action=="benchmark")Emit(id,"done",await Benchmark(id,a,cts.Token));
-   else await (Task)handleMethod.Invoke(null,new object[]{id,action,a,cts.Token});
-  }catch(Exception e){
-   while(e is TargetInvocationException&&e.InnerException!=null)e=e.InnerException;
-   Emit(id,"error",new{message=cts.IsCancellationRequested?"Cancelled":e.Message,cancelled=cts.IsCancellationRequested});
-  }finally{lock(Gate)activeField.SetValue(null,null);}
+  using(var cts=new CancellationTokenSource()){
+   lock(gate)active=cts;
+   try{Emit(id,"done",await Handle(id,action,a,cts.Token));}
+   catch(Exception e){Emit(id,"error",new Dictionary<string,object>{{"message",cts.IsCancellationRequested?"Cancelled":e.Message},{"cancelled",cts.IsCancellationRequested}});}
+   finally{lock(gate)active=null;}
+  }
+ }
+
+ static async Task<object> Handle(string id,string action,Dictionary<string,object> a,CancellationToken ct){
+  Action<string,double> progress=(label,value)=>Emit(id,"progress",new Dictionary<string,object>{{"label",label},{"value",value}});
+  switch(action){
+   case "bootstrap":{var hardware=HardwareScan.Scan();return new Dictionary<string,object>{{"hardware",hardware},{"backend",BackendManager.Plan(hardware)},{"models",Core.Entries()},{"chats",ChatStore.Load()},{"storage",Core.Data}};}
+   case "backend_status":return BackendManager.Plan(HardwareScan.Scan());
+   case "install_backend":session.Dispose();loadedSignature=null;return await BackendManager.Install(Str(a,"backend"),HardwareScan.Scan(),p=>Emit(id,"backend-progress",p),ct);
+   case "models":return Core.Entries();
+   case "scan":return HardwareScan.Scan();
+   case "save":{var chat=Chat(a);ChatStore.Save(chat);return chat;}
+   case "delete":return ChatStore.Delete(Str(a,"id"));
+   case "branch":{
+    var chat=Chat(a);int count=Convert.ToInt32(a["count"]);
+    if(count<0||count>chat.Messages.Count)throw new Exception("Invalid branch point.");
+    var branch=ChatStore.Branch(chat,count);ChatStore.Save(branch);return branch;
+   }
+   // The first bridge's fixed reply settings: thinking off, 512 tokens, temperature 0.7.
+   case "send":return await ChatTurn(id,a,ct);
+   case "search":return await ModelDirectory.Search(Str(a,"query"),ct);
+   case "files":{string repo=Str(a,"repo");if(!Regex.IsMatch(repo,"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))throw new Exception("Use owner/repository.");return await ModelDirectory.Files(repo,ct);}
+   case "register":{
+    var m=new JavaScriptSerializer().ConvertToType<CatalogModel>(a["model"]);
+    if(m==null||!Regex.IsMatch(m.Repo??"","^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")||!Regex.IsMatch(m.Sha??"","^[a-f0-9]{64}$")||m.Bytes<=0||string.IsNullOrWhiteSpace(m.File)||m.File.Contains("..")||m.File.Contains("\\")||m.File.StartsWith("/"))throw new Exception("Invalid model.");
+    m.LocalFile=m.Sha.Substring(0,12)+"-"+Path.GetFileName(m.File);ModelDirectory.Register(m);return Core.Entries();
+   }
+   case "download":{string name=Str(a,"name");await ModelDirectory.Download(Core.Catalog.First(c=>c.Name==name),progress,ct);return Core.Entries();}
+   // The first bridge's speed test; Lumen sends "benchmark" instead.
+   case "bench":return await Benchmark(id,new Dictionary<string,object>{{"model",Str(a,"name")},{"profile","standard"}},ct);
+   case "unload":session.Dispose();loadedSignature=null;return true;
+   case "chat":return await ChatTurn(id,a,ct);
+   case "complete":return await Complete(id,a,ct);
+   case "benchmark":return await Benchmark(id,a,ct);
+  }
+  throw new Exception("Unknown operation.");
+ }
+
+ // A conversation from the interface: a 32-hex ID, at most 2,000 user/assistant messages of up to 100,000 characters each,
+ // and a system prompt of up to 12,000 characters.
+ static Conversation Chat(Dictionary<string,object> a){
+  var chat=new JavaScriptSerializer{MaxJsonLength=16000000}.ConvertToType<Conversation>(a["chat"]);
+  if(chat==null||!Regex.IsMatch(chat.Id??"","^[a-fA-F0-9]{32}$")||chat.Messages==null||chat.Messages.Count>2000||chat.Messages.Any(m=>m==null||m.Role!="user"&&m.Role!="assistant"||(m.Content??"").Length>100000)||chat.SystemPrompt.Length>12000)throw new Exception("Invalid conversation.");
+  return chat;
  }
 
  // Engine settings chosen in Lumen. gpu: "auto" lets llama.cpp fit layers (and MoE experts) to free GPU memory, "gpu" puts every
@@ -136,12 +155,12 @@ static class LumenHost {
  static string loadedSignature,loadedProjector="",loadedDraft="";static EngineOptions loadedOptions;
  // projector/draft/options: null keeps what is loaded for the same model (agent steps); "" requires none; a path requires that file.
  static async Task<NativeServer> EnsureServer(string id,string model,int context,CancellationToken ct,string projector=null,string draft=null,EngineOptions options=null){
-  var catalogModel=NativeEngine.Catalog.FirstOrDefault(c=>c.Name==model);if(catalogModel==null)throw new Exception("Unknown model.");
-  string path=NativeEngine.ModelPath(catalogModel);if(!File.Exists(path)||new FileInfo(path).Length!=catalogModel.Bytes)throw new Exception("The model is not downloaded yet.");
+  var catalogModel=Core.Catalog.FirstOrDefault(c=>c.Name==model);if(catalogModel==null)throw new Exception("Unknown model.");
+  string path=Core.ModelPath(catalogModel);if(!File.Exists(path)||new FileInfo(path).Length!=catalogModel.Bytes)throw new Exception("The model is not downloaded yet.");
   if(!string.IsNullOrEmpty(projector))projector=CheckedFile(projector,"models",".gguf",4L<<30,"vision projector");
   if(!string.IsNullOrEmpty(draft))draft=CheckedFile(draft,"models",".gguf",2L<<30,"draft model");
-  var session=(ChatSession)sessionField.GetValue(null);var server=(NativeServer)serverField.GetValue(session);
-  bool sameModel=server!=null&&(string)loadedField.GetValue(session)==model&&(int)loadedContextField.GetValue(session)==context&&loadedSignature!=null;
+  var server=session.server;
+  bool sameModel=server!=null&&session.loaded==model&&session.loadedContext==context&&loadedSignature!=null;
   if(projector==null)projector=sameModel?loadedProjector:"";if(draft==null)draft=sameModel?loadedDraft:"";
   if(options==null)options=loadedOptions??new EngineOptions();
   string signature=string.Join("|",new[]{path,context.ToString(),projector,draft,options.Gpu,options.Kv,options.Speculative?"1":"0"}).ToLowerInvariant();
@@ -149,22 +168,20 @@ static class LumenHost {
    session.Dispose();loadedSignature=null;
    Action<string,double> progress=(label,value)=>Emit(id,"progress",new{label=label,value=value});
    server=await StartServer(path,context,projector,draft,options,progress,ct);
-   serverField.SetValue(session,server);loadedField.SetValue(session,model);loadedContextField.SetValue(session,context);
+   session.server=server;session.loaded=model;session.loadedContext=context;
    loadedSignature=signature;loadedProjector=projector;loadedDraft=draft;loadedOptions=options;
   }
   return server;
  }
 
- // Mirrors BackendManager.Start (preferred engine, then Vulkan, then CPU; a GPU engine that offloads nothing is skipped) but builds
- // llama-server's arguments here. If the extra options stop a server from starting, the same engine is retried without them.
+ // The preferred engine, then Vulkan, then CPU; a GPU engine that offloads nothing is skipped. If the extra options stop a server from starting, the same engine is retried without them.
  static async Task<NativeServer> StartServer(string model,int context,string projector,string draft,EngineOptions options,Action<string,double> progress,CancellationToken ct){
-  var preferences=preferencesMethod.Invoke(null,null);var backendField=preferences==null?null:preferences.GetType().GetField("Backend");
-  string preferred=backendField==null?"cpu":(Convert.ToString(backendField.GetValue(preferences))??"cpu");if(preferred=="")preferred="cpu";
+  string preferred=BackendManager.Preferences().Backend;if(string.IsNullOrEmpty(preferred))preferred="cpu";
   var order=options.Gpu=="cpu"||preferred=="cpu"?new[]{"cpu"}:new[]{preferred,"vulkan","cpu"}.Distinct().ToArray();
   Exception last=null;
   foreach(var backend in order){
-   if(!(bool)readyMethod.Invoke(null,new object[]{backend}))continue;
-   string standard=(string)executableMethod.Invoke(null,new object[]{backend});
+   if(!BackendManager.Ready(backend))continue;
+   string standard;try{standard=BackendManager.Executable(backend);}catch(Exception e){last=e;Console.Error.WriteLine("lumen-host: "+backend+" engine unavailable: "+e.Message);continue;}
    // An engine update installed by Lumen (engine-override.json) is tried first; if it cannot start or does not use the GPU,
    // it is marked as failed and the bundled engine runs instead, so an update can never leave chat without an engine.
    string custom=OverrideExe(backend);
@@ -176,7 +193,7 @@ static class LumenHost {
      NativeServer server=null;
      try{
       server=await Launch(exe,backend,Arguments(model,context,projector,plain?"":draft,backend,options,plain),ct);
-      if(backend!="cpu"&&!(bool)gpuActiveField.GetValue(server)){server.Dispose();last=attempt=new Exception("The GPU engine did not use the GPU.");break;}
+      if(backend!="cpu"&&!server.GpuActive){server.Dispose();last=attempt=new Exception("The GPU engine did not use the GPU.");break;}
       progress("Engine · "+backend.ToUpperInvariant(),100);return server;
      }catch(OperationCanceledException){if(server!=null)server.Dispose();throw;}
      catch(Exception e){if(server!=null)server.Dispose();if(ct.IsCancellationRequested)throw new OperationCanceledException();last=attempt=e;Console.Error.WriteLine("lumen-host: "+backend+(isCustom?" (updated engine)":"")+(plain?" (plain)":"")+" start failed: "+e.Message);}
@@ -189,14 +206,14 @@ static class LumenHost {
 
  // <data>/engine-override.json: {"build","backend","path"} written by Lumen after it verified and tested a newer llama.cpp.
  // Only a llama-server.exe under <data>/runtime is accepted, and only for the engine it was installed for.
- static string OverrideFile(){return Path.Combine(NativeEngine.Data,"engine-override.json");}
+ static string OverrideFile(){return Path.Combine(Core.Data,"engine-override.json");}
  static string OverrideExe(string backend){
   try{
    if(!File.Exists(OverrideFile()))return null;
    var o=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(OverrideFile()));
    if(o==null||!o.ContainsKey("path")||!o.ContainsKey("backend")||Convert.ToString(o["backend"])!=backend)return null;
    if(o.ContainsKey("failed")&&Convert.ToBoolean(o["failed"]))return null;
-   string exe=Path.GetFullPath(Convert.ToString(o["path"])),root=Path.GetFullPath(Path.Combine(NativeEngine.Data,"runtime"))+Path.DirectorySeparatorChar;
+   string exe=Path.GetFullPath(Convert.ToString(o["path"])),root=Path.GetFullPath(Path.Combine(Core.Data,"runtime"))+Path.DirectorySeparatorChar;
    if(!exe.StartsWith(root,StringComparison.OrdinalIgnoreCase)||!string.Equals(Path.GetFileName(exe),"llama-server.exe",StringComparison.OrdinalIgnoreCase)||!File.Exists(exe))return null;
    return exe;
   }catch{return null;}
@@ -223,34 +240,33 @@ static class LumenHost {
   return args.ToString();
  }
 
- // Starts llama-server as a NativeServer the bridge can use and dispose: loopback only, a random port and API key, log and GPU
- // detection the same way NativeServer.Start does them.
+ // Starts llama-server: loopback only, a random port and API key, its log and GPU detection.
  static async Task<NativeServer> Launch(string exe,string backend,string arguments,CancellationToken ct){
-  var server=(NativeServer)Activator.CreateInstance(typeof(NativeServer),true);
+  var server=new NativeServer();
   var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();int port=((IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();
   string key=Guid.NewGuid().ToString("N");
-  endpointField.SetValue(server,"http://127.0.0.1:"+port);keyField.SetValue(server,key);serverBackendField.SetValue(server,backend);
+  server.endpoint="http://127.0.0.1:"+port;server.key=key;server.Backend=backend;
   var process=new Process{StartInfo=new ProcessStartInfo(exe,arguments+" --host 127.0.0.1 --port "+port+" --api-key "+key){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,WorkingDirectory=Path.GetDirectoryName(exe)}};
   DataReceivedEventHandler collect=(sender,e)=>{
    if(e.Data==null)return;
    lock(server){
-    if(Regex.IsMatch(e.Data,"offloaded [1-9][0-9]*/"))gpuActiveField.SetValue(server,true);
+    if(Regex.IsMatch(e.Data,"offloaded [1-9][0-9]*/"))server.gpuActive=true;
     if(e.Data.Contains("offloaded ")||e.Data.Contains("model buffer size"))placementLog.GetOrCreateValue(server).AppendLine(e.Data);
-    string log=(string)logField.GetValue(server)+e.Data+"\n";if(log.Length>16000)log=log.Substring(log.Length-16000);logField.SetValue(server,log);
+    string log=server.log+e.Data+"\n";if(log.Length>16000)log=log.Substring(log.Length-16000);server.log=log;
    }
   };
   process.ErrorDataReceived+=collect;process.OutputDataReceived+=collect;
-  processField.SetValue(server,process);
+  server.process=process;
   process.Start();
-  var live=liveField.GetValue(null) as HashSet<NativeServer>;if(live!=null)lock(live)live.Add(server);
+  lock(NativeServer.live)NativeServer.live.Add(server);
   process.BeginErrorReadLine();process.BeginOutputReadLine();
   using(var client=new HttpClient{Timeout=TimeSpan.FromSeconds(2)}){
    var watch=Stopwatch.StartNew();
    while(true){
     ct.ThrowIfCancellationRequested();
-    if(process.HasExited){string log;lock(server)log=(string)logField.GetValue(server);throw new Exception("The engine stopped while loading: "+Tail(log,400));}
+    if(process.HasExited){string log;lock(server)log=server.log;throw new Exception("The engine stopped while loading: "+Tail(log,400));}
     try{using(var response=await client.GetAsync("http://127.0.0.1:"+port+"/health",ct))if(response.IsSuccessStatusCode)break;}catch(HttpRequestException){}catch(TaskCanceledException){if(ct.IsCancellationRequested)throw new OperationCanceledException();}
-    // Large models can take minutes to read from disk; the bridge allows 90 s.
+    // Large models can take minutes to read from disk.
     if(watch.Elapsed.TotalSeconds>300){server.Dispose();throw new Exception("The model took too long to load.");}
     await Task.Delay(400,ct);
    }
@@ -263,7 +279,7 @@ static class LumenHost {
 
  // A file that must be inside <data>\<folder>, with the given extension and size limit.
  static string CheckedFile(string file,string folder,string extension,long maxBytes,string label){
-  string root=Path.GetFullPath(Path.Combine(NativeEngine.Data,folder))+Path.DirectorySeparatorChar,full;
+  string root=Path.GetFullPath(Path.Combine(Core.Data,folder))+Path.DirectorySeparatorChar,full;
   try{full=Path.GetFullPath(file);}catch{throw new Exception("Invalid "+label+".");}
   if(!full.StartsWith(root,StringComparison.OrdinalIgnoreCase)||!full.EndsWith(extension,StringComparison.OrdinalIgnoreCase)||full.IndexOf('"')>=0||!File.Exists(full))throw new Exception("Invalid "+label+".");
   long size=new FileInfo(full).Length;if(size==0||size>maxBytes)throw new Exception("Invalid "+label+".");
@@ -285,8 +301,8 @@ static class LumenHost {
   var json=new JavaScriptSerializer{MaxJsonLength=16000000};var result=new StreamResult();
   using(var limit=CancellationTokenSource.CreateLinkedTokenSource(ct)){
    limit.CancelAfter(timeout);
-   using(var request=new HttpRequestMessage(HttpMethod.Post,(string)endpointField.GetValue(server)+"/v1/chat/completions")){
-    request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",(string)keyField.GetValue(server));
+   using(var request=new HttpRequestMessage(HttpMethod.Post,server.endpoint+"/v1/chat/completions")){
+    request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",server.key);
     request.Content=new StringContent(json.Serialize(body),Encoding.UTF8,"application/json");
     using(var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,limit.Token))
     using(limit.Token.Register(()=>response.Dispose())){
@@ -349,7 +365,7 @@ static class LumenHost {
   var options=profile=="standard"?new EngineOptions{Gpu="gpu",Kv="f16",Speculative=false}:(Options(a)??new EngineOptions());
   int context=profile=="standard"?2048:Int(a,"contextSize",4096,2048,32768);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
   string draft=profile=="standard"?"":(a.ContainsKey("draft")?Str(a,"draft"):"");
-  ((ChatSession)sessionField.GetValue(null)).Dispose();loadedSignature=null;
+  session.Dispose();loadedSignature=null;
   var load=Stopwatch.StartNew();var server=await EnsureServer(id,model,context,ct,"",draft,options);load.Stop();
   var messages=new List<object>{new Dictionary<string,object>{{"role","user"},{"content","Explain how a computer works in clear English. Write approximately 150 words."}}};
   var body=RequestBody(messages,192,0,false);body["seed"]=42;body["cache_prompt"]=false;
@@ -361,8 +377,8 @@ static class LumenHost {
   // e.g. MoE experts with all layers "offloaded".
   Match offload=Match.Empty;foreach(Match candidate in Regex.Matches(log,@"offloaded (\d+)/(\d+) layers"))if(!offload.Success||int.Parse(candidate.Groups[2].Value)>int.Parse(offload.Groups[2].Value))offload=candidate;
   double gpuWeights=0,cpuWeights=0;foreach(Match buffer in Regex.Matches(log,@"(\S+) model buffer size\s*=\s*([\d.]+) MiB")){double size=double.Parse(buffer.Groups[2].Value,System.Globalization.CultureInfo.InvariantCulture);if(buffer.Groups[1].Value.StartsWith("CPU"))cpuWeights+=size;else gpuWeights+=size;}
-  int ctxReal=context;try{using(var client=new HttpClient{Timeout=TimeSpan.FromSeconds(5)}){client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",(string)keyField.GetValue(server));var props=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(await client.GetStringAsync((string)endpointField.GetValue(server)+"/props"));var gen=props.ContainsKey("default_generation_settings")?props["default_generation_settings"] as Dictionary<string,object>:null;if(gen!=null&&gen.ContainsKey("n_ctx"))ctxReal=Convert.ToInt32(gen["n_ctx"]);}}catch(Exception){if(ct.IsCancellationRequested)throw;}
-  return new{Protocol=profile=="standard"?"standard-2":"current",Model=model,Date=DateTime.Now.ToString("o"),Backend=(string)serverBackendField.GetValue(server),
+  int ctxReal=context;try{using(var client=new HttpClient{Timeout=TimeSpan.FromSeconds(5)}){client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",server.key);var props=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(await client.GetStringAsync(server.endpoint+"/props"));var gen=props.ContainsKey("default_generation_settings")?props["default_generation_settings"] as Dictionary<string,object>:null;if(gen!=null&&gen.ContainsKey("n_ctx"))ctxReal=Convert.ToInt32(gen["n_ctx"]);}}catch(Exception){if(ct.IsCancellationRequested)throw;}
+  return new{Protocol=profile=="standard"?"standard-2":"current",Model=model,Date=DateTime.Now.ToString("o"),Backend=server.Backend,
    GpuLayers=offload.Success?offload.Groups[1].Value+"/"+offload.Groups[2].Value:"0",GpuWeightsMiB=Math.Round(gpuWeights),CpuWeightsMiB=Math.Round(cpuWeights),Context=ctxReal,Gpu=options.Gpu,Kv=options.Kv,Speculative=options.Speculative,Draft=draft!="",
    LoadSeconds=Math.Round(load.Elapsed.TotalSeconds,2),FirstTokenSeconds=Math.Round(first,3),TotalSeconds=Math.Round(clock.Elapsed.TotalSeconds,2),
    PromptTokens=(int)num("prompt_n"),PromptPerSecond=Math.Round(num("prompt_per_second"),1),Tokens=(int)num("predicted_n"),TokensPerSecond=Math.Round(num("predicted_per_second"),1),
@@ -404,33 +420,33 @@ static class LumenHost {
   return messages;
  }
 
- // A normal chat turn. History selection mirrors NativeServer.Chat: drop Interrupted/empty messages, then binary-search the
- // oldest user turn to keep so that prompt + reserved reply tokens fit the server's n_ctx. Saving mirrors DesktopBridge.Handle.
+ // A normal chat turn. History: drop Interrupted/empty messages, then binary-search the oldest user turn to keep so that
+ // prompt + reserved reply tokens fit the server's n_ctx. The user's message is saved before the reply, the reply after it
+ // (Interrupted when it did not finish).
  static async Task<object> ChatTurn(string id,Dictionary<string,object> a,CancellationToken ct){
-  var chat=(Conversation)chatMethod.Invoke(null,new object[]{a});
+  var chat=Chat(a);
   int context=Int(a,"contextSize",4096,2048,32768);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
   bool thinking=Bool(a,"thinking");int reserve=Math.Min(Int(a,"maxTokens",512,128,8192),context/2);double temperature=Num(a,"temperature",0.7,0,1.5);
   // Selected skills: added to the request's system message only; the saved chat keeps the user's own instructions.
   string guidance=Str(a,"guidance");if(guidance.Length>30000)throw new Exception("The selected skills are too long.");
   string projector=a.ContainsKey("projector")?Str(a,"projector"):"";var images=Images(a,chat,projector);int imageTokens=Int(a,"imageTokens",300,64,4096);
-  saveMethod.Invoke(null,new object[]{chat});
+  ChatStore.Save(chat);
   var text=new StringBuilder();var reasoning=new StringBuilder();bool complete=false;
   try{
    var server=await EnsureServer(id,chat.Model,context,ct,projector,a.ContainsKey("draft")?Str(a,"draft"):"",Options(a));
    Emit(id,"progress",new{label="Responding locally",value=100.0});
    using(var client=new HttpClient{Timeout=Timeout.InfiniteTimeSpan}){
-    client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",(string)keyField.GetValue(server));
-    string endpoint=(string)endpointField.GetValue(server);var json=new JavaScriptSerializer{MaxJsonLength=16000000};
+    client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",server.key);
+    string endpoint=server.endpoint;var json=new JavaScriptSerializer{MaxJsonLength=16000000};
     int capacity=context,trained=0;
     try{var props=json.Deserialize<Dictionary<string,object>>(await client.GetStringAsync(endpoint+"/props"));var generation=props.ContainsKey("default_generation_settings")?props["default_generation_settings"] as Dictionary<string,object>:null;if(generation!=null&&generation.ContainsKey("n_ctx"))capacity=Convert.ToInt32(generation["n_ctx"]);}catch(Exception){if(ct.IsCancellationRequested)throw;}
     var recent=chat.Messages.Where(m=>!m.Interrupted&&!string.IsNullOrWhiteSpace(m.Content)).ToList();
     var starts=recent.Select((m,i)=>new{m,i}).Where(x=>x.m.Role=="user").Select(x=>x.i).ToList();
     if(starts.Count==0)throw new Exception("A user message is required.");
-    Func<int,List<object>> build=index=>WithGuidance((List<object>)promptMethod.Invoke(server,new object[]{chat,recent,index}),guidance);
+    Func<int,List<object>> build=index=>WithGuidance(server.PromptMessages(chat,recent,index),guidance);
     // Image tokens are not counted by /tokenize; each attached image in the kept window adds an estimate.
     Func<int,int> imageCost=index=>images.Where(x=>recent.IndexOf(x.Key)>=index).Sum(x=>x.Value.Files.Count)*imageTokens;
-    Func<List<object>,Task<int>> textCount=list=>(Task<int>)countMethod.Invoke(server,new object[]{client,list,ct});
-    Func<List<object>,Task<int>> count=list=>textCount(list);
+    Func<List<object>,Task<int>> count=list=>server.Count(client,list,ct);
     int selected=0;var messages=build(starts[0]);int tokens=await count(messages)+imageCost(starts[0]);
     if(tokens+reserve>capacity){
      int low=1,high=starts.Count-1;selected=high;
@@ -454,7 +470,7 @@ static class LumenHost {
     complete=true;
    }
   }finally{
-   if(text.Length>0){chat.Messages.Add(new ChatMessage{Role="assistant",Content=text.ToString(),Interrupted=!complete});saveMethod.Invoke(null,new object[]{chat});Emit(id,"saved",chat);}
+   if(text.Length>0){chat.Messages.Add(new ChatMessage{Role="assistant",Content=text.ToString(),Interrupted=!complete});ChatStore.Save(chat);Emit(id,"saved",chat);}
   }
   return chat;
  }

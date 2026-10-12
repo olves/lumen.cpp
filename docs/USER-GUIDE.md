@@ -72,7 +72,7 @@ Settings → Chat behavior → **Responses** has four settings. They apply to no
 
 **Which models can think.** Lumen reads the chat template inside each installed GGUF file. A template with an `enable_thinking` switch (Qwen3, Gemma 4) is *supported*. A template that always reasons (DeepSeek R1 style `<think>`) is *always on*; the switch does not apply. Templates with other reasoning schemes are *unknown*, and templates without any are *unsupported*: the Thinking switch is disabled for that model with an explanation, and your setting is kept for other models. Tested: Qwen3 8B with thinking on returned 614 reasoning tokens, with thinking off none; Qwen2.5 Coder 7B is shown as unsupported.
 
-These settings need the engine host (`backend/lumen-host.exe`). Normal chat now goes through the host's `chat` request. It uses the original backend's own trimming and context methods, so trimming and token counts match the previous behavior. If the host is unavailable, chat uses the original backend with its fixed defaults (512 tokens, 0.7, no thinking), and the settings page says so. If a model spends the whole response length thinking, Lumen says so instead of saving an empty answer.
+Normal chat goes through the engine's `chat` request, which trims history and counts tokens the same way the first betas did. If a model spends the whole response length thinking, Lumen says so instead of saving an empty answer.
 
 ## Optimization and verification
 
@@ -84,9 +84,9 @@ If a launch fails, diagnostic logs are in `%LOCALAPPDATA%\lumen.cpp` or the Elec
 
 ## Build sources and licenses
 
-`resources/app` contains the HTML/CSS/JavaScript frontend. The existing native backend is `resources/app/backend/lumen-core-beta.exe`; its original source folder is no longer present in this workspace. The backend embeds both llama.cpp runtime archives and the seed catalog. No npm build step is required for this frontend.
+`resources/app` contains the HTML/CSS/JavaScript frontend. The local engine process is `resources/app/backend/lumen-host.exe`, built from `LumenHost.cs` and `LumenCore.cs` in the same folder. `backend/engines` holds the official llama.cpp b11438 CPU and Vulkan archives, unchanged; `backend/models.catalog.json` is the starter model list. No npm build step is required for this frontend. All source code is in the repository, github.com/olves/lumen.cpp.
 
-Electron v44.5.1: `LICENSE`, `LICENSES.chromium.html`. llama.cpp b11438: `LLAMA-LICENSE.txt`. Bundled formatting libraries (MIT; license files in `resources/app/vendor`): markdown-it 14.1.0, highlight.js 11.11.1, KaTeX 0.16.22 with its woff2 fonts. They were taken from the npm registry and checked against the registry's SHA-512 integrity values. Model licenses are on their Hugging Face repository pages.
+Lumen: Apache License 2.0, `LUMEN-LICENSE.txt` and `NOTICE.txt` (v1.0.3-beta and earlier: MIT). Electron v44.5.1: `LICENSE`, `LICENSES.chromium.html`. llama.cpp b11438: `LLAMA-LICENSE.txt`. Bundled formatting libraries (MIT; license files in `resources/app/vendor`): markdown-it 14.1.0, highlight.js 11.11.1, KaTeX 0.16.22 with its woff2 fonts. They were taken from the npm registry and checked against the registry's SHA-512 integrity values. Model licenses are on their Hugging Face repository pages.
 
 ## GPU welcome and Model Hub
 
@@ -116,7 +116,7 @@ Settings is a separate workspace with General, Chat behavior, Appearance, Skills
 - **Importing.** From a SKILL.md/Markdown/JSON file, from a folder containing SKILL.md, or from an https address (a GitHub file page is read from its raw address; web pages, http and local or private addresses are refused; 64 KB at most). Nothing is saved until you confirm a review that shows the instructions, the reference notes and what was **not** imported: scripts and binary files in a folder, and front-matter fields such as `allowed-tools` or `permissions` ("skills cannot grant tools or permissions"). In a folder, notes come from `references/` or from text files the instructions mention.
 - **Using.** + → Use a skill, or type @. Up to 4 per conversation; the chip shows the token cost and where the skill applies. Selection is kept per conversation and inherited by branches.
 - **Where skills apply.** Normal answers, and the final answer of research and project turns. The planner and the tool steps (searching, reading pages or files) do not see skills, so a skill cannot steer tool use.
-- **Budget.** With the engine host, skills are added to the request only (up to 24,000 characters for all selected skills); the conversation's own instructions in the chat file are never rewritten. Without the host, the original backend's 12,000-character system-prompt limit applies to instructions and skills together.
+- **Budget.** Skills are added to the request only (up to 24,000 characters for all selected skills); the conversation's own instructions in the chat file are never rewritten.
 - **Export** writes SKILL.md with the reference notes. **Migration:** an older skills.json is upgraded in place (ids, names and instructions unchanged) and the original is kept as `skills.v1.json`.
 
 Model details use published Hugging Face metadata when available: downloads, likes, architecture, parameters, context and a bounded text model card. Missing values are omitted. These published context values remain separate from the configured chat window. Network errors leave installed models usable.
@@ -184,7 +184,7 @@ Settings → Browser also offers:
 
 These settings do not loosen any of the protections above.
 
-**Engine host.** Chat, research, project questions and the speed lab use `backend/lumen-host.exe`, a small .NET 4.8 program (source: `backend/LumenHost.cs`). It runs the unchanged `lumen-core-beta.exe` bridge in the same process and adds bounded request types (chat, tool steps, speed test) that reuse the model already loaded. The model is never loaded twice. If the host is missing or incompatible, Lumen starts the original backend: research and project tools are shown as unavailable and normal chat continues.
+**Engine process.** Chats, models, engine setup, research, project questions and the speed lab go through `backend/lumen-host.exe`, a small .NET 4.8 program built from `backend/LumenHost.cs` and `backend/LumenCore.cs`. Every request type (chat, tool steps, speed test) reuses the model already loaded; the model is never loaded twice. Since v1.0.4-beta this replaces the closed `lumen-core-beta.exe` of the first betas; chat files, the model list and engine settings are read and written in the same format.
 
 ## Project folder (read-only)
 

@@ -23,6 +23,20 @@ Implementation checks: no external fonts/frameworks, no idle animation loop, sho
 
 Raw development measurements and screenshots are in `work`; no test conversations or screenshots are bundled in the portable application. The app's Electron baseline is heavier than the previous WPF build.
 
+## Open engine process, no closed backend (2026-10-12)
+
+The closed `lumen-core-beta.exe` was replaced by `backend/LumenCore.cs`, written from its IL. The two llama.cpp archives it carried inside were byte-identical to the official b11438 CPU and Vulkan releases (SHA-256 checked against GitHub's digests); they are now plain files in `backend/engines/`.
+
+| Check | Kind | Result |
+| --- | --- | --- |
+| Same seeded data (copies of the user's 9 chats and catalog, Gemma 4 E2B) and the same 31 requests to the previous host (with the closed backend) and the new one: bootstrap, models, hardware, engine plan, save, branch, delete, 9 rejected inputs, register, Hugging Face files and search, two real chat turns, a plain and a schema-constrained agent step, cancel during a reply, unload. Replies, streamed events, context numbers, errors and the files on disk compared | Real models (CPU engine, temperature 0) + real HF API | **No difference** (`test-core-parity.mjs`). Differences found and fixed on the way: a missing default engine name. Two differences are expected and allowed: where a cancelled reply stops, and field order in catalog.json (the old backend wrote both orders) |
+| Empty data folder (new install): bootstrap, choose Vulkan (unpacks the bundled engine, runs `--list-devices`), choose CPU | Real engines | No difference (`test-core-fresh.mjs`) |
+| First-start CUDA 13 setup with the new process: 576.6 MB from GitHub, SHA-256, unpack, `--list-devices` found the RTX 5060, choice saved | Real download | Pass, 235 s (`test-core-cuda.mjs`); `ready.json` has the same format as the one the old backend wrote on this PC |
+| `build-portable.ps1` from a clean folder (Electron and both llama.cpp archives downloaded and SHA-256 checked, all helpers compiled), then the two comparisons above with that host | Build from source | Pass, 111 s build |
+| UI regressions with the new process only (no old backend file present): photos, design, explore, composer, chat controls, visual matrix, themes, browser commands, browser clicks, skills (Gemma), memory fit with a loaded model (Coder-7B), models, browser hint (Gemma) | Real UI, real models on the GPU | 13/13 pass. Browser hint failed once in 4 runs: Gemma (temperature 0.7) answered "discord'a git" instead of naming a command; the hint itself was in the request |
+| The published v1.0.3-beta ZIP (closed backend) updates itself to v1.0.4-beta through a local release server: check, download, verify, restart, folder swap | Real update | Pass: v1.0.4-beta started, no `lumen-core-beta.exe` left (`run-update-compat.ps1 -Tag v1.0.3-beta`) |
+| The new process reads the real data folder of this PC (bootstrap only, nothing written) | Real data | 9 chats, 3 installed models, CUDA 13 engine; no file changed |
+
 ## Startup checks and llama.cpp engine updates (2026-10-11)
 
 | Check | Kind | Result |

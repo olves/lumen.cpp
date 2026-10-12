@@ -1,10 +1,10 @@
 # Third-party notices
 
-Lumen's own code is under the MIT license (see `LICENSE`). It uses or redistributes the following components, each under its own license.
+Lumen's own code is under the Apache License 2.0 (see `LICENSE` and `NOTICE`). It uses or redistributes the following components, each under its own license.
 
 | Component | Version | License | Where |
 | --- | --- | --- | --- |
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) | b11438 | MIT | Inference engine; downloaded/bundled by the backend. `docs/licenses-llama.cpp.txt` |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | b11438 | MIT | Inference engine. The official CPU and Vulkan builds are bundled unchanged (`app/backend/engines/` in the release); CUDA builds and newer engine versions are downloaded from the official releases. `docs/licenses-llama.cpp.txt` |
 | [Electron](https://www.electronjs.org/) | 44.5.1 | MIT (Chromium components under their own licenses) | Desktop runtime in the release ZIP. `docs/licenses-electron.txt`; the release also contains `LICENSES.chromium.html` |
 | [markdown-it](https://github.com/markdown-it/markdown-it) | 14.1.0 | MIT | `app/vendor/markdown-it.min.js`, `app/vendor/LICENSE.markdown-it.txt` |
 | [highlight.js](https://highlightjs.org/) | 11.11.1 | BSD-3-Clause | `app/vendor/highlight.min.js`, `app/vendor/LICENSE.highlight.txt` |
