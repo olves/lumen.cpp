@@ -121,6 +121,8 @@ function createModelInfo(data,{log=()=>{}}={}){
  }
  return {
   setBackendHardware(h){if(h&&typeof h==='object')backendHardware=h;},
+  // GPU memory in use right now (all programs), for measuring what a model load really took. null without nvidia-smi.
+  async vramUsed(){const s=await nvidia();return s?s.used:null;},
   quantOf,displayNames,
   // Presentation fields added to backend model lists. Metadata-based fields appear once the file has been read.
   decorate(models){if(!Array.isArray(models))return models;const names=displayNames(models);return models.map(m=>{const meta=m.Installed?cached(m):null;return {...m,Display:names.get(m.Name),Detail:(m.Repo?m.Repo+' / ':'')+(m.File||''),Quant:quantOf(m.File),Meta:meta?{thinking:meta.thinking,trainedContext:meta.shape?.trainedContext||null,arch:meta.shape?.arch||null,moe:(meta.shape?.experts||0)>0,experts:meta.shape?.experts||0,expertsUsed:meta.shape?.expertsUsed||0,sizeLabel:meta.sizeLabel}:null};});},

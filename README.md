@@ -9,7 +9,7 @@ A local AI chat workspace for Windows. Lumen runs open models (GGUF) on your own
 ## Features
 
 - **Chat** with streaming answers, stop, branches, regenerate with versions, local chat search (Ctrl+K), Markdown with highlighted code, tables and math.
-- **Models**: browse Hugging Face GGUF repositories, download with resume and SHA-256 checks, and see an estimate of whether a model fits your GPU, RAM or both.
+- **Models**: browse Hugging Face GGUF repositories, download with resume and SHA-256 checks, see an estimate of whether a model fits your GPU, RAM or both, and what it can do (thinking, photos, tool calls) before downloading. "For you" is sorted for your computer, with the reason on each row.
 - **GPU setup**: picks CUDA 13 / CUDA 12 / Vulkan / CPU automatically. AMD and Intel GPUs use Vulkan.
 - **llama.cpp engine updates**: checked at startup with Lumen's own update; newer official builds are verified, tested and can be rolled back. The bundled engine stays as a fallback.
 - **Performance**: automatic GPU/RAM placement (large MoE models work on 8 GB GPUs), compact 8-bit context cache, speculative decoding (n-gram and MTP draft models), contexts up to 32K, and an Auto context size per model.
@@ -17,6 +17,9 @@ A local AI chat workspace for Windows. Lumen runs open models (GGUF) on your own
 - **Photos**: OCR on Windows, and real image input for vision models with a projector (mmproj).
 - **Web research (optional, off by default)**: a planner and sequential subagents search and read pages, then answer with citations. Providers: DuckDuckGo (whole web, no key), Tavily, Brave Search, Wikipedia, or your own SearXNG.
 - **Browser commands in chat**: "open github.com", "search lofi on youtube", "click sign in", "scroll down", or chained ("open discord and press sign in"). Carried out directly in the built-in browser panel. Lumen never types into pages, and asks before buttons that pay, send or delete.
+- **Documents**: add PDF, Word or text files to a conversation; answers cite the page they come from ([D1], [D2]…). Read on your computer; long documents go to the model as the passages that match your question.
+- **Run settings per conversation**: temperature, Top P/K, Min P, penalties, seed, response length, thinking and the conversation's instructions (with `{{current_date}}`), in a panel next to the chat.
+- **Models you already have**: use GGUF files from LM Studio, Ollama, the Hugging Face cache, GPT4All or Jan without downloading them again (no extra disk space on the same drive).
 - **Project folder (read-only)**: let a model list, find, search and read files in a folder, with file citations. It cannot write, delete or run anything.
 - **Skills**: reusable instructions and reference notes you select per conversation.
 - **Desk / Studio layouts, light and dark, eight accent colors or your own, English and Turkish.**

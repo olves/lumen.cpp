@@ -23,6 +23,21 @@ Implementation checks: no external fonts/frameworks, no idle animation loop, sho
 
 Raw development measurements and screenshots are in `work`; no test conversations or screenshots are bundled in the portable application. The app's Electron baseline is heavier than the previous WPF build.
 
+## Run settings, For you, models on this computer, documents (2026-10-12)
+
+| Check | Kind | Result |
+| --- | --- | --- |
+| Sampling reaches llama-server: top K 1 gives the same reply twice at temperature 1.5; the same seed gives the same reply, another seed a different one; `{{current_date}}` filled in for the request and kept as a placeholder in the saved chat; invalid top K, unknown key, temperature 2.5 and repeat penalty 3 refused | Real model (Gemma 4 E2B, CPU engine) | Pass (`test-host-sampling.mjs`) |
+| Run settings panel: per-chat overrides stored, reply uses them (1,024 reserved, date in the answer), branch copies them, another chat keeps the defaults, "Use for new chats", Creativity preset replaces a custom default, reset, refused values, Turkish, light mode, 800×600 | Real UI + model | Pass (`test-run-settings-ui.cjs`). Found and fixed: the panel first covered the message box (now beside the chat) and stayed open on the Settings page |
+| For you: clean names, installed first then by fit, reasons, badges from Hugging Face templates (Qwen3 8B: Thinking, Tools; Gemma 4 E2B: Thinking, Photos, Tools) and from installed files, details box, Turkish | Real UI + Hugging Face API | Pass (`test-picks-ui.cjs`) |
+| Models on this computer: fake LM Studio, Hugging Face cache and Ollama folders whose files are hard links to installed models; 3 found, split part skipped, 3 added in 9 s (7.3 GB checked with SHA-256), added as hard links (same file index), sources unchanged, rescan shows "Already in Lumen", Ollama model registered, an added model answered | Real UI + files + model | Pass (`run-import-ui.ps1`) |
+| Documents without UI: hand-made 3-page PDF (124 ms), .docx, Turkish text; Turkish question without diacritics finds the right passage; whole vs passages; refused files; branch and cleanup | Unit | Pass (`test-documents.mjs`) |
+| Documents in a chat: 3-page Turkish PDF printed by Chromium + 58,842-character text with one "needle" sentence. "2027 bütçesi?" → "3,4 milyon TL [D1]" from page 2; "Depo anahtarı nerede?" → the needle passage only (prompt 322 tokens), cited; excerpt dialog, sources kept after reopening, removal deletes the stored document | Real UI + model | Pass (`test-docs-ui.cjs`) |
+| Free GPU memory with a model loaded: was over-estimated by about 1.7 GB when other programs used GPU memory (the loaded model's estimate was added back); now the load is measured with nvidia-smi before and after | Fix | `test-fit-loaded.cjs` fails before, passes after (difference 187 MB) |
+| Full UI regression after these changes | Real UI | All pass. Four tests first failed because their windows were on screen while the computer was in use (a real click closed one; focus changes closed menus); moved off screen, they pass |
+
+Keyword ranking finds exact words and their forms, not synonyms; documents are not used by research or project answers yet; scanned PDFs need OCR, which is not built in.
+
 ## Open engine process, no closed backend (2026-10-12)
 
 The closed `lumen-core-beta.exe` was replaced by `backend/LumenCore.cs`, written from its IL. The two llama.cpp archives it carried inside were byte-identical to the official b11438 CPU and Vulkan releases (SHA-256 checked against GitHub's digests); they are now plain files in `backend/engines/`.

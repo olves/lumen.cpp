@@ -103,7 +103,7 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
  }
 
  async function run(options){
-  const {runId,chat,prompt,model,contextSize,language,mode,systemPrompt,thinking=false,responseTokens=512,temperature=0.4}=options;
+  const {runId,chat,prompt,model,contextSize,language,mode,systemPrompt,thinking=false,responseTokens=512,temperature=0.4,sampling}=options;
   if(runs.size)throw Error('Another research run is active.');
   const config=settings.get();const limits={maxSubtasks:config.agent.enabled?clamp(config.agent.maxSubtasks,LIMITS.maxSubtasks):1,maxToolCalls:clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls),taskSeconds:clamp(config.agent.taskSeconds,LIMITS.taskSeconds)};
   const webOn=config.search.enabled;
@@ -156,7 +156,7 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
    let messages=[{role:'system',content:short((systemPrompt||'')+instructions,40000)},...history,{role:'user',content:user}];
    while(estimateTokens(messages)>contextSize-answerBudget-64&&messages.length>2)messages.splice(1,1);
    if(estimateTokens(messages)>contextSize-answerBudget-64){messages[messages.length-1].content=short(user,Math.max(1200,(contextSize-answerBudget-200)*3-messages[0].content.length));}
-   let reasoning='';const answer=await call({messages,maxTokens:answerBudget,temperature:Math.min(temperature,0.7),stream:true,thinking,timeoutMs:thinking?420000:240000,onChunk:text=>send({type:'chunk',text}),onReasoning:text=>{reasoning+=text;send({type:'reasoning',text});}});
+   let reasoning='';const answer=await call({messages,maxTokens:answerBudget,temperature:Math.min(temperature,0.7),sampling,stream:true,thinking,timeoutMs:thinking?420000:240000,onChunk:text=>send({type:'chunk',text}),onReasoning:text=>{reasoning+=text;send({type:'reasoning',text});}});
    let content=answer.content.trim();const cited=new Set();
    content=content.replace(/\[(S\d{1,2})\]/g,(match,id)=>{if(sources.byId(id)){cited.add(id);return match;}return '';});
    sources.list.forEach(s=>s.cited=cited.has(s.id));
@@ -232,7 +232,7 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
   finish:{type:'object',properties:{action:{const:'finish'},notes:{type:'string',maxLength:1200}},required:['action'],additionalProperties:false}
  };
  async function runProject(options){
-  const {runId,chat,prompt,model,contextSize,language,project,research=false,systemPrompt,thinking=false,responseTokens=512,temperature=0.4}=options;
+  const {runId,chat,prompt,model,contextSize,language,project,research=false,systemPrompt,thinking=false,responseTokens=512,temperature=0.4,sampling}=options;
   if(runs.size)throw Error('Another run is active.');
   const config=settings.get(),webOn=research&&config.search.enabled,maxCalls=Math.max(4,Math.min(12,clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls)*2));
   const controller=new AbortController(),signal=controller.signal;runs.set(runId,controller);
@@ -292,7 +292,7 @@ Rules: paths are relative to the project root. Read the files that matter (use s
    const final=[{role:'system',content:short((systemPrompt||'')+instructions,40000)},...history,{role:'user',content:user}];
    while(estimateTokens(final)>contextSize-answerBudget-64&&final.length>2)final.splice(1,1);
    if(estimateTokens(final)>contextSize-answerBudget-64)final[final.length-1].content=short(user,Math.max(1200,(contextSize-answerBudget-200)*3-final[0].content.length));
-   let reasoning='';const answer=await call({messages:final,maxTokens:answerBudget,temperature:Math.min(temperature,0.7),stream:true,thinking,timeoutMs:thinking?420000:240000,onChunk:text=>send({type:'chunk',text}),onReasoning:text=>{reasoning+=text;send({type:'reasoning',text});}});
+   let reasoning='';const answer=await call({messages:final,maxTokens:answerBudget,temperature:Math.min(temperature,0.7),sampling,stream:true,thinking,timeoutMs:thinking?420000:240000,onChunk:text=>send({type:'chunk',text}),onReasoning:text=>{reasoning+=text;send({type:'reasoning',text});}});
    let content=answer.content.trim();const cited=new Set();
    content=content.replace(/\[(F\d{1,2}|S\d{1,2})\]/g,(m,id)=>{if(excerpts.some(x=>x.id===id)||webSources.byId(id)){cited.add(id);return m;}return '';});
    const sources=[...excerpts.map(x=>({id:x.id,title:x.path,path:x.path,start:x.start,end:x.end,site:(language==='tr'?'satır ':'lines ')+x.start+'–'+x.end,url:'',file:true,read:true,cited:cited.has(x.id)})),...webSources.list.map(s=>({...s,cited:cited.has(s.id)}))];

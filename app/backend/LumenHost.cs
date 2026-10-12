@@ -288,12 +288,38 @@ static class LumenHost {
 
  class StreamResult{public int Prompt;public int Completion;public string Finish="";public Dictionary<string,object> Timings;}
 
- static Dictionary<string,object> RequestBody(List<object> messages,int maxTokens,double temperature,bool thinking){
+ static Dictionary<string,object> RequestBody(List<object> messages,int maxTokens,double temperature,bool thinking,Dictionary<string,object> sampling=null){
   // Thinking is always stated explicitly (enable_thinking). Reasoning is always parsed into reasoning_content, so a template that
   // still writes an empty <think></think> block with thinking off never leaks it into the answer.
-  return new Dictionary<string,object>{{"messages",messages},{"stream",true},{"max_tokens",maxTokens},{"temperature",temperature},{"cache_prompt",true},
+  var body=new Dictionary<string,object>{{"messages",messages},{"stream",true},{"max_tokens",maxTokens},{"temperature",temperature},{"cache_prompt",true},
    {"stream_options",new Dictionary<string,object>{{"include_usage",true}}},{"reasoning_format","deepseek"},
    {"chat_template_kwargs",new Dictionary<string,object>{{"enable_thinking",thinking}}}};
+  if(sampling!=null)foreach(var pair in sampling)body[pair.Key]=pair.Value;
+  return body;
+ }
+ // Optional sampling settings chosen per conversation. Only the ones given are sent; the rest keep llama.cpp's own defaults.
+ static readonly string[][] samplingLimits={new[]{"topP","top_p","0","1"},new[]{"topK","top_k","0","500"},new[]{"minP","min_p","0","1"},
+  new[]{"repeatPenalty","repeat_penalty","0.5","2"},new[]{"presencePenalty","presence_penalty","-2","2"},new[]{"frequencyPenalty","frequency_penalty","-2","2"},new[]{"seed","seed","-1","2147483647"}};
+ static Dictionary<string,object> Sampling(Dictionary<string,object> a){
+  var s=a.ContainsKey("sampling")?a["sampling"] as Dictionary<string,object>:null;if(s==null)return null;
+  var result=new Dictionary<string,object>();
+  foreach(var key in s.Keys)if(!samplingLimits.Any(l=>l[0]==key))throw new Exception("Invalid sampling settings.");
+  foreach(var limit in samplingLimits){
+   if(!s.ContainsKey(limit[0])||s[limit[0]]==null)continue;
+   double min=double.Parse(limit[2],System.Globalization.CultureInfo.InvariantCulture),max=double.Parse(limit[3],System.Globalization.CultureInfo.InvariantCulture);
+   double value=Num(s,limit[0],0,min,max);
+   if(limit[0]=="topK"||limit[0]=="seed"){if(value!=Math.Floor(value))throw new Exception("Invalid "+limit[0]+".");result[limit[1]]=(long)value;}else result[limit[1]]=value;
+  }
+  return result;
+ }
+ // {{current_date}} and similar placeholders in the system message, filled in for this request only (the saved chat keeps them).
+ static List<object> WithVariables(List<object> messages,Dictionary<string,object> a){
+  var v=a.ContainsKey("variables")?a["variables"] as Dictionary<string,object>:null;if(v==null||messages.Count==0)return messages;
+  var first=messages[0] as Dictionary<string,object>;if(first==null||Str(first,"role")!="system")return messages;
+  string content=Str(first,"content");
+  foreach(var pair in v){if(!Regex.IsMatch(pair.Key,"^[a-z_]{1,32}$"))continue;string value=Convert.ToString(pair.Value)??"";if(value.Length>200)value=value.Substring(0,200);content=content.Replace("{{"+pair.Key+"}}",value);}
+  messages[0]=new Dictionary<string,object>{{"role","system"},{"content",content}};
+  return messages;
  }
 
  // One streamed /v1/chat/completions request. Visible text and reasoning arrive through separate callbacks.
@@ -337,7 +363,7 @@ static class LumenHost {
  // A bounded completion used by the agent runtime. Schema-constrained steps never think (grammar and reasoning conflict).
  static async Task<object> Complete(string id,Dictionary<string,object> a,CancellationToken ct){
   string model=Str(a,"model");int context=Int(a,"contextSize",4096,2048,32768);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
-  int maxTokens=Int(a,"maxTokens",512,16,4096);double temperature=Num(a,"temperature",0.2,0,1.5);int timeout=Int(a,"timeoutMs",120000,1000,600000);bool stream=Bool(a,"stream");
+  int maxTokens=Int(a,"maxTokens",512,16,4096);double temperature=Num(a,"temperature",0.2,0,2);var sampling=Sampling(a);int timeout=Int(a,"timeoutMs",120000,1000,600000);bool stream=Bool(a,"stream");
   bool schema=a.ContainsKey("schema")&&a["schema"] is Dictionary<string,object>;bool thinking=Bool(a,"thinking")&&!schema;
   var rawMessages=a.ContainsKey("messages")?a["messages"] as IList:null;if(rawMessages==null||rawMessages.Count==0||rawMessages.Count>80)throw new Exception("Invalid messages.");
   var messages=new List<object>();int characters=0;
@@ -348,7 +374,7 @@ static class LumenHost {
    messages.Add(new Dictionary<string,object>{{"role",role},{"content",content}});
   }
   var server=await EnsureServer(id,model,context,ct,null,a.ContainsKey("draft")?Str(a,"draft"):null,Options(a));
-  var body=RequestBody(messages,maxTokens,temperature,thinking);
+  var body=RequestBody(WithVariables(messages,a),maxTokens,temperature,thinking,sampling);
   if(schema)body["response_format"]=new Dictionary<string,object>{{"type","json_schema"},{"json_schema",new Dictionary<string,object>{{"name","lumen_step"},{"strict",true},{"schema",a["schema"]}}}};
   var text=new StringBuilder();var reasoning=new StringBuilder();
   var result=await StreamCompletion(server,body,ct,timeout,
@@ -426,9 +452,10 @@ static class LumenHost {
  static async Task<object> ChatTurn(string id,Dictionary<string,object> a,CancellationToken ct){
   var chat=Chat(a);
   int context=Int(a,"contextSize",4096,2048,32768);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
-  bool thinking=Bool(a,"thinking");int reserve=Math.Min(Int(a,"maxTokens",512,128,8192),context/2);double temperature=Num(a,"temperature",0.7,0,1.5);
-  // Selected skills: added to the request's system message only; the saved chat keeps the user's own instructions.
-  string guidance=Str(a,"guidance");if(guidance.Length>30000)throw new Exception("The selected skills are too long.");
+  bool thinking=Bool(a,"thinking");int reserve=Math.Min(Int(a,"maxTokens",512,128,8192),context/2);double temperature=Num(a,"temperature",0.7,0,2);var sampling=Sampling(a);
+  // Selected skills (main limits them to 24,000 characters) and passages from attached documents (sized by main to the window):
+  // added to the request's system message only; the saved chat keeps the user's own instructions.
+  string guidance=Str(a,"guidance");if(guidance.Length>200000)throw new Exception("The selected skills and documents are too long.");
   string projector=a.ContainsKey("projector")?Str(a,"projector"):"";var images=Images(a,chat,projector);int imageTokens=Int(a,"imageTokens",300,64,4096);
   ChatStore.Save(chat);
   var text=new StringBuilder();var reasoning=new StringBuilder();bool complete=false;
@@ -443,7 +470,7 @@ static class LumenHost {
     var recent=chat.Messages.Where(m=>!m.Interrupted&&!string.IsNullOrWhiteSpace(m.Content)).ToList();
     var starts=recent.Select((m,i)=>new{m,i}).Where(x=>x.m.Role=="user").Select(x=>x.i).ToList();
     if(starts.Count==0)throw new Exception("A user message is required.");
-    Func<int,List<object>> build=index=>WithGuidance(server.PromptMessages(chat,recent,index),guidance);
+    Func<int,List<object>> build=index=>WithGuidance(WithVariables(server.PromptMessages(chat,recent,index),a),guidance);
     // Image tokens are not counted by /tokenize; each attached image in the kept window adds an estimate.
     Func<int,int> imageCost=index=>images.Where(x=>recent.IndexOf(x.Key)>=index).Sum(x=>x.Value.Files.Count)*imageTokens;
     Func<List<object>,Task<int>> count=list=>server.Count(client,list,ct);
@@ -462,7 +489,7 @@ static class LumenHost {
     int omitted=starts[selected];
     AttachImages(messages,recent,starts[selected],chat,images);
     Emit(id,"context",new ContextInfo{Prompt=tokens,Generated=0,Capacity=capacity,ModelCapacity=trained,Reserved=reserve,OmittedMessages=omitted,Final=false});
-    var result=await StreamCompletion(server,RequestBody(messages,reserve,temperature,thinking),ct,600000,
+    var result=await StreamCompletion(server,RequestBody(messages,reserve,temperature,thinking,sampling),ct,600000,
      piece=>{text.Append(piece);Emit(id,"chunk",piece);},
      thought=>{reasoning.Append(thought);Emit(id,"reasoning",thought);},
      (prompt,generated)=>Emit(id,"context",new ContextInfo{Prompt=prompt>0?prompt:tokens,Generated=generated,Capacity=capacity,ModelCapacity=trained,Reserved=reserve,OmittedMessages=omitted,Final=true}));

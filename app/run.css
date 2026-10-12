@@ -1,0 +1,49 @@
+/* Run settings: footer button and the panel on the right. Colors come from the theme tokens. */
+.run-toggle{display:inline-flex;align-items:center;gap:6px;margin-left:auto;padding:3px 6px;border-radius:6px;font-size:10px;color:var(--soft-ink)}
+.run-toggle:hover,.run-toggle[aria-expanded=true]{color:var(--ink);background:var(--hover)}
+.run-toggle svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
+.run-dot{display:none;width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.run-toggle.custom .run-dot{display:inline-block}
+
+/* Beside the chat like the browser panel, so it never covers the composer; over the chat in narrow windows. */
+.run-panel{flex:0 0 340px;min-width:0;display:flex;flex-direction:column;background:var(--panel);color:var(--ink);border-left:1px solid var(--border);animation:run-in 160ms ease-out}
+[data-layout=studio] .run-panel{border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.run-panel[hidden]{display:none}
+@keyframes run-in{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+body.no-motion .run-panel{animation:none}
+@media (prefers-reduced-motion:reduce){.run-panel{animation:none}}
+.run-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 16px 12px;border-bottom:1px solid var(--border)}
+.run-head h2{margin:0;font-size:14px;font-weight:600}
+.run-scope{margin:3px 0 0;font-size:11px;color:var(--secondary-ink)}
+.run-close svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
+.run-body{flex:1;overflow-y:auto;padding:4px 16px 16px}
+.run-label{margin:16px 0 6px;font-size:10px;letter-spacing:.08em;color:var(--secondary-ink)}
+.run-row{padding:8px 0}
+.run-row-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.run-row-head label{font-size:12px;font-weight:500}
+.run-inline{display:grid;grid-template-columns:1fr auto;align-items:center;column-gap:12px}
+.run-inline .run-row-head{margin:0}
+.run-inline .run-hint{grid-column:1/-1}
+.run-hint{margin:5px 0 0;font-size:11px;line-height:1.45;color:var(--secondary-ink)}
+.run-note{color:var(--soft-ink)}
+.run-reset-field{padding:0 5px;border-radius:5px;font-size:12px;color:var(--secondary-ink)}
+.run-reset-field:hover{color:var(--ink);background:var(--hover)}
+.run-slider{display:grid;grid-template-columns:1fr 78px;align-items:center;gap:10px}
+.run-slider input[type=range]{width:100%;accent-color:var(--accent)}
+.run-slider input[type=range].unset{opacity:.45}
+.run-number{width:100%;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--field);color:var(--ink);font-size:12px;font-variant-numeric:tabular-nums}
+.run-number::placeholder{color:var(--soft-ink);font-size:10px}
+.run-seed{width:150px}
+.run-presets{display:flex;gap:6px;margin-top:8px}
+.run-preset{padding:3px 9px;border:1px solid var(--border);border-radius:999px;font-size:11px;color:var(--secondary-ink)}
+.run-preset:hover{color:var(--ink)}
+.run-preset.active{color:var(--accent-ink);background:var(--selection);border-color:var(--selection-line)}
+.run-segmented{display:flex;width:100%}
+.run-segmented button{flex:1}
+.run-instructions{width:100%;box-sizing:border-box;resize:vertical;min-height:90px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--field);color:var(--ink);font:inherit;font-size:12px;line-height:1.45}
+.run-row .text-button{margin-top:6px}
+.run-advanced{margin-top:14px;border-top:1px solid var(--border);padding-top:10px}
+.run-advanced summary{cursor:pointer;font-size:12px;font-weight:500;padding:4px 0;color:var(--ink)}
+.run-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--border)}
+.run-foot .text-button:disabled{opacity:.45;cursor:default}
+@media (max-width:1000px){.run-panel{position:absolute;inset:0 0 0 auto;width:min(360px,100%);z-index:13;box-shadow:var(--shadow,0 16px 40px #00000033)}[data-layout=studio] .run-panel{inset:0 8px 8px auto}}

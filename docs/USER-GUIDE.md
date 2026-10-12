@@ -74,6 +74,17 @@ Settings → Chat behavior → **Responses** has four settings. They apply to no
 
 Normal chat goes through the engine's `chat` request, which trims history and counts tokens the same way the first betas did. If a model spends the whole response length thinking, Lumen says so instead of saving an empty answer.
 
+### Run settings for one conversation
+
+The settings button under the message box (it shows, for example, "Balanced · 512") opens **Run settings** next to the chat. Everything there applies to this conversation only, from the next reply on:
+- **Thinking**, **Response length** and **Temperature** (0–2, with Precise / Balanced / Creative shortcuts).
+- **Instructions**: the conversation's system prompt. `{{current_date}}` (and `{{current_time}}`) are filled in for each request in your interface language; the saved conversation keeps the placeholder.
+- **Advanced sampling**: Top P, Top K, Min P, repeat, presence and frequency penalties, and a seed (the same seed and settings give the same reply). Values you have not set are not sent, so llama.cpp and the model keep their own defaults; the field says "Default".
+- A dot on the button means the conversation has its own values. **↺** next to a setting returns it to the default; **Reset this conversation** drops all of them; **Use for new chats** makes this conversation's values the defaults (Settings → Chat behavior shows the same defaults; choosing a Creativity preset there replaces a custom default temperature).
+- The context window and engine options are not per conversation: changing them reloads the model, so they stay in Settings, linked from the panel.
+
+Saved in `conversation-run.json` (only what you changed); copied to branches and removed with the conversation. Research and project answers use the conversation's thinking, length, temperature and sampling for their final answer; their planning and tool steps keep fixed settings.
+
 ## Optimization and verification
 
 The frontend has no framework dependencies. Streaming appends to one text node in animation-frame batches; Markdown is parsed once after a reply. Offscreen messages use `content-visibility`, inactive pages are removed from layout, and hidden production windows retain Chromium background throttling. Node access is disabled in the renderer, context isolation and sandboxing are enabled, IPC operations are allowlisted, and a local resource protocol/CSP prevents remote content execution.
@@ -86,7 +97,7 @@ If a launch fails, diagnostic logs are in `%LOCALAPPDATA%\lumen.cpp` or the Elec
 
 `resources/app` contains the HTML/CSS/JavaScript frontend. The local engine process is `resources/app/backend/lumen-host.exe`, built from `LumenHost.cs` and `LumenCore.cs` in the same folder. `backend/engines` holds the official llama.cpp b11438 CPU and Vulkan archives, unchanged; `backend/models.catalog.json` is the starter model list. No npm build step is required for this frontend. All source code is in the repository, github.com/olves/lumen.cpp.
 
-Lumen: Apache License 2.0, `LUMEN-LICENSE.txt` and `NOTICE.txt` (v1.0.3-beta and earlier: MIT). Electron v44.5.1: `LICENSE`, `LICENSES.chromium.html`. llama.cpp b11438: `LLAMA-LICENSE.txt`. Bundled formatting libraries (MIT; license files in `resources/app/vendor`): markdown-it 14.1.0, highlight.js 11.11.1, KaTeX 0.16.22 with its woff2 fonts. They were taken from the npm registry and checked against the registry's SHA-512 integrity values. Model licenses are on their Hugging Face repository pages.
+Lumen: Apache License 2.0, `LUMEN-LICENSE.txt` and `NOTICE.txt` (v1.0.3-beta and earlier: MIT). Electron v44.5.1: `LICENSE`, `LICENSES.chromium.html`. llama.cpp b11438: `LLAMA-LICENSE.txt`. Bundled formatting libraries (MIT; license files in `resources/app/vendor`): markdown-it 14.1.0, highlight.js 11.11.1, KaTeX 0.16.22 with its woff2 fonts; pdf.js 6.3.289 (Apache-2.0, `resources/app/vendor/pdfjs`, used in the main process to read PDF text). They were taken from the npm registry and checked against the registry's SHA-512 integrity values. Model licenses are on their Hugging Face repository pages.
 
 ## GPU welcome and Model Hub
 
@@ -197,6 +208,21 @@ Choose **+ → Project folder** and pick a folder. A "Project · name · read-on
 - **Web stays separate.** Project text is never sent anywhere automatically. Web search is offered only when you also turned on web research for the message; a search query that contains file paths or text from the files is refused.
 - The folder choice is saved per conversation (`conversation-projects.json`) and inherited by branches; Detach removes it.
 
+## Documents
+
+Choose **+ → Documents** to add PDF, Word (.docx) or text files (Markdown, CSV, JSON, HTML and similar) to a conversation; a "Documents · n" chip appears. Click it to see or remove them.
+- **Read on this computer.** PDF text is read with pdf.js in a background thread (scripts in a PDF never run, fonts are not loaded); .docx files are opened directly. Nothing is uploaded. A scanned PDF without a text layer is reported as having no text (OCR for PDFs is not built in yet). Password-protected PDFs are refused.
+- **What the model gets.** If the documents fit in about 45% of what the context window leaves after the reply, they go whole, page by page. Otherwise Lumen picks the passages that best match your latest message (keyword ranking with Turkish letters folded, about 900-character passages) and says that other parts are not shown. Keyword ranking finds exact words and their forms; a question phrased with completely different words can miss a passage, so name the topic as the document does.
+- **Citations.** Answers cite passages as [D1], [D2]… right after the statement. Click a badge or a source under the reply to see the passage and its page (or part, for files without pages). Sources the model was given but did not cite are listed in grey.
+- **Document text is untrusted.** The model is told that instructions inside documents are data, not commands.
+- Limits: 64 MB per file, 2,000 pages, 10 documents per conversation. Documents are stored in `documents/` inside the data folder, linked per conversation (`conversation-documents.json`) and per reply (`conversation-docsources.json`); a document no conversation uses any more is deleted. Branches keep the documents. Research and project answers do not read documents yet.
+
+## Models on this computer
+
+Settings → Library → **Models on this computer** looks for GGUF models other apps already downloaded: LM Studio, the Hugging Face cache, Ollama, GPT4All, Jan and llama.cpp's cache, plus any folder you choose. Lumen only reads those folders.
+- Models on the same drive are added as a **hard link**: no download and no extra disk space; deleting the model in one app keeps it in the other. A model on another drive needs a copy; it is not selected by default and its row shows the size of the copy.
+- Each file is checked (GGUF header, SHA-256; Ollama and Hugging Face cache files already carry their SHA-256 in the file name) and matched with Lumen's model list, so a file Lumen already knows becomes that model. Vision files (mmproj) and split models are skipped.
+
 ## Speed lab
 
 Settings → Speed lab measures how fast a model runs on this computer; it is not a quality score. Two profiles:
@@ -222,11 +248,13 @@ On the development connection the line itself was the limit (about 5.4 MB/s), so
 
 ## Explore
 
-Settings → Explore opens with four collections: For you (Lumen's curated starters), Popular (most-downloaded public text-generation GGUF repositories), Coding, and Compact (published parameter count up to 4.5B). Family shortcuts (Qwen, Llama, Gemma, Mistral, Phi, DeepSeek) search Hugging Face for that family; the search field still accepts any query or an exact owner/repository. Lists are ordered by Hugging Face downloads, not by quality or by compatibility with the bundled llama.cpp.
+Settings → Explore opens with four collections: For you (Lumen's starter and registered models, sorted for this computer: installed first, then what fits the GPU, largest first; each row says why, for example "Largest that fits your GPU" or "Uses GPU and RAM · slower"), Popular (most-downloaded public text-generation GGUF repositories), Coding, and Compact (published parameter count up to 4.5B). Family shortcuts (Qwen, Llama, Gemma, Mistral, Phi, DeepSeek) search Hugging Face for that family; the search field still accepts any query or an exact owner/repository. Lists are ordered by Hugging Face downloads, not by quality or by compatibility with the bundled llama.cpp.
 
 Each row shows the owner, download count, published parameter count and a size. A size prefixed with ≈ is an estimate for a Q4 file computed from the parameter count; real file sizes appear in the download options. The coloured dot is the same memory estimate used elsewhere (fits GPU memory / RAM or mixed / may exceed available RAM). In the details, the download options carry a general quality note per quant (for example Q4 = balanced, Q8 = close to original) and one quant may be marked Best fit: the Q4_K_M or largest Q4–Q6 file that the estimate places in GPU memory, otherwise in RAM. These are estimates from file size and detected memory, not a load or performance guarantee. Draft (MTP) heads and vision projectors that ship beside the weights are not listed as downloadable chat models.
 
-**Memory fit.** For installed models the dot and label use the file's own metadata, including the context cache at the chosen window: *fits fully on the GPU*, *GPU + RAM*, *CPU*, *may strain memory* or *unknown*. For files not yet downloaded, only the file size is used and the label says "context not included". Free GPU memory comes from `nvidia-smi` (other GPUs: the backend's reported memory); a model that is already loaded is counted as free for its own estimate. MoE models carry an "MoE" chip ("all N experts stay in memory, M run per token"): every weight must fit in RAM + VRAM, but only the active experts are computed per token, which is why such models can be fast even when partly in RAM. The Coding collection is sorted by how well each model fits this computer. All of these are estimates.
+**Memory fit.** For installed models the dot and label use the file's own metadata, including the context cache at the chosen window: *fits fully on the GPU*, *GPU + RAM*, *CPU*, *may strain memory* or *unknown*. For files not yet downloaded, only the file size is used and the label says "context not included". Free GPU memory comes from `nvidia-smi` (other GPUs: the backend's reported memory); a model that is already loaded is counted as free for its own estimate, using the GPU memory its load actually took (measured with `nvidia-smi` before and after loading; the estimate is used only without a reading). MoE models carry an "MoE" chip ("all N experts stay in memory, M run per token"): every weight must fit in RAM + VRAM, but only the active experts are computed per token, which is why such models can be fast even when partly in RAM. The Coding collection is sorted by how well each model fits this computer. All of these are estimates.
+
+**What a model can do.** Rows show *Thinking*, *Photos*, *Tools* and *Code* badges, and the details have a "What it can do" box with yes / no / unknown. Before download they come from the chat template Hugging Face reports for the repository (the same template llama-server applies); after download, from the file itself. Photos also need the model's vision file (Library → Vision). A repository without a template shows "unknown", and no badge is shown in the list for what is not known.
 
 ## Opening
 
