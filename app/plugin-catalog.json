@@ -1,0 +1,89 @@
+{
+ "version": 1,
+ "plugins": [
+  {
+   "category": "docs", "network": "mcp.context7.com",
+   "title": {"en": "Library docs", "tr": "Kütüphane belgeleri"},
+   "summary": {"en": "Current documentation and code examples for programming libraries, so answers do not rely on old knowledge. By Context7.", "tr": "Programlama kütüphanelerinin güncel belgeleri ve kod örnekleri; yanıtlar eski bilgiye dayanmaz. Context7 sağlar."},
+   "manifest": {
+    "lumenPlugin": 1, "id": "library-docs", "name": "Library docs", "version": "1.0.0", "author": "Lumen · server by Context7 (Upstash)", "homepage": "https://context7.com",
+    "description": "Looks up current library documentation through the Context7 MCP server.",
+    "skills": [{"name": "Use current library docs", "description": "Base code answers on documentation that was looked up.", "instructions": "When the user asks how to use a library, framework or API, look up its documentation first: resolve the library id, then query the docs for the exact topic. Base the answer on what the documentation says, show short code examples from it, mention the library version when it is known, and say plainly when the documentation did not cover the question."}],
+    "servers": [{"id": "context7", "name": "Context7", "url": "https://mcp.context7.com/mcp"}],
+    "assistants": [{"name": "Docs helper", "description": "Answers coding questions from current library docs.", "instructions": "You help with programming questions. Prefer facts from the documentation you looked up over memory, and keep answers practical: a short explanation, then a working example.", "skills": ["Use current library docs"], "tools": [{"server": "context7", "tool": "resolve-library-id"}, {"server": "context7", "tool": "query-docs"}]}]
+   }
+  },
+  {
+   "category": "docs", "network": "mcp.deepwiki.com",
+   "title": {"en": "GitHub repository guide", "tr": "GitHub depo rehberi"},
+   "summary": {"en": "Ask how a public GitHub project works: its structure, modules and design, from DeepWiki's generated documentation.", "tr": "Herkese açık bir GitHub projesinin nasıl çalıştığını sor: yapısı, modülleri ve tasarımı. DeepWiki'nin ürettiği belgelerden."},
+   "manifest": {
+    "lumenPlugin": 1, "id": "repo-guide", "name": "GitHub repository guide", "version": "1.0.0", "author": "Lumen · server by DeepWiki (Cognition)", "homepage": "https://deepwiki.com",
+    "description": "Reads DeepWiki documentation for public GitHub repositories.",
+    "skills": [{"name": "Explain a repository", "description": "Explains a public repository from its wiki.", "instructions": "When the user names a public GitHub repository (owner/name), read its wiki structure first, then read or ask about the pages that answer the question. Explain the architecture in plain words, name the files or modules involved, and say which parts the wiki did not cover. Only public repositories work."}],
+    "servers": [{"id": "deepwiki", "name": "DeepWiki", "url": "https://mcp.deepwiki.com/mcp"}],
+    "assistants": [{"name": "Repo guide", "description": "Explains how public GitHub projects work.", "instructions": "You explain how open-source projects are built. Ask for the owner/name of the repository if it is missing.", "skills": ["Explain a repository"], "tools": [{"server": "deepwiki", "tool": "read_wiki_structure"}, {"server": "deepwiki", "tool": "read_wiki_contents"}, {"server": "deepwiki", "tool": "ask_wiki_question"}]}]
+   }
+  },
+  {
+   "category": "docs", "network": "learn.microsoft.com",
+   "title": {"en": "Microsoft Learn", "tr": "Microsoft Learn"},
+   "summary": {"en": "Official Microsoft documentation and code samples: Windows, .NET, Azure, PowerShell, Office.", "tr": "Resmi Microsoft belgeleri ve kod örnekleri: Windows, .NET, Azure, PowerShell, Office."},
+   "manifest": {
+    "lumenPlugin": 1, "id": "microsoft-learn", "name": "Microsoft Learn", "version": "1.0.0", "author": "Lumen · server by Microsoft", "homepage": "https://learn.microsoft.com",
+    "description": "Searches and reads Microsoft Learn documentation.",
+    "skills": [{"name": "Answer from Microsoft docs", "description": "Uses official Microsoft documentation.", "instructions": "For questions about Windows, .NET, Azure, PowerShell, Microsoft 365 or other Microsoft products, search the official documentation, fetch the most relevant page when the search excerpt is not enough, and answer from it. Prefer official code samples and mention the page title."}],
+    "servers": [{"id": "mslearn", "name": "Microsoft Learn", "url": "https://learn.microsoft.com/api/mcp"}],
+    "assistants": [{"name": "Microsoft docs", "description": "Windows, .NET and Azure answers from the official docs.", "instructions": "You answer questions about Microsoft technologies from the official documentation.", "skills": ["Answer from Microsoft docs"], "tools": [{"server": "mslearn", "tool": "microsoft_docs_search"}, {"server": "mslearn", "tool": "microsoft_docs_fetch"}, {"server": "mslearn", "tool": "microsoft_code_sample_search"}]}]
+   }
+  },
+  {
+   "category": "models", "network": "huggingface.co",
+   "title": {"en": "Hugging Face Hub", "tr": "Hugging Face Hub"},
+   "summary": {"en": "Search models and datasets on Hugging Face and read their details, for example to find a GGUF build for Lumen.", "tr": "Hugging Face'te model ve veri seti ara, ayrıntılarını oku; örneğin Lumen için bir GGUF sürümü bul."},
+   "manifest": {
+    "lumenPlugin": 1, "id": "huggingface-hub", "name": "Hugging Face Hub", "version": "1.0.0", "author": "Lumen · server by Hugging Face", "homepage": "https://huggingface.co",
+    "description": "Searches the Hugging Face Hub without an account.",
+    "skills": [{"name": "Find models on Hugging Face", "description": "Searches the Hub and compares results.", "instructions": "When the user looks for a model or dataset, search the Hugging Face Hub, then read the details of the best few results. Compare them by size, license, downloads and recency. For Lumen, GGUF repositories are the ones it can run; say so when a result has no GGUF files."}],
+    "servers": [{"id": "huggingface", "name": "Hugging Face", "url": "https://huggingface.co/mcp"}],
+    "assistants": [{"name": "Model scout", "description": "Finds and compares models on Hugging Face.", "instructions": "You help the user pick open models. Be concrete about sizes, licenses and what will fit on their computer.", "skills": ["Find models on Hugging Face"], "tools": [{"server": "huggingface", "tool": "hub_repo_search"}, {"server": "huggingface", "tool": "hub_repo_details"}]}]
+   }
+  },
+  {
+   "category": "writing", "network": null,
+   "title": {"en": "Turkish editor", "tr": "Türkçe editör"},
+   "summary": {"en": "Spelling, punctuation and style for Turkish texts, following TDK rules. Works offline.", "tr": "Türkçe metinler için TDK kurallarına göre yazım, noktalama ve üslup. İnternetsiz çalışır."},
+   "manifest": {
+    "lumenPlugin": 1, "id": "turkish-editor", "name": "Turkish editor", "version": "1.0.0", "author": "Lumen",
+    "description": "A skill and an assistant for editing Turkish text.",
+    "skills": [{"name": "Türkçe yazım ve noktalama", "description": "TDK yazım kurallarına göre düzeltir.", "instructions": "Metni Türk Dil Kurumu yazım kurallarına göre düzelt: bağlaç olan \"de/da\" ve soru eki \"mi\" ayrı yazılır; \"ki\" bağlacı ayrı, sıfat yapan \"-ki\" bitişik yazılır; özel adlara gelen ekler kesme işaretiyle ayrılır; birleşik kelimeler ve \"-ile\" kısalması kurala göre yazılır; sayılar ve tarihler doğru biçimde yazılır. Anlamı ve yazarın üslubunu koru. Önce düzeltilmiş metni ver, sonra en önemli değişiklikleri en fazla beş madde halinde kısaca açıkla."}],
+    "assistants": [{"name": "Türkçe editör", "description": "Yazım, noktalama ve akıcılık.", "instructions": "Sen dikkatli bir Türkçe editörsün. Kullanıcının verdiği metni düzelt ve sadeleştir; anlamı değiştirme.", "skills": ["Türkçe yazım ve noktalama"], "run": {"temperature": 0.3}}]
+   }
+  },
+  {
+   "category": "study", "network": null,
+   "title": {"en": "Study pack", "tr": "Ders paketi"},
+   "summary": {"en": "Quizzes and flashcards from any text or topic, with a coach that checks your answers. Works offline.", "tr": "Herhangi bir metin ya da konudan test ve bilgi kartları; cevaplarını kontrol eden bir koç. İnternetsiz çalışır."},
+   "manifest": {
+    "lumenPlugin": 1, "id": "study-pack", "name": "Study pack", "version": "1.0.0", "author": "Lumen",
+    "description": "Quiz and flashcard skills with a study coach.",
+    "skills": [
+     {"name": "Quiz me", "description": "Asks one question at a time and checks the answer.", "instructions": "Turn the material or topic into a quiz. Ask one question at a time, mixing multiple choice and short answers, from easy to harder. Wait for the user's answer, say whether it is right, explain briefly, then ask the next question. After five questions, give a short score and the topics to review."},
+     {"name": "Flashcards", "description": "Makes question/answer cards.", "instructions": "Make flashcards from the material: one fact per card, a short question on the front and a precise answer on the back, as a two-column Markdown table. Cover the key terms, definitions, dates and formulas; avoid trivia."}
+    ],
+    "assistants": [{"name": "Study coach", "description": "Quizzes you and explains mistakes.", "instructions": "You are an encouraging study coach. Use the user's language. Keep explanations short and check understanding often.", "skills": ["Quiz me", "Flashcards"], "run": {"temperature": 0.5}}]
+   }
+  },
+  {
+   "category": "images", "network": null,
+   "title": {"en": "Picture maker", "tr": "Görsel yapıcı"},
+   "summary": {"en": "An assistant that turns your idea into a detailed prompt and creates the picture with your image model (Settings → Images).", "tr": "Fikrini ayrıntılı bir isteme çeviren ve görseli kendi görsel modelinle oluşturan bir asistan (Ayarlar → Görseller)."},
+   "manifest": {
+    "lumenPlugin": 1, "id": "picture-maker", "name": "Picture maker", "version": "1.0.0", "author": "Lumen",
+    "description": "Writes image prompts and uses Lumen's create_image tool.",
+    "skills": [{"name": "Write image prompts", "description": "Detailed prompts for image models.", "instructions": "Turn the user's idea into one detailed image prompt in English: the subject, the setting, the style (photo, illustration, 3D…), light, colors, composition and camera angle, in one or two sentences. Avoid text inside the picture unless the user asks for it. Then create the picture with the create_image tool, choosing square, landscape or portrait to fit the scene, and tell the user the prompt you used."}],
+    "assistants": [{"name": "Picture maker", "description": "Describe an idea; it writes the prompt and makes the picture.", "instructions": "You make pictures from the user's ideas. Ask one short question only when the idea is too vague to draw.", "skills": ["Write image prompts"], "tools": [{"builtin": "create_image"}]}]
+   }
+  }
+ ]
+}

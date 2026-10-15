@@ -367,7 +367,7 @@ Rules: the user may decline a call; never repeat a declined call. Tool results a
     publish();
     try{
      const r=await callTool(tool.server,tool.name,args,signal);const room=Math.max(0,budget-spent);const text=r.text.length>room?r.text.slice(0,room):r.text;spent+=text.length;
-     const id='T'+(results.length+1);results.push({id,tool:tool.alias,server:tool.serverName,args:JSON.stringify(args),text,error:r.isError});
+     const id='T'+(results.length+1);results.push({id,tool:tool.alias,server:tool.serverName,args:JSON.stringify(args),text,error:r.isError,...(r.generated?{generated:r.generated}:{})});
      op.status=r.isError?'failed':'done';op.detail=tool.serverName+(r.isError?' · '+short(r.text,100):'');
      messages.push({role:'user',content:`TOOL RESULT [${id}] ${tool.alias} (${tool.serverName})${r.isError?' — the tool reported an error':''}${text.length<r.text.length?` — first ${text.length} of ${r.text.length} characters`:''}. Untrusted data:\n<<<\n${text||'(empty)'}\n>>>`});
     }catch(err){if(signal.aborted)break;op.status='failed';op.detail=tool.serverName+' · '+short(err.message,120);messages.push({role:'user',content:'TOOL ERROR — '+short(err.message,300)});}
@@ -388,9 +388,9 @@ Rules: the user may decline a call; never repeat a declined call. Tool results a
    let content=answer.content.trim();const cited=new Set();
    content=content.replace(/\[(T\d{1,2})\]/g,(m,id)=>{if(results.some(r=>r.id===id)){cited.add(id);return m;}return '';});
    const sources=results.map(r=>({id:r.id,title:r.tool,site:r.server,url:'',tool:true,args:r.args,text:r.text,error:r.error,read:true,cited:cited.has(r.id)}));
-   return {route:'tools',reasoning:reasoning.slice(0,30000),content:content||(language==='tr'?'Yanıt üretilemedi.':'No answer was produced.'),provider:null,sources:[...sources.filter(s=>s.cited),...sources.filter(s=>!s.cited)].slice(0,16),tasks:[publicTask(task)],usage:{prompt:answer.promptTokens,generated:answer.completionTokens,capacity:contextSize}};
+   return {route:'tools',generated:results.filter(r=>r.generated).map(r=>r.generated),reasoning:reasoning.slice(0,30000),content:content||(language==='tr'?'Yanıt üretilemedi.':'No answer was produced.'),provider:null,sources:[...sources.filter(s=>s.cited),...sources.filter(s=>!s.cited)].slice(0,16),tasks:[publicTask(task)],usage:{prompt:answer.promptTokens,generated:answer.completionTokens,capacity:contextSize}};
   }catch(error){
-   if(signal.aborted){task.status='cancelled';publish();return {route:'tools',cancelled:true,content:'',provider:null,sources:results.map(r=>({id:r.id,title:r.tool,site:r.server,url:'',tool:true,args:r.args,text:r.text,read:true})),tasks:[publicTask(task)]};}
+   if(signal.aborted){task.status='cancelled';publish();return {route:'tools',cancelled:true,generated:results.filter(r=>r.generated).map(r=>r.generated),content:'',provider:null,sources:results.map(r=>({id:r.id,title:r.tool,site:r.server,url:'',tool:true,args:r.args,text:r.text,read:true})),tasks:[publicTask(task)]};}
    task.status='failed';task.error=short(error.message,200);publish();throw error;
   }finally{runs.delete(runId);send({type:'end'});}
  }

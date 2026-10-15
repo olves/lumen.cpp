@@ -18,7 +18,7 @@ Object.assign(translations,{
  assistantCopyNote:['Starting a chat copies these values into it. Editing the assistant later does not change chats you already started.','Sohbet başlatmak bu değerleri sohbete kopyalar. Asistanı sonradan düzenlemek başlatılmış sohbetleri değiştirmez.'],
  assistantInvalidTemp:['Temperature must be between 0 and 2.','Sıcaklık 0 ile 2 arasında olmalı.'],
 });
-let assistantList=[],assistantEditing=null;
+let assistantList=[],assistantEditing=null,assistantStartResult=null;
 
 // ---------- Composer: menu and chip ----------
 (function addComposerButton(){
@@ -50,7 +50,7 @@ async function startAssistant(a){
  if(!fresh)$('new-chat').click();
  const chat=state.chat;
  try{
-  const r=await api.assistants('start',{chatId:chat.Id,id:a?.id||null});
+  const r=await api.assistants('start',{chatId:chat.Id,id:a?.id||null});assistantStartResult=r;
   if(!r.assistant){delete chat.Assistant;chat.SystemPrompt=fresh_prompt();chat.SkillIds=[];}
   else{chat.Assistant=r.assistant;chat.SystemPrompt=r.instructions||'';chat.SkillIds=r.skillIds||[];if(r.model){chat.Model=r.model;$('model-picker').value=r.model;$('model-picker').dispatchEvent(new Event('change'));}}
   upsert(chat);if(typeof renderSkillChips==='function')renderSkillChips();renderToolChips();if(typeof loadRun==='function')loadRun();
@@ -114,7 +114,8 @@ function assistantEditor(a){
  const values=()=>{
   const tv=temp.value.trim().replace(',','.');if(tv&&!(Number(tv)>=0&&Number(tv)<=2))throw Error(t('assistantInvalidTemp'));
   const run={};if(tv)run.temperature=Number(tv);if(length.value)run.responseTokens=Number(length.value);if(thinking.value)run.thinking=thinking.value==='on';
-  return {id:a.id,name:name.value,description:description.value,instructions:instructions.value,model:model.value,run,skillIds:[...skills.querySelectorAll('input:checked')].map(x=>x.value).slice(0,4)};
+  const toolBox=form.querySelector('.assistant-tools');const tools=toolBox?[...toolBox.querySelectorAll('input:checked')].map(c=>({server:c.dataset.server,name:c.dataset.tool})):(a.tools||[]);
+  return {...(a.plugin?{plugin:a.plugin}:{}),tools,id:a.id,name:name.value,description:description.value,instructions:instructions.value,model:model.value,run,skillIds:[...skills.querySelectorAll('input:checked')].map(x=>x.value).slice(0,4)};
  };
  form.onsubmit=async event=>{event.preventDefault();try{const v=values();assistantList=await api.assistants('save',{assistant:v});assistantEditing=v.id||assistantList.at(-1)?.id;toast(t('assistantSaved'));paintAssistants();}catch(e){toast(cleanError(e));}};
  start.onclick=async()=>{const found=assistantList.find(x=>x.id===a.id);if(!found)return;setPage('chat');await startAssistant(found);};

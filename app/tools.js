@@ -172,6 +172,7 @@ async function sendWithAgent(text,options={}){
     const thought=typeof liveReasoning==='function'?liveReasoning(result.reasoning):null;
     if(record.tasks.length||record.sources.length||record.route==='direct'||thought)saved.Messages[index].Activity=await api.agent('record',{chatId,index,record,...(thought?{reasoning:thought}:{})});
     if(thought)saved.Messages[index].Reasoning=thought;
+    if(result.generated?.length){try{const g=await api.images('attach',{chatId,index,items:result.generated});if(g)saved.Messages[index].Generated=g;}catch{}}
     upsert(saved);
     if(result.usage)state.contexts.set(chatId,{Prompt:result.usage.prompt,Generated:result.usage.generated,Capacity:result.usage.capacity,ModelCapacity:0,OmittedMessages:0});
    }else{upsert(await api.request('save',{chat}));if(failure)toast(cleanError(failure));}

@@ -11,7 +11,7 @@ const {createRunSettings,cleanDefaults}=require('./runsettings.cjs'),runSettings
 const documents=require('./documents.cjs').createDocuments(data);
 const assistants=require('./assistants.cjs').createAssistants(data);
 // Connections (connections.cjs): cloud models, MCP servers and the local API. All off until the user turns them on.
-let connections=null,cloud=null,mcpClient=null,apiServer=null,artifacts=null,cloudFlight=null;
+let connections=null,cloud=null,mcpClient=null,apiServer=null,artifacts=null,cloudFlight=null,imageGen=null,plugins=null,imageFlight=null;
 // Cloud models join the model list as "cloud:<provider>/<model>" entries; they have no file and are never loaded locally.
 function cloudModelEntries(){if(!connections)return [];try{return connections.cloudModels().map(c=>({Name:c.name,Display:c.model+' · '+c.providerLabel,Detail:c.providerLabel+' · '+c.model+' · cloud',Repo:'cloud/'+c.provider,File:c.model,Sha:'',Bytes:0,Installed:true,Cloud:{provider:c.provider,label:c.providerLabel,model:c.model}}));}catch{return [];}}
 function withCloud(models){return Array.isArray(models)?[...models.filter(m=>!m.Cloud),...cloudModelEntries()]:models;}
@@ -103,7 +103,9 @@ const namesPath=path.join(data,'conversation-names.json');
 function manualNames(){try{const parsed=JSON.parse(fs.readFileSync(namesPath,'utf8'));return Object.fromEntries(Object.entries(parsed).filter(([id,title])=>/^[a-fA-F0-9]{32}$/.test(id)&&typeof title==='string'&&title.length>0&&title.length<=120));}catch{return {};}}
 function saveManualNames(names){const temp=namesPath+'.tmp';fs.writeFileSync(temp,JSON.stringify(names));fs.renameSync(temp,namesPath);}
 async function decodeWebp(buffer){if(!win||win.isDestroyed())throw Error('The workspace is unavailable.');const base64=buffer.toString('base64');const script='(async()=>{const bytes=Uint8Array.from(atob('+JSON.stringify(base64)+'),c=>c.charCodeAt(0));const image=await createImageBitmap(new Blob([bytes],{type:"image/webp"}));try{if(image.width*image.height>50000000)throw Error("Use a photo with at most 50 million pixels.");const scale=Math.min(1,1600/Math.max(image.width,image.height)),canvas=document.createElement("canvas");canvas.width=Math.max(1,Math.round(image.width*scale));canvas.height=Math.max(1,Math.round(image.height*scale));canvas.getContext("2d").drawImage(image,0,0,canvas.width,canvas.height);return canvas.toDataURL("image/png").split(",")[1];}finally{image.close();}})()';return Buffer.from(await win.webContents.executeJavaScript(script),'base64');}
-function decorateChat(chat){return assistants.decorate(decorateDocuments(decorateProject(variantStore.decorate(visionStore.decorate(reasoningStore.decorate(activityStore.decorate(photoStore.decorate(skillStore.decorate(chat)))))))));}
+function decorateChat(chat){return decorateGenerated(assistants.decorate(decorateDocuments(decorateProject(variantStore.decorate(visionStore.decorate(reasoningStore.decorate(activityStore.decorate(photoStore.decorate(skillStore.decorate(chat))))))))));}
+// Generated pictures linked to replies (imagegen.cjs) appear as m.Generated.
+function decorateGenerated(chat){return imageGen?imageGen.decorate(chat):chat;}
 // Excerpts each reply was given from attached documents ([D#] sources).
 function decorateDocuments(chat){if(!chat?.Id||!Array.isArray(chat.Messages))return chat;const used=documents.usedFor(chat.Id);if(!Object.keys(used).length)return chat;return {...chat,Messages:chat.Messages.map((m,i)=>used[i]&&m.Role==='assistant'?{...m,DocSources:used[i]}:m)};}
 // The attached project (name and folder) travels with the chat so the renderer can show it; the binding lives in main.
@@ -118,6 +120,10 @@ async function request(action,args={}){
  if(['save','send'].includes(action)&&args.chat)photoStore.remember(args.chat);
  if(action==='send'&&/^cloud:/.test(String(args.chat?.Model||'')))return cloudSend(args);
  if(action==='cancel'&&cloudFlight){cloudFlight.abort();return true;}
+ if(action==='cancel'&&imageFlight){imageGen?.cancel();return true;}
+ if(action==='send'&&imageFlight)throw Error('An image is being made. Wait for it or stop it.');
+ // The chat model and an idle image engine would compete for GPU memory: the image engine stops first.
+ if(['send','bench'].includes(action))await imageGen?.release();
  if(action==='send'){
   if(skillFlight)throw Error('A response is already running.');const prepared=hostReady?{chat:args.chat,applied:false}:skillStore.prepare(args.chat);const skillGuidance=hostReady?[skillStore.guidance(skillStore.idsFor(args.chat.Id)).text,browserHint(args.chat)].filter(Boolean).join('\n\n'):'';skillFlight={id:args.chat.Id,snapshot:args.chat};
   let reasoning='',firstThought=0,firstText=0,lastSaved=null,sentImages=[];
@@ -158,7 +164,7 @@ async function request(action,args={}){
  if(action==='models'&&Array.isArray(result)){refreshModelMeta(result);return withCloud(modelInfo.decorate(result));}
  if(action==='download'&&Array.isArray(result))return withCloud(modelInfo.decorate(result));
  if(action==='unload')loaded=null;
- if(action==='branch'){photoStore.branch(args.chat.Id,result.Id,args.count);activityStore.branch(args.chat.Id,result.Id,args.count);reasoningStore.branch(args.chat.Id,result.Id,args.count);runSettings.branch(args.chat.Id,result.Id);documents.branch(args.chat.Id,result.Id);visionStore.branch(args.chat.Id,result.Id,args.count);variantStore.branch(args.chat.Id,result.Id,args.count);projectStore.branch(args.chat.Id,result.Id);assistants.branch(args.chat.Id,result.Id);skillStore.select(result.Id,decorateChat(args.chat).SkillIds,args.chat.SystemPrompt);return decorateChat(result);}
+ if(action==='branch'){photoStore.branch(args.chat.Id,result.Id,args.count);activityStore.branch(args.chat.Id,result.Id,args.count);reasoningStore.branch(args.chat.Id,result.Id,args.count);runSettings.branch(args.chat.Id,result.Id);documents.branch(args.chat.Id,result.Id);visionStore.branch(args.chat.Id,result.Id,args.count);variantStore.branch(args.chat.Id,result.Id,args.count);projectStore.branch(args.chat.Id,result.Id);assistants.branch(args.chat.Id,result.Id);imageGen?.branch(args.chat.Id,result.Id,args.count);skillStore.select(result.Id,decorateChat(args.chat).SkillIds,args.chat.SystemPrompt);return decorateChat(result);}
  return result;
 }
 
@@ -169,7 +175,7 @@ if(!test&&!app.requestSingleInstanceLock()){app.quit();}else{
 app.on('second-instance',()=>{if(win){if(win.isMinimized())win.restore();win.show();win.focus();}});
 app.whenReady().then(async()=>{
  fs.mkdirSync(data,{recursive:true});skillStore.recover();
- protocol.handle('lumen',req=>{const u=new URL(req.url);const file=u.pathname==='/'?'index.html':u.pathname.slice(1);const types={'lumen.svg':'image/svg+xml','index.html':'text/html; charset=utf-8','style.css':'text/css; charset=utf-8','renderer.js':'text/javascript; charset=utf-8','workspace.js':'text/javascript; charset=utf-8','explore.js':'text/javascript; charset=utf-8','explore.css':'text/css; charset=utf-8','design.js':'text/javascript; charset=utf-8','tools.js':'text/javascript; charset=utf-8','tools.css':'text/css; charset=utf-8','controls.js':'text/javascript; charset=utf-8','vision.js':'text/javascript; charset=utf-8','speed.js':'text/javascript; charset=utf-8','models.js':'text/javascript; charset=utf-8','lab.js':'text/javascript; charset=utf-8','format.js':'text/javascript; charset=utf-8','regen.js':'text/javascript; charset=utf-8','search.js':'text/javascript; charset=utf-8','project.js':'text/javascript; charset=utf-8','skillsui.js':'text/javascript; charset=utf-8','updates.js':'text/javascript; charset=utf-8','themes.js':'text/javascript; charset=utf-8','browse.js':'text/javascript; charset=utf-8','notices.js':'text/javascript; charset=utf-8','run.js':'text/javascript; charset=utf-8','picks.js':'text/javascript; charset=utf-8','imports.js':'text/javascript; charset=utf-8','docs.js':'text/javascript; charset=utf-8','run.css':'text/css; charset=utf-8','assistants.js':'text/javascript; charset=utf-8','connect.js':'text/javascript; charset=utf-8','artifacts.js':'text/javascript; charset=utf-8','extras.css':'text/css; charset=utf-8','engineui.js':'text/javascript; charset=utf-8','themes.css':'text/css; charset=utf-8','format.css':'text/css; charset=utf-8','vendor/markdown-it.min.js':'text/javascript; charset=utf-8','vendor/highlight.min.js':'text/javascript; charset=utf-8','vendor/katex.min.js':'text/javascript; charset=utf-8','vendor/katex.min.css':'text/css; charset=utf-8','controls.css':'text/css; charset=utf-8','polish.css':'text/css; charset=utf-8','photos.js':'text/javascript; charset=utf-8','photos.css':'text/css; charset=utf-8','design.css':'text/css; charset=utf-8','previews/desk-dark.png':'image/png','previews/desk-light.png':'image/png','previews/studio-dark.png':'image/png','previews/studio-light.png':'image/png',"logos/qwen.webp":"image/webp","logos/llama.webp":"image/webp","logos/mistral.webp":"image/webp","logos/deepseek.webp":"image/webp","logos/gemma.webp":"image/webp","logos/phi.webp":"image/webp","logos/tinyllama.webp":"image/webp"};if(u.hostname==='app'){const match=file.match(/^(photo|photo-thumb)\/([a-f0-9]{64})\.png$/);if(match){try{return new Response(fs.readFileSync(photoStore.file(match[2],match[1]==='photo-thumb'?'thumb':'image')),{headers:{'content-type':'image/png','cache-control':'private, max-age=86400'}});}catch{return new Response('Not found',{status:404});}}}if(/^vendor\/fonts\/KaTeX_[A-Za-z0-9-]+\.woff2$/.test(file))types[file]='font/woff2';if(u.hostname!=='app'||!types[file])return new Response('Not found',{status:404});let content=fs.readFileSync(path.join(__dirname,file));if(file==='index.html'){const p=prefs();content=content.toString('utf8').replace('<body>','<body'+(p.motion===false?' class="no-motion"':'')+' data-layout="'+(p.layout==='studio'?'studio':'desk')+'" data-mode="'+(p.colorMode==='light'?'light':'dark')+'" data-theme="'+(accentThemes.includes(p.theme)?p.theme:'warm')+'">');}return new Response(content,{headers:{'content-type':types[file]}});});
+ protocol.handle('lumen',req=>{const u=new URL(req.url);const file=u.pathname==='/'?'index.html':u.pathname.slice(1);const types={'lumen.svg':'image/svg+xml','index.html':'text/html; charset=utf-8','style.css':'text/css; charset=utf-8','renderer.js':'text/javascript; charset=utf-8','workspace.js':'text/javascript; charset=utf-8','explore.js':'text/javascript; charset=utf-8','explore.css':'text/css; charset=utf-8','design.js':'text/javascript; charset=utf-8','tools.js':'text/javascript; charset=utf-8','tools.css':'text/css; charset=utf-8','controls.js':'text/javascript; charset=utf-8','vision.js':'text/javascript; charset=utf-8','speed.js':'text/javascript; charset=utf-8','models.js':'text/javascript; charset=utf-8','lab.js':'text/javascript; charset=utf-8','format.js':'text/javascript; charset=utf-8','regen.js':'text/javascript; charset=utf-8','search.js':'text/javascript; charset=utf-8','project.js':'text/javascript; charset=utf-8','skillsui.js':'text/javascript; charset=utf-8','updates.js':'text/javascript; charset=utf-8','themes.js':'text/javascript; charset=utf-8','browse.js':'text/javascript; charset=utf-8','notices.js':'text/javascript; charset=utf-8','run.js':'text/javascript; charset=utf-8','picks.js':'text/javascript; charset=utf-8','imports.js':'text/javascript; charset=utf-8','docs.js':'text/javascript; charset=utf-8','run.css':'text/css; charset=utf-8','assistants.js':'text/javascript; charset=utf-8','connect.js':'text/javascript; charset=utf-8','artifacts.js':'text/javascript; charset=utf-8','extras.css':'text/css; charset=utf-8','images.js':'text/javascript; charset=utf-8','plugins.js':'text/javascript; charset=utf-8','engineui.js':'text/javascript; charset=utf-8','themes.css':'text/css; charset=utf-8','format.css':'text/css; charset=utf-8','vendor/markdown-it.min.js':'text/javascript; charset=utf-8','vendor/highlight.min.js':'text/javascript; charset=utf-8','vendor/katex.min.js':'text/javascript; charset=utf-8','vendor/katex.min.css':'text/css; charset=utf-8','controls.css':'text/css; charset=utf-8','polish.css':'text/css; charset=utf-8','photos.js':'text/javascript; charset=utf-8','photos.css':'text/css; charset=utf-8','design.css':'text/css; charset=utf-8','previews/desk-dark.png':'image/png','previews/desk-light.png':'image/png','previews/studio-dark.png':'image/png','previews/studio-light.png':'image/png',"logos/qwen.webp":"image/webp","logos/llama.webp":"image/webp","logos/mistral.webp":"image/webp","logos/deepseek.webp":"image/webp","logos/gemma.webp":"image/webp","logos/phi.webp":"image/webp","logos/tinyllama.webp":"image/webp"};if(u.hostname==='app'&&imageGen){const g=file.match(/^generated\/([a-f0-9]{64})(\.thumb)?\.png$/);if(g){try{return new Response(fs.readFileSync(imageGen.file(g[1],!!g[2])),{headers:{'content-type':'image/png','cache-control':'private, max-age=86400'}});}catch{return new Response('Not found',{status:404});}}}if(u.hostname==='app'){const match=file.match(/^(photo|photo-thumb)\/([a-f0-9]{64})\.png$/);if(match){try{return new Response(fs.readFileSync(photoStore.file(match[2],match[1]==='photo-thumb'?'thumb':'image')),{headers:{'content-type':'image/png','cache-control':'private, max-age=86400'}});}catch{return new Response('Not found',{status:404});}}}if(/^vendor\/fonts\/KaTeX_[A-Za-z0-9-]+\.woff2$/.test(file))types[file]='font/woff2';if(u.hostname!=='app'||!types[file])return new Response('Not found',{status:404});let content=fs.readFileSync(path.join(__dirname,file));if(file==='index.html'){const p=prefs();content=content.toString('utf8').replace('<body>','<body'+(p.motion===false?' class="no-motion"':'')+' data-layout="'+(p.layout==='studio'?'studio':'desk')+'" data-mode="'+(p.colorMode==='light'?'light':'dark')+'" data-theme="'+(accentThemes.includes(p.theme)?p.theme:'warm')+'">');}return new Response(content,{headers:{'content-type':types[file]}});});
  // lumen-host (backend/LumenHost.cs + LumenCore.cs) is the local engine process: chats, models, engine setup and llama-server.
  const fail=e=>{for(const p of pending.values())p.reject(e);pending.clear();if(win&&!win.isDestroyed())win.webContents.send('engine-event',{type:'fatal',data:{message:e.message}});};
  function startCore(){
@@ -189,7 +195,7 @@ app.whenReady().then(async()=>{
  ipcMain.on('window',(e,action)=>{sender(e);if(action==='minimize')win.minimize();if(action==='maximize')win.isMaximized()?win.unmaximize():win.maximize();if(action==='close')win.close();});
  ipcMain.handle('export',async(e,text)=>{sender(e);if(typeof text!=='string'||text.length>4000000)throw Error('Invalid export');const result=await dialog.showSaveDialog(win,{defaultPath:'lumen-chat.md',filters:[{name:'Markdown',extensions:['md']}]});if(!result.canceled)fs.writeFileSync(result.filePath,text,'utf8');return !result.canceled;});
  ipcMain.handle('copy',(e,text)=>{sender(e);if(typeof text!=='string'||text.length>4000000)throw Error('Invalid clipboard content');clipboard.writeText(text);return true;});
- ipcMain.handle('delete-chat',async(e,id,title,language)=>{sender(e);if(typeof id!=='string'||!/^[a-fA-F0-9]{32}$/.test(id))throw Error('Invalid conversation ID');const tr=language==='tr';const answer=await dialog.showMessageBox(win,{type:'warning',title:tr?'Sohbeti sil':'Delete conversation',message:tr?'Bu sohbet silinsin mi?':'Delete this conversation?',detail:`“${String(title||'').slice(0,200)}”\n\n`+(tr?'Sohbet ve kayıtlı mesajları kalıcı olarak silinecek. Bu işlem geri alınamaz.':'The conversation and its saved messages will be permanently deleted. This cannot be undone.'),buttons:tr?['Vazgeç','Sil']:['Cancel','Delete'],defaultId:0,cancelId:0,noLink:true});if(answer.response!==1)return {deleted:false};await request('delete',{id});skillStore.forget(id);photoStore.forget(id);activityStore.forget(id);reasoningStore.forget(id);runSettings.remove(id);documents.forget(id);visionStore.forget(id);variantStore.forget(id);projectStore.forget(id);assistants.forget(id);const names=manualNames();if(names[id]){delete names[id];saveManualNames(names);}return {deleted:true};});
+ ipcMain.handle('delete-chat',async(e,id,title,language)=>{sender(e);if(typeof id!=='string'||!/^[a-fA-F0-9]{32}$/.test(id))throw Error('Invalid conversation ID');const tr=language==='tr';const answer=await dialog.showMessageBox(win,{type:'warning',title:tr?'Sohbeti sil':'Delete conversation',message:tr?'Bu sohbet silinsin mi?':'Delete this conversation?',detail:`“${String(title||'').slice(0,200)}”\n\n`+(tr?'Sohbet ve kayıtlı mesajları kalıcı olarak silinecek. Bu işlem geri alınamaz.':'The conversation and its saved messages will be permanently deleted. This cannot be undone.'),buttons:tr?['Vazgeç','Sil']:['Cancel','Delete'],defaultId:0,cancelId:0,noLink:true});if(answer.response!==1)return {deleted:false};await request('delete',{id});skillStore.forget(id);photoStore.forget(id);activityStore.forget(id);reasoningStore.forget(id);runSettings.remove(id);documents.forget(id);visionStore.forget(id);variantStore.forget(id);projectStore.forget(id);assistants.forget(id);await imageGen?.forget(id);const names=manualNames();if(names[id]){delete names[id];saveManualNames(names);}return {deleted:true};});
  ipcMain.handle('attach-text',async(e,language)=>{sender(e);const tr=language==='tr';const result=await dialog.showOpenDialog(win,{title:tr?'Metin veya kod dosyası ekle':'Attach text or code files',properties:['openFile','multiSelections'],filters:[{name:tr?'UTF-8 metin ve kod':'UTF-8 text & code',extensions:['txt','md','json','js','ts','tsx','jsx','py','cs','cpp','c','h','html','css','yaml','yml','toml','xml','csv','log','rs','go','java','sql','sh','ps1']}]});if(result.canceled)return [];if(result.filePaths.length>5)throw Error(tr?'En fazla 5 dosya ekleyebilirsin.':'Attach up to 5 files.');const files=[];let chars=0;for(const file of result.filePaths){const stat=await fs.promises.stat(file);if(!stat.isFile()||stat.size>1048576)throw Error(tr?'Her dosya en fazla 1 MB olmalı.':'Each file must be at most 1 MB.');const buffer=await fs.promises.readFile(file);if(buffer.includes(0))throw Error(tr?'Yalnızca metin ve kod dosyaları destekleniyor.':'Only text and code files are supported.');const text=new TextDecoder('utf-8',{fatal:true}).decode(buffer);chars+=text.length;if(chars>45000)throw Error(tr?'Dosyaların toplamı 45.000 karakteri aşamaz.':'Files must total at most 45,000 characters.');files.push({name:path.basename(file),text,bytes:stat.size});}return files;});
  
  ipcMain.handle('photos',async(e,action,args={})=>{sender(e);if(JSON.stringify(args).length>10000)throw Error('Invalid photo request.');if(action==='info')return args.retain===true?photoStore.retain({id:args.id,name:args.name}):photoStore.publicPhoto({id:args.id,name:args.name});if(action==='release'){if(!Array.isArray(args.ids)||args.ids.length>4)throw Error('Invalid photo IDs.');photoStore.release(args.ids);return true;}if(action==='choose'){if(skillFlight)throw Error('Wait until the response finishes.');const tr=args.language==='tr';const choice=await dialog.showOpenDialog(win,{title:tr?'Fotoğraf ekle':'Add photos',properties:['openFile','multiSelections'],filters:[{name:tr?'Fotoğraflar':'Photos',extensions:['png','jpg','jpeg','webp']}]});if(choice.canceled)return [];return photoStore.importFiles(choice.filePaths,args.language);}if(action==='paste'){if(skillFlight)throw Error('Wait until the response finishes.');const items=await clipboard.read();for(const item of items){const type=item.types.find(type=>['image/png','image/jpeg','image/webp'].includes(type));if(!type)continue;const blob=await item.getType(type);if(blob.size>12582912)throw Error('Each photo must be at most 12 MB.');return photoStore.importBuffer(Buffer.from(await blob.arrayBuffer()),'Screenshot.'+(type==='image/jpeg'?'jpg':type==='image/webp'?'webp':'png'),args.language);}return [];}throw Error('Invalid photo action.');});
@@ -261,7 +267,9 @@ app.whenReady().then(async()=>{
  const getBrowser=()=>browser||(browser=createBrowser({getWindow:()=>win,emit:state=>send('browser-event',state),getSettings:()=>toolSettings.get().browser}));
  webTools=createWeb({render:(url,options)=>toolSettings.get().browser.render?getBrowser().render(url,options):Promise.reject(Object.assign(Error('JavaScript rendering is off.'),{code:'disabled'}))});
  const engine={
-  complete({model,contextSize,messages,schema,maxTokens,temperature,sampling,stream,thinking,onChunk,onReasoning,signal,timeoutMs}){
+  // An idle image engine is stopped before the chat model needs the GPU.
+  async complete(args){await imageGen?.release();return engine.completeNow(args);},
+  completeNow({model,contextSize,messages,schema,maxTokens,temperature,sampling,stream,thinking,onChunk,onReasoning,signal,timeoutMs}){
    if(!hostReady)return Promise.reject(Error('Tools need the bundled engine host, which is not available. Normal chat still works.'));
    if(signal?.aborted)return Promise.reject(Object.assign(Error('Cancelled'),{cancelled:true}));
    const result=coreRequest('complete',{model,contextSize,messages,engine:engineOptions(),draft:draftStore.path(model)||'',...(schema?{schema}:{}),...(sampling&&!schema?{sampling}:{}),variables:promptVariables(),maxTokens,temperature,stream:!!stream,thinking:!!thinking,timeoutMs},e=>{if(e.type==='agent-chunk')onChunk?.(e.data);else if(e.type==='agent-reasoning')onReasoning?.(e.data);else if(e.type==='progress')send('agent-event',{type:'progress',label:e.data.label,value:e.data.value});});
@@ -272,6 +280,11 @@ app.whenReady().then(async()=>{
  };
  agent=createAgent({engine,web:webTools,settings:toolSettings,emit:event=>send('agent-event',event),log:message=>fs.appendFileSync(path.join(data,'desktop-engine.log'),'[agent] '+message+'\n')});
  downloader=createDownloader({dataDir:data,emit:state=>{send('download-event',state);if(state.phase==='completed')request('models').then(models=>send('download-event',{...state,models})).catch(()=>{});}});
+ // Image generation (imagegen.cjs): local stable-diffusion.cpp server or the user's cloud provider.
+ imageGen=require('./imagegen.cjs').createImageGen({dataDir:data,nativeImage,downloader,cloud,connections,emit:e=>send('image-event',e),
+  log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}},releaseChatModel:()=>request('unload').catch(()=>{})});
+ // Plugins (plugins.cjs): reviewed packages of skills, assistants and MCP server addresses.
+ plugins=require('./plugins.cjs').createPlugins({dataDir:data,skills:require('./skills.cjs'),skillStore,assistants,connections,mcp:mcpClient,log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}}});
  const validChat=chat=>chat&&typeof chat==='object'&&/^[a-fA-F0-9]{32}$/.test(chat.Id||'')&&Array.isArray(chat.Messages)&&chat.Messages.length<=2000&&typeof chat.Model==='string'&&chat.Model.length<=200;
  ipcMain.handle('tools',async(e,action,args={})=>{
   sender(e);if(JSON.stringify(args).length>20000)throw Error('Invalid request.');
@@ -293,9 +306,9 @@ app.whenReady().then(async()=>{
    let systemPrompt=String(chat.SystemPrompt||'').slice(0,12000);try{systemPrompt=skillStore.compile(systemPrompt,Array.isArray(chat.SkillIds)?chat.SkillIds:[]).prompt;}catch{}
    const p=prefs(),context=await contextFor(chat.Model,contextSize);loaded={model:chat.Model,context:context.value};
    if(mode==='project'){const binding=projectStore.get(chat.Id);if(!binding)throw Error('No project folder is attached to this conversation.');if(!fs.existsSync(binding.root))throw Error('The project folder was not found: '+binding.root);return agent.runProject({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',project:createProjectTools(binding),research:args.research===true,systemPrompt,...runOptions(chat)});}
-   if(mode==='tools'){const tools=connections.activeTools();return agent.runTools({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',tools,
-    callTool:(serverId,name,toolArgs,signal)=>mcpClient.callTool(connections.server(serverId),name,toolArgs,{signal}),
-    allowAlways:(serverId,name)=>{try{connections.updateServer(serverId,{tool:{name,ask:false}});}catch{}},systemPrompt,...runOptions(chat)});}
+   if(mode==='tools'){const tools=[...connections.activeTools(),...imageTools()];return agent.runTools({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',tools,
+    callTool:(serverId,name,toolArgs,signal)=>serverId==='lumen'?imageToolCall(toolArgs,signal):mcpClient.callTool(connections.server(serverId),name,toolArgs,{signal}),
+    allowAlways:(serverId,name)=>{if(serverId==='lumen'){imageGen.setSettings({toolAsk:false});return;}try{connections.updateServer(serverId,{tool:{name,ask:false}});}catch{}},systemPrompt,...runOptions(chat)});}
    return agent.run({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',mode,systemPrompt,...runOptions(chat)});
   }
   if(action==='approve')return agent.approve(String(args.runId||''),String(args.callId||''),String(args.decision||'deny'));
@@ -388,6 +401,9 @@ app.whenReady().then(async()=>{
   }
   throw Error('Invalid request');
  });
+ // The tools an assistant asks for, with whether each exists and is turned on.
+ function assistantTools(a){return (a.tools||[]).map(t=>{if(t.server==='lumen'){const s=imageGen.status();const ready=s.packages.some(p=>p.ready)&&s.engines.some(x=>x.installed)||Object.values(s.cloudModels||{}).some(l=>l.length);return {server:'lumen',serverName:'Lumen',name:t.name,title:'Create image',exists:ready,enabled:s.settings.tool};}
+  const s=connections.public().mcp.servers.find(x=>x.id===t.server),tool=s?.tools.find(x=>x.name===t.name);return {server:t.server,serverName:s?.name||'',name:t.name,title:tool?.title||'',exists:!!tool,enabled:!!(s?.enabled&&tool?.enabled)};});}
  // Assistants: saved instructions, model, run settings and skills. "start" copies one into a conversation.
  ipcMain.handle('assistants',async(e,action,args={})=>{sender(e);if(JSON.stringify(args).length>40000)throw Error('Invalid request.');
   if(action==='list')return assistants.list();
@@ -400,7 +416,14 @@ app.whenReady().then(async()=>{
    runSettings.set(chatId,a.run);const known=new Set(skillStore.list().map(s=>s.id));const skillIds=a.skillIds.filter(id=>known.has(id));
    try{skillStore.select(chatId,skillIds,a.instructions);}catch{}assistants.link(chatId,a.id);
    const models=withCloud(modelInfo.decorate(knownModels));const model=a.model&&models.some(m=>m.Name===a.model&&m.Installed)?a.model:'';
-   return {assistant:{id:a.id,name:a.name},instructions:a.instructions,model,modelMissing:!!a.model&&!model,skillIds};
+   return {assistant:{id:a.id,name:a.name},instructions:a.instructions,model,modelMissing:!!a.model&&!model,skillIds,tools:assistantTools(a)};
+  }
+  // Turns on the tools an assistant asks for, after the user agreed in the composer card. Each call still asks for
+  // approval unless the user chose "Always allow" for that tool.
+  if(action==='enable-tools'){
+   const a=assistants.get(String(args.id||''));if(!a)throw Error('Assistant not found.');
+   for(const t of a.tools||[]){if(t.server==='lumen'){imageGen.setSettings({tool:true});continue;}const s=connections.public().mcp.servers.find(x=>x.id===t.server);if(!s||!s.tools.some(x=>x.name===t.name))continue;connections.updateServer(t.server,{enabled:true});connections.updateServer(t.server,{tool:{name:t.name,enabled:true}});}
+   return {tools:assistantTools(a)};
   }
   throw Error('Invalid request');
  });
@@ -427,6 +450,79 @@ app.whenReady().then(async()=>{
  ipcMain.handle('artifact',async(e,action,args={})=>{sender(e);
   if(action==='open'){if(typeof args.code!=='string'||args.code.length>2000000)throw Error('Nothing to preview.');return artifacts.open({code:args.code,kind:String(args.kind||''),title:String(args.title||''),dark:prefs().colorMode!=='light'});}
   if(action==='close'){artifacts.close();return true;}
+  throw Error('Invalid request');
+ });
+ // Lumen's own create_image tool for the connected-tools loop: offered only when turned on in Settings → Images.
+ function imageTools(){const s=imageGen.readSettings();if(!s.tool)return [];return [{server:'lumen',serverName:'Lumen',name:'create_image',title:'Create image',readOnly:false,enabled:true,ask:s.toolAsk!==false,
+  description:'Creates a picture from a text description with the image model chosen in Settings → Images and shows it to the user under the answer. Write a detailed prompt in English: subject, setting, style, light, composition.',
+  inputSchema:{type:'object',properties:{prompt:{type:'string',maxLength:2000},shape:{type:'string',enum:['square','landscape','portrait']}},required:['prompt']}}];}
+ async function imageToolCall(toolArgs,signal){
+  imageFlight=true;
+  try{const r=await imageGen.generate({prompt:String(toolArgs?.prompt||''),shape:toolArgs?.shape},{signal,onProgress:e=>send('image-event',{type:'progress',tool:true,...e})});const f=r.images[0];
+   return {text:`Created ${r.images.length} image(s) with ${r.label}, ${f.width}×${f.height}. They are shown to the user under your answer. You cannot see them: describe only what was asked for.`,isError:false,generated:{...r,tool:true}};}
+  finally{imageFlight=null;}
+ }
+ const imageSettingsKeys=['model','shape','fast','steps','tool','toolAsk','cloudModels'];
+ ipcMain.handle('images',async(e,action,args={})=>{sender(e);if(JSON.stringify(args).length>200000)throw Error('Invalid request.');const tr=prefs().language==='tr';
+  if(action==='status')return imageGen.status();
+  if(action==='settings')return imageGen.setSettings(Object.fromEntries(Object.entries(args).filter(([k])=>imageSettingsKeys.includes(k))));
+  if(action==='install'){if(imageFlight)throw Error('Wait for the image to finish.');return imageGen.installEngine(String(args.kind||''));}
+  if(action==='remove-engine'){if(imageFlight)throw Error('Wait for the image to finish.');return imageGen.removeEngine(String(args.kind||''));}
+  if(action==='download'){imageGen.downloadPackage(String(args.id||'')).then(()=>send('image-event',{type:'models'})).catch(error=>send('image-event',{type:'models',error:error.message}));return imageGen.status();}
+  if(action==='remove-model'){if(imageFlight)throw Error('Wait for the image to finish.');return imageGen.removePackage(String(args.id||''));}
+  if(action==='cancel'){imageGen.cancel();return true;}
+  if(action==='generate'){
+   // The user message is saved first; the reply is a short note (what the chat model sees later) with the pictures linked.
+   const chat=args.chat;if(!validChat(chat)||chat.Messages.at(-1)?.Role!=='user')throw Error('Invalid request.');
+   if(skillFlight||agent.active()||imageFlight)throw Error('A response is already running.');
+   imageFlight=true;skillFlight={id:chat.Id,snapshot:chat};
+   try{
+    const base=await coreRequest('save',{chat});send('engine-event',{type:'saved',data:base});let r;
+    try{r=await imageGen.generate({...(args.options||{}),prompt:String(args.prompt||'')},{onProgress:p=>send('image-event',{type:'progress',chatId:chat.Id,...p})});}
+    catch(error){if(error.cancelled){const saved=await coreRequest('save',{chat:{...base,Messages:[...base.Messages,{Role:'assistant',Content:tr?'Görsel oluşturma durduruldu.':'Image generation was stopped.',Interrupted:true}]}});return {cancelled:true,chat:decorateChat(saved)};}throw error;}
+    const f=r.images[0],note=`[${tr?'Görsel':'Image'} · ${r.label} · ${f.width}×${f.height}${r.images.length>1?' · ×'+r.images.length:''}]`;
+    const saved=await coreRequest('save',{chat:{...base,Messages:[...base.Messages,{Role:'assistant',Content:note,Interrupted:false}]}});
+    imageGen.record(saved.Id,saved.Messages.length-1,r);return {chat:decorateChat(saved),seconds:r.seconds};
+   }finally{imageFlight=null;skillFlight=null;}
+  }
+  // Pictures made by create_image in a tool run, linked to that reply.
+  if(action==='attach'){const items=Array.isArray(args.items)?args.items.slice(0,4):[];if(!items.length)return null;return imageGen.record(String(args.chatId||''),Number(args.index),{...items[0],images:items.flatMap(x=>Array.isArray(x?.images)?x.images:[]).slice(0,4),tool:true});}
+  if(action==='save'){const src=imageGen.file(String(args.sha||''),false);if(!fs.existsSync(src))throw Error('Image not found.');const r=await dialog.showSaveDialog(win,{title:tr?'Görseli kaydet':'Save image',defaultPath:'lumen-'+String(args.sha).slice(0,8)+'.png',filters:[{name:'PNG',extensions:['png']}]});if(r.canceled||!r.filePath)return false;await fs.promises.copyFile(src,r.filePath);return true;}
+  if(action==='copy'){const src=imageGen.file(String(args.sha||''),false);if(!fs.existsSync(src))throw Error('Image not found.');// Electron 44 has only the async clipboard API (no writeImage).
+await clipboard.write([new (require('electron').ClipboardItem)({'image/png':new Blob([await fs.promises.readFile(src)],{type:'image/png'})})]);return true;}
+  throw Error('Invalid request');
+ });
+ ipcMain.handle('plugins',async(e,action,args={})=>{sender(e);if(JSON.stringify(args).length>20000)throw Error('Invalid request.');const tr=prefs().language==='tr';
+  if(action==='list')return plugins.list();
+  // The plugin list that ships with Lumen (plugin-catalog.json); nothing is fetched to show it.
+  const catalog=()=>{try{return JSON.parse(fs.readFileSync(path.join(__dirname,'plugin-catalog.json'),'utf8')).plugins||[];}catch{return [];}};
+  if(action==='catalog'){const installed=new Map(plugins.list().map(p=>[p.id,p]));return catalog().map(c=>({id:c.manifest.id,category:c.category,network:c.network||null,title:c.title,summary:c.summary,version:c.manifest.version,
+   skills:(c.manifest.skills||[]).length,assistants:(c.manifest.assistants||[]).map(a=>a.name),servers:(c.manifest.servers||[]).length,image:(c.manifest.assistants||[]).some(a=>(a.tools||[]).some(t=>t.builtin==='create_image')),
+   installed:installed.has(c.manifest.id),installedVersion:installed.get(c.manifest.id)?.version||null}));}
+  if(action==='catalog-review'){const c=catalog().find(x=>x.manifest.id===args.id);if(!c)throw Error('Plugin not found.');return plugins.draft(JSON.stringify(c.manifest),{origin:tr?'Lumen plugin listesi':'Lumen plugin list'});}
+  if(action==='pick'){
+   // UI tests (--ui-check only) pass the path; the product always asks through the dialog.
+   const folder=args.folder===true;const r=test&&typeof args.testPath==='string'?{canceled:false,filePaths:[args.testPath]}:await dialog.showOpenDialog(win,{title:folder?(tr?'Plugin klasörü seç':'Choose a plugin folder'):(tr?'plugin.json seç':'Choose plugin.json'),properties:[folder?'openDirectory':'openFile'],...(folder?{}:{filters:[{name:'Lumen plugin',extensions:['json']}]})});
+   if(r.canceled||!r.filePaths[0])return null;const dir=folder?r.filePaths[0]:null,file=folder?path.join(dir,'plugin.json'):r.filePaths[0];
+   const st=await fs.promises.stat(file).catch(()=>null);if(!st||!st.isFile())throw Error(tr?'Klasörde plugin.json yok.':'The folder has no plugin.json.');if(st.size>262144)throw Error('plugin.json must be at most 256 KB.');
+   let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(await fs.promises.readFile(file));}catch{throw Error('plugin.json is not UTF-8 text.');}
+   return plugins.draft(text,{folder:dir,origin:folder?dir:file});
+  }
+  if(action==='pick-url'){
+   let url;try{url=new URL(String(args.url||'').trim());}catch{throw Error('Enter a valid https address.');}if(url.protocol!=='https:')throw Error('Use an https address.');
+   const gh=url.hostname==='github.com'&&url.pathname.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);if(gh)url=new URL('https://raw.githubusercontent.com/'+gh[1]+'/'+gh[2]+'/'+gh[3]);
+   const {guardedFetch}=require('./web.cjs');const response=await guardedFetch(url.href,{timeoutMs:15000,maxBytes:262145,headers:{accept:'application/json,text/plain;q=0.9,*/*;q=0.1'}});
+   if(response.status!==200)throw Error('The address returned '+response.status+'.');if(response.truncated||response.body.length>262144)throw Error('plugin.json must be at most 256 KB.');
+   if(/text\/html/i.test(String(response.headers['content-type']||'')))throw Error('That address is a web page, not plugin.json. Use the raw file address.');
+   let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(response.body);}catch{throw Error('plugin.json is not UTF-8 text.');}
+   return plugins.draft(text,{origin:url.href});
+  }
+  if(action==='install'){if(skillFlight||agent.active())throw Error(tr?'Yanıt bitene kadar bekle.':'Wait for the current response to finish.');return plugins.install(String(args.token||''));}
+  if(action==='remove'){
+   const p=plugins.list().find(x=>x.id===args.id);if(!p)throw Error('Plugin not found.');
+   const answer=await dialog.showMessageBox(win,{type:'warning',message:tr?'Plugin kaldırılsın mı?':'Remove this plugin?',detail:`“${p.name}”\n\n`+(tr?`${p.skills.length} skill, ${p.assistants.length} asistan ve yalnızca bu plugin’in eklediği ${p.servers.length} sunucu kaldırılır. Sohbetler değişmez.`:`Its ${p.skills.length} skills, ${p.assistants.length} assistants and the ${p.servers.length} servers only it added are removed. Conversations stay as they are.`),buttons:tr?['Vazgeç','Kaldır']:['Cancel','Remove'],defaultId:0,cancelId:0,noLink:true});
+   if(answer.response!==1)return plugins.list();return plugins.remove(p.id);
+  }
   throw Error('Invalid request');
  });
  ipcMain.handle('variants',async(e,action,args={})=>{
@@ -527,5 +623,5 @@ app.whenReady().then(async()=>{
  if(test){try{await require('./ui-check.cjs').run(win,app,request,prefs,data);}catch(e){fs.writeFileSync(path.join(process.env.LUMEN_CHECK_OUTPUT||data,'failure.txt'),e.stack);app.exitCode=1;}finally{app.quit();}}
 }).catch(e=>{fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'desktop-startup-error.log'),e.stack);if(core)core.stdin.end();app.exit(1);});}
 let shuttingDown=false;
-app.on('window-all-closed',()=>app.quit());app.on('before-quit',event=>{if(!core||shuttingDown)return;event.preventDefault();shuttingDown=true;if(win&&!win.isDestroyed())win.hide();agent?.cancelAll();cloudFlight?.abort();apiServer?.stop().catch(()=>{});try{artifacts?.close();}catch{}downloader?.cancelAll();try{browser?.close();}catch{}const timeout=setTimeout(()=>{core?.kill();app.exit();},8000);Promise.resolve().then(()=>request('cancel')).then(()=>request('unload')).catch(()=>{}).then(()=>{if(toolSettings?.get().browser.clearOnExit){const web=session.fromPartition('persist:lumen-web');return Promise.all([web.clearStorageData(),web.clearCache()]).catch(()=>{});}}).finally(()=>{core.stdin.end();clearTimeout(timeout);app.exit();});});
+app.on('window-all-closed',()=>app.quit());app.on('before-quit',event=>{if(!core||shuttingDown)return;event.preventDefault();shuttingDown=true;if(win&&!win.isDestroyed())win.hide();agent?.cancelAll();cloudFlight?.abort();imageGen?.cancel();imageGen?.stop().catch(()=>{});apiServer?.stop().catch(()=>{});try{artifacts?.close();}catch{}downloader?.cancelAll();try{browser?.close();}catch{}const timeout=setTimeout(()=>{core?.kill();app.exit();},8000);Promise.resolve().then(()=>request('cancel')).then(()=>request('unload')).catch(()=>{}).then(()=>{if(toolSettings?.get().browser.clearOnExit){const web=session.fromPartition('persist:lumen-web');return Promise.all([web.clearStorageData(),web.clearCache()]).catch(()=>{});}}).finally(()=>{core.stdin.end();clearTimeout(timeout);app.exit();});});
 

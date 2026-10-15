@@ -16,7 +16,7 @@ function cleanReferences(list){
 }
 function validate(skill,{keepDates=false}={}){
  if(!skill||typeof skill.name!=='string'||!skill.name.trim()||skill.name.trim().length>LIMITS.name||typeof (skill.description??'')!=='string'||String(skill.description??'').length>LIMITS.description||typeof skill.instructions!=='string'||!skill.instructions.trim()||skill.instructions.length>LIMITS.instructions)throw Error('Use a name (1–80), description (up to 240) and instructions (1–8,000 characters).');
- const now=new Date().toISOString(),source=skill.source&&typeof skill.source==='object'?{type:['manual','file','folder','url','starter'].includes(skill.source.type)?skill.source.type:'manual',origin:String(skill.source.origin||'').slice(0,500)}:{type:'manual',origin:''};
+ const now=new Date().toISOString(),source=skill.source&&typeof skill.source==='object'?{type:['manual','file','folder','url','starter','plugin'].includes(skill.source.type)?skill.source.type:'manual',origin:String(skill.source.origin||'').slice(0,500)}:{type:'manual',origin:''};
  return {id:validId(skill.id)?skill.id:crypto.randomUUID().replaceAll('-',''),name:skill.name.trim(),description:String(skill.description||'').trim(),instructions:skill.instructions.trim(),references:cleanReferences(skill.references),source,
   unsupported:(Array.isArray(skill.unsupported)?skill.unsupported:[]).map(s=>String(s).slice(0,240)).slice(0,20),created:keepDates&&skill.created?String(skill.created):now,updated:keepDates&&skill.updated?String(skill.updated):now};
 }

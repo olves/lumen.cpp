@@ -47,11 +47,11 @@ function pickModel(repo){const models=state.models.filter(m=>m.Repo===repo);retu
 function pickFit(m){const e=fitEstimate(m.Bytes,m.Installed?m.Name:null);return e?.placement||null;}
 renderCurated=function(){
  hubTicket++;exploreView={kind:'recommended',query:''};syncExploreControls();
- const repos=[...new Set(state.models.map(m=>m.Repo))].filter(Boolean),items=repos.map(repo=>{const m=pickModel(repo);return {repo,m,fit:pickFit(m)};});
+ const repos=[...new Set(state.models.filter(m=>!m.Cloud).map(m=>m.Repo))].filter(Boolean),items=repos.map(repo=>{const m=pickModel(repo);return {repo,m,fit:pickFit(m)};});
  const pending=items.some(x=>!x.fit);
  items.sort((a,b)=>(b.m.Installed-a.m.Installed)||((pickRank[a.fit]??4)-(pickRank[b.fit]??4))||(['gpu','hybrid'].includes(a.fit)?b.m.Bytes-a.m.Bytes:a.m.Bytes-b.m.Bytes));
  const best=items.find(x=>!x.m.Installed&&x.fit==='gpu');
- if(!items.some(x=>x.repo===selectedRepo)){selectedRepo=items[0]?.repo||'';selectedFiles=state.models.filter(m=>m.Repo===selectedRepo);}
+ if(!items.some(x=>x.repo===selectedRepo)){selectedRepo=items[0]?.repo||'';selectedFiles=state.models.filter(m=>m.Repo===selectedRepo);renderModelDetails();}
  const rows=items.map(x=>{
   const meta=modelInfo.get(x.repo)||hubMeta.get(x.repo);
   const row=exploreRow(x.repo,{title:displayName(x.m),bytes:x.m.Bytes,params:meta?.parameters,downloads:meta?.downloads,installed:state.models.some(m=>m.Repo===x.repo&&m.Installed)});

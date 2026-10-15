@@ -105,7 +105,47 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
     }, {signal});
     return {content, reasoning, usage, finish};
   }
-  return {listModels, chat};
+  // Images from a provider: Gemini image models ("gemini-…-image") through Gemini's own generateContent; everything else
+  // through the OpenAI-compatible /images/generations (gpt-image-1, dall-e-3, Imagen on Gemini's compatible endpoint…).
+  // Returns image buffers (PNG/JPEG/WebP as the provider sends them).
+  async function generateImage({provider, model, prompt, shape = 'square', count = 1, signal}) {
+    const {base, headers, label} = target(provider);
+    const timeout = () => AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(300000)]);
+    const out = [];
+    if (provider === 'gemini' && /^gemini-/.test(model)) {
+      const key = connections.cloudKey(provider), native = base.replace(/\/openai$/, '');
+      const aspect = {square: '1:1', landscape: '16:9', portrait: '9:16'}[shape] || '1:1';
+      for (let i = 0; i < count; i++) {
+        const response = await fetchImpl(native + '/models/' + encodeURIComponent(model) + ':generateContent', {method: 'POST', redirect: 'error', signal: timeout(),
+          headers: {'content-type': 'application/json', 'x-goog-api-key': key, 'user-agent': headers['user-agent']},
+          body: JSON.stringify({contents: [{role: 'user', parts: [{text: prompt}]}], generationConfig: {responseModalities: ['TEXT', 'IMAGE'], imageConfig: {aspectRatio: aspect}}})});
+        if (!response.ok) throw await errorFrom(response, label);
+        const j = await response.json();
+        const parts = (j?.candidates || []).flatMap(c => c?.content?.parts || []).filter(p => p?.inlineData?.data || p?.inline_data?.data);
+        if (!parts.length) throw cloudError('empty', label + ' returned no image' + (j?.promptFeedback?.blockReason ? ' (blocked: ' + j.promptFeedback.blockReason + ').' : '.'));
+        for (const p of parts) out.push(Buffer.from((p.inlineData || p.inline_data).data, 'base64'));
+      }
+      return out.slice(0, count);
+    }
+    const size = /^dall-e-3/.test(model) ? {square: '1024x1024', landscape: '1792x1024', portrait: '1024x1792'}[shape] : /^dall-e-2/.test(model) ? '1024x1024' : {square: '1024x1024', landscape: '1536x1024', portrait: '1024x1536'}[shape];
+    const body = {model, prompt, n: /^dall-e-3/.test(model) ? 1 : count, ...(size && provider === 'openai' ? {size} : {}), ...(/^dall-e|^imagen/.test(model) || provider !== 'openai' ? {response_format: 'b64_json'} : {})};
+    const rounds = body.n === count ? 1 : count;
+    for (let i = 0; i < rounds; i++) {
+      const response = await fetchImpl(base + '/images/generations', {method: 'POST', headers: {...headers, accept: 'application/json'}, body: JSON.stringify(body), redirect: 'error', signal: timeout()});
+      if (!response.ok) throw await errorFrom(response, label);
+      const j = await response.json();
+      for (const item of Array.isArray(j?.data) ? j.data : []) {
+        if (item?.b64_json) out.push(Buffer.from(item.b64_json, 'base64'));
+        else if (typeof item?.url === 'string' && /^https:\/\//.test(item.url)) {
+          const r = await fetchImpl(item.url, {redirect: 'follow', signal: timeout()}); if (!r.ok) throw cloudError('download', label + ': the image could not be downloaded (' + r.status + ').');
+          const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 25 * 1048576) throw cloudError('download', label + ': the image is larger than 25 MB.'); out.push(buf);
+        }
+      }
+    }
+    if (!out.length) throw cloudError('empty', label + ' returned no image.');
+    return out.slice(0, count);
+  }
+  return {listModels, chat, generateImage};
 }
 
 module.exports = {createCloud, readEvents, errorFrom};

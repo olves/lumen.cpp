@@ -28,7 +28,11 @@ function sanitize(a) {
   if (instructions.length > 12000) throw Error('Instructions can be at most 12,000 characters.');
   const model = typeof a.model === 'string' && a.model.length <= 200 ? a.model : '';
   const skillIds = (Array.isArray(a.skillIds) ? a.skillIds : []).filter(id => typeof id === 'string' && id.length <= 80).slice(0, 4);
-  return {id: ID.test(a.id || '') ? a.id : crypto.randomBytes(6).toString('hex'), name, description: short(String(a.description || '').replace(/\s+/g, ' '), 200), instructions, model, run: clean(a.run || {}), skillIds,
+  // Tools the assistant asks for (an MCP server's tool, or Lumen's own create_image). Requests only: starting the assistant
+  // offers to turn them on; it never turns them on by itself.
+  const tools = (Array.isArray(a.tools) ? a.tools : []).filter(t => t && typeof t.server === 'string' && /^(lumen|[a-f0-9]{12})$/.test(t.server) && typeof t.name === 'string' && /^[A-Za-z0-9_.\-\/]{1,128}$/.test(t.name)).slice(0, 16).map(t => ({server: t.server, name: t.name}));
+  const plugin = typeof a.plugin === 'string' && /^[a-z0-9][a-z0-9-]{1,39}$/.test(a.plugin) ? a.plugin : undefined;
+  return {id: ID.test(a.id || '') ? a.id : crypto.randomBytes(6).toString('hex'), name, description: short(String(a.description || '').replace(/\s+/g, ' '), 200), instructions, model, run: clean(a.run || {}), skillIds, tools, ...(plugin ? {plugin} : {}),
     created: typeof a.created === 'string' ? a.created.slice(0, 40) : new Date().toISOString(), updated: new Date().toISOString()};
 }
 

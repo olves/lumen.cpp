@@ -107,3 +107,67 @@
 code.connect-url{background:none;padding:0;border:0}
 .mcp-tool-info .connect-badge{align-self:flex-start;margin:2px 0 0}
 #api-port{flex:0 0 110px}
+
+/* Settings → Images and Plugins */
+.img-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 0;border-top:1px solid var(--border)}
+.img-row:first-of-type{border-top:0}
+.img-row-info{display:flex;flex-direction:column;gap:3px;min-width:0}
+.img-row-info strong{font-size:12px;font-weight:600}
+.img-row-info small{font-size:11px}
+.img-row progress{width:120px;accent-color:var(--accent)}
+.img-row #img-steps{width:70px;flex:none}
+.img-shapes{display:inline-flex;gap:4px;padding:3px;border:1px solid var(--border);border-radius:8px;background:var(--field)}
+.img-shape{padding:4px 10px;border-radius:6px;font-size:11px;color:var(--secondary-ink)}
+.img-shape.active{background:var(--selection);color:var(--ink)}
+.plugin-facts{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--secondary-ink)}
+.plugin-review{max-height:52vh;overflow-y:auto;font-size:12px}
+.plugin-review h3{margin:12px 0 4px;font-size:12px}
+.plugin-review ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
+.plugin-note{display:block;color:#c98a2e;font-size:11px}
+.assistant-tools-card{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px;padding:9px 12px;border:1px solid var(--selection-line);border-radius:var(--radius-m,10px);background:var(--selection);font-size:12px}
+.assistant-tools-card svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
+.assistant-tools-card > span{flex:1;min-width:180px}
+.assistant-tools-card .primary{padding:5px 10px;font-size:11px}
+
+/* Image replies */
+.image-chip svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
+.image-progress{padding:12px 0}
+.img-progress-label{font-size:12px;color:var(--secondary-ink)}
+.img-progress-bar{height:3px;margin:8px 0;border-radius:2px;background:var(--border);overflow:hidden;max-width:420px}
+.img-progress-bar span{display:block;height:100%;width:0;background:var(--accent);transition:width 200ms ease}
+.img-preview{display:block;max-width:min(420px,100%);border-radius:10px;opacity:.85}
+.gen-grid{display:grid;gap:8px;max-width:640px}
+.gen-grid.count-1{grid-template-columns:minmax(0,520px)}
+.gen-grid.count-2,.gen-grid.count-3,.gen-grid.count-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+.gen-item{margin:0;display:flex;flex-direction:column;gap:4px}
+.gen-open{display:block;padding:0;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:var(--field)}
+.gen-open img{display:block;width:100%;height:auto}
+.gen-open:hover img{opacity:.92}
+.gen-actions{display:flex;gap:10px}
+.gen-actions .text-button{font-size:11px}
+.gen-caption{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:6px;font-size:11px;color:var(--secondary-ink)}
+.gen-caption .text-button{font-size:11px}
+.gen-dialog{width:min(980px,calc(100vw - 32px))}
+.gen-full{display:block;max-width:100%;max-height:70vh;margin:0 auto;border-radius:8px}
+.gen-prompt{font-size:12px;color:var(--secondary-ink);white-space:pre-wrap}
+
+/* Plugin list */
+.plugin-filters{margin:0 0 12px}
+.plugin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;margin-bottom:18px}
+.plugin-tile{display:flex;flex-direction:column;gap:6px;padding:14px;border:1px solid var(--border);border-radius:var(--radius-m,10px);background:var(--panel-soft)}
+.plugin-tile.is-added{border-color:var(--selection-line)}
+.plugin-tile-head{display:flex;align-items:center;gap:9px}
+.plugin-tile-head strong{font-size:13px}
+.plugin-mark{display:grid;place-items:center;flex:none;width:28px;height:28px;border-radius:8px;background:var(--field);color:var(--accent-ink)}
+.plugin-mark svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.plugin-tile p{margin:0;font-size:12px;line-height:1.5;color:var(--secondary-ink);flex:1}
+.plugin-tile small{font-size:11px}
+.plugin-net{color:var(--secondary-ink)}
+.plugin-net.online{color:var(--accent-ink)}
+.plugin-tile-actions{display:flex;align-items:center;gap:8px;margin-top:6px}
+.plugin-tile-actions .primary{padding:6px 12px;font-size:11px}
+.plugin-subhead{display:block;margin:6px 0 8px}
+.plugin-advanced{margin-top:12px}
+.plugin-advanced summary{cursor:pointer;font-size:12px;color:var(--secondary-ink)}
+.plugin-advanced[open] summary{margin-bottom:8px}
+.image-chip .tool-chip-note,.docs-chip .tool-chip-note{margin-left:6px}

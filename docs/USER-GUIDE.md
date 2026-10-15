@@ -249,6 +249,23 @@ Settings → **Local API** (off by default) lets other programs on this computer
 - Listens on `127.0.0.1` only (default port 11500) and requires the key shown on that page (`Authorization: Bearer …`). "New key" replaces it. Requests from web pages are refused (no CORS, the Host must be this computer).
 - Requests share the engine with your chats and run one at a time, with the same context rules. Text messages only (no images or tool calls); up to 4,096 response tokens per request. Cloud models are not offered.
 
+## Images
+
+Settings → **Images** sets up picture generation; **+ → Create image** in the composer turns the message box into a prompt box ("Image · model" chip; click it for shape, number of pictures, seed and things to avoid).
+- **On this computer.** Install the image engine once: stable-diffusion.cpp (official Windows build, checked with SHA-256). Vulkan is recommended for any recent GPU (30 MB); CUDA 12 is an NVIDIA-only alternative (about 900 MB; not measured against Vulkan yet); CPU works without a GPU but is much slower. Then download **Z-Image Turbo** (Apache-2.0, three files: image model, text encoder, decoder; Q4 about 6.2 GB, Q8 about 8.8 GB). Pictures are made on this computer and nothing is uploaded.
+- **Measured here** (RTX 5060 Laptop, Vulkan, Z-Image Turbo Q4, 8 steps): the first 1024×1024 picture took 40 s including loading the model; a following 896×640 picture took 18 s. The same seed gives the same picture.
+- **GPU sharing.** The chat model and the image engine take turns: the chat model is unloaded before the image engine loads, and the image engine stops before the next chat reply (or after 3 idle minutes).
+- **Cloud.** With cloud models turned on, image models from OpenAI (for example gpt-image-1) or Google Gemini (gemini-…-image) can be added; the prompt goes to that provider.
+- **While it works** a progress line and a rough live preview are shown; Stop cancels. The picture appears under the reply with **Save**, **Copy** and **Full size**; "Use this prompt again" refills the composer. Pictures are stored in `generated/` in the data folder and removed when no conversation uses them any more.
+- **For models.** Settings → Images → *Let models create images* adds a `create_image` tool to Connected tools: a local chat model can write a detailed prompt and make the picture, after your approval (unless you turn asking off).
+
+## Plugins
+
+Settings → **Plugins** lists ready-made packages. Each card says what it adds (skills, an assistant) and whether it uses the internet (and which address) or works offline. **Add** shows exactly what will be installed; after adding, **Start a chat** opens a conversation with its assistant.
+- The list ships with Lumen: Library docs (Context7), GitHub repository guide (DeepWiki), Microsoft Learn, Hugging Face Hub, Turkish editor, Study pack, Picture maker. The four online ones connect to public MCP servers that need no account; their tools stay off until the assistant asks and you click **Turn on**, and each call still asks for approval.
+- A plugin is a package, not a permission: it can add skills (instructions only), assistants and MCP server addresses. It cannot turn tools on, start programs or run scripts; a server entry that asks to start a program is refused and listed in the review.
+- *Install from a folder, file or address* (at the bottom) takes a `plugin.json` you made or got from someone you trust, with the same review. Removing a plugin removes its skills, assistants and the servers only it added; conversations stay as they are.
+
 ## Preview (HTML and SVG)
 
 HTML and SVG code blocks in replies have a **Preview** button. The page opens in its own window, separate from Lumen: scripts run, but the page has no network access at all (every request other than the page itself is blocked), cannot open windows or navigate away, cannot download or ask for permissions, and nothing is saved.
