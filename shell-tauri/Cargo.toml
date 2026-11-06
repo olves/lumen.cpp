@@ -22,7 +22,16 @@ serde_json = "1"
 tokio = { version = "1", features = ["sync", "time", "macros"] }
 percent-encoding = "2"
 webview2-com = "0.39"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography"] }
+# Platform services (Task 6), pinned exactly. Dialogs and the opener are called from Rust only: no JS permission is granted.
+tauri-plugin-dialog = "=2.8.4"
+tauri-plugin-opener = "=2.7.2"
+arboard = "=3.7.0"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
+# Electron safeStorage (Chromium os_crypt) format: AES-256-GCM with a DPAPI-protected key in Local State.
+aes-gcm = "=0.10.3"
+base64 = "=0.22.1"
+getrandom = "=0.3.4"
 
 [features]
 # Test builds only: lets --ui-check open WebView2's remote debugging port. Production builds have no code path for it.

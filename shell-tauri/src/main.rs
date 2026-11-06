@@ -1,6 +1,7 @@
 // lumen.exe: the Tauri shell. Starts the core (node.exe app/core-host.cjs) in a Job Object, serves the unchanged UI over the
 // `lumen` protocol and bridges window.lumen (app/bridge-tauri.js) to the core. Spec: docs/superpowers/specs/2026-11-06-tauri-shell-bridge-design.md
 //   lumen.exe [--ui-check] [--test-data=<dir>] [--remote-debugging-port=<n> (ui-check builds with --ui-check only)]
+//             [--user-data-dir=<dir> (with --ui-check only: Electron's userData of the test, whose Local State holds the secrets key)]
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 mod core;
 mod platform;
@@ -19,6 +20,8 @@ const BROWSER_ARGS_ENV: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
 #[derive(Debug, PartialEq)]
 struct Args {
     data: PathBuf,
+    /// Electron's userData folder: its Local State holds the safeStorage key the secrets share with Electron (spec 7).
+    electron_data: PathBuf,
     ui_check: bool,
     debug_port: Option<u16>,
 }
@@ -28,8 +31,8 @@ fn port_in(text: &str) -> Option<u16> {
     text.split_whitespace().find_map(|a| a.strip_prefix("--remote-debugging-port=")).and_then(|p| p.parse().ok()).filter(|p| *p != 0)
 }
 
-/// `test_dir`: LUMEN_TEST_DIR, `browser_args`: WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, `local`: %LOCALAPPDATA%.
-fn parse_args(argv: &[String], test_dir: Option<String>, browser_args: Option<String>, local: &Path) -> Args {
+/// `test_dir`: LUMEN_TEST_DIR, `browser_args`: WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, `local`: %LOCALAPPDATA%, `roaming`: %APPDATA%.
+fn parse_args(argv: &[String], test_dir: Option<String>, browser_args: Option<String>, local: &Path, roaming: &Path) -> Args {
     // Test mode (spec 6.5) needs both the `ui-check` build feature and the flag; a production build ignores the flag entirely
     // (no core test overrides, single instance kept, window on screen).
     #[cfg(feature = "ui-check")]
@@ -45,7 +48,14 @@ fn parse_args(argv: &[String], test_dir: Option<String>, browser_args: Option<St
         let _ = browser_args;
         None
     };
-    Args { data, ui_check, debug_port }
+    // Electron's app.getPath('userData') is %APPDATA%lumen.cpp. Test runs use the test's Electron profile (--user-data-dir, as the
+    // harness passes it to Electron), else <test-data>electron-userdata; the user's folder is never touched by a test.
+    let electron_data = if ui_check {
+        argv.iter().find_map(|a| a.strip_prefix("--user-data-dir=")).filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(|| data.join("electron-userdata"))
+    } else {
+        roaming.join("lumen.cpp")
+    };
+    Args { data, electron_data, ui_check, debug_port }
 }
 
 /// Every WEBVIEW2_* variable (case-insensitive): WebView2 reads them on its own (browser arguments, user data folder, browser
@@ -58,6 +68,7 @@ pub struct Shell {
     pub core: Arc<core::Core>,
     pub app_dir: PathBuf,
     pub data: PathBuf,
+    pub secrets: platform::secrets::Secrets,
     exiting: AtomicBool,
 }
 
@@ -147,7 +158,8 @@ fn window_action(webview: tauri::Webview, action: String) -> Result<(), String> 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let local = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default());
-    let args = parse_args(&argv, std::env::var("LUMEN_TEST_DIR").ok(), std::env::var(BROWSER_ARGS_ENV).ok(), &local);
+    let roaming = PathBuf::from(std::env::var("APPDATA").unwrap_or_default());
+    let args = parse_args(&argv, std::env::var("LUMEN_TEST_DIR").ok(), std::env::var(BROWSER_ARGS_ENV).ok(), &local, &roaming);
     // WebView2 would honour these variables on its own (a debugging port among others): none reaches the webview. The port of
     // a ui-check build was read above.
     for name in webview2_vars(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok())) {
@@ -160,7 +172,9 @@ fn main() {
         // Test runs use separate data folders and may run side by side (as in Electron); core.lock still guards each folder.
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| window::focus_main(app)));
     }
+    // Dialogs are called from Rust only (platform/dialog.rs); the main window's capability grants no dialog permission.
     let app = builder
+        .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("lumen", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let allowed = ctx.webview_label() == window::MAIN && request.method() == tauri::http::Method::GET;
@@ -189,7 +203,7 @@ fn main() {
                 core::Notice::Platform { id, method, args } => {
                     let app = notify_app.clone();
                     tauri::async_runtime::spawn(async move {
-                        let (answer, quit) = platform::handle(&app, &method, &args);
+                        let (answer, quit) = platform::handle(&app, &method, &args).await;
                         app.state::<Shell>().core.answer(id, answer);
                         if quit {
                             begin_exit(&app);
@@ -212,12 +226,13 @@ fn main() {
                 },
                 notify,
             );
-            app.manage(Shell { core: core.clone(), app_dir: exe_dir.join("app"), data: data.clone(), exiting: AtomicBool::new(false) });
+            let secrets = platform::secrets::Secrets::new(&args.electron_data);
+            app.manage(Shell { core: core.clone(), app_dir: exe_dir.join("app"), data: data.clone(), secrets, exiting: AtomicBool::new(false) });
             if let Err(e) = core.spawn() {
                 startup_failed(&handle, &data, &format!("Lumen's core could not be started: {e}"));
                 return Ok(());
             }
-            tauri::async_runtime::spawn(startup(handle, Args { data, ui_check: args.ui_check, debug_port: args.debug_port }));
+            tauri::async_runtime::spawn(startup(handle, Args { data, electron_data: args.electron_data.clone(), ui_check: args.ui_check, debug_port: args.debug_port }));
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -247,17 +262,33 @@ mod tests {
     #[test]
     fn data_folder() {
         let local = Path::new("L");
-        assert_eq!(parse_args(&argv(&[]), None, None, local).data, PathBuf::from("L").join("lumen.cpp"));
-        assert_eq!(parse_args(&argv(&["--test-data=C:\\t\\d"]), None, None, local).data, PathBuf::from("C:\\t\\d"));
-        assert_eq!(parse_args(&argv(&[]), Some("E".into()), None, local).data, PathBuf::from("E"));
+        assert_eq!(parse_args(&argv(&[]), None, None, local, Path::new("R")).data, PathBuf::from("L").join("lumen.cpp"));
+        assert_eq!(parse_args(&argv(&["--test-data=C:\\t\\d"]), None, None, local, Path::new("R")).data, PathBuf::from("C:\\t\\d"));
+        assert_eq!(parse_args(&argv(&[]), Some("E".into()), None, local, Path::new("R")).data, PathBuf::from("E"));
+    }
+
+    #[test]
+    fn electron_user_data_folder() {
+        let (local, roaming) = (Path::new("L"), Path::new("R"));
+        assert_eq!(parse_args(&argv(&[]), None, None, local, roaming).electron_data, PathBuf::from("R").join("lumen.cpp"));
+        // A production build ignores the test flags: the secrets key stays the user's.
+        let test = parse_args(&argv(&["--ui-check", r"--test-data=C:\t\d", r"--user-data-dir=C:\t\d-profile"]), None, None, local, roaming);
+        let default = parse_args(&argv(&["--ui-check", r"--test-data=C:\t\d"]), None, None, local, roaming);
+        if cfg!(feature = "ui-check") {
+            assert_eq!(test.electron_data, PathBuf::from(r"C:\t\d-profile"));
+            assert_eq!(default.electron_data, PathBuf::from(r"C:\t\d").join("electron-userdata"));
+        } else {
+            assert_eq!(test.electron_data, PathBuf::from("R").join("lumen.cpp"));
+            assert_eq!(default.electron_data, PathBuf::from("R").join("lumen.cpp"));
+        }
     }
 
     #[test]
     fn debugging_port_needs_the_feature_and_ui_check() {
         let local = Path::new("L");
-        let with = parse_args(&argv(&["--ui-check", "--remote-debugging-port=9333"]), None, None, local);
-        let from_env = parse_args(&argv(&["--ui-check"]), None, Some("--foo --remote-debugging-port=9444".into()), local);
-        let without = parse_args(&argv(&["--remote-debugging-port=9333"]), None, Some("--remote-debugging-port=9444".into()), local);
+        let with = parse_args(&argv(&["--ui-check", "--remote-debugging-port=9333"]), None, None, local, Path::new("R"));
+        let from_env = parse_args(&argv(&["--ui-check"]), None, Some("--foo --remote-debugging-port=9444".into()), local, Path::new("R"));
+        let without = parse_args(&argv(&["--remote-debugging-port=9333"]), None, Some("--remote-debugging-port=9444".into()), local, Path::new("R"));
         assert_eq!(without.debug_port, None);
         if cfg!(feature = "ui-check") {
             assert_eq!(with.debug_port, Some(9333));
@@ -271,8 +302,8 @@ mod tests {
     #[test]
     fn test_mode_needs_the_feature_and_the_flag() {
         let local = Path::new("L");
-        assert_eq!(parse_args(&argv(&["--ui-check"]), None, None, local).ui_check, cfg!(feature = "ui-check"));
-        assert!(!parse_args(&argv(&[]), None, None, local).ui_check);
+        assert_eq!(parse_args(&argv(&["--ui-check"]), None, None, local, Path::new("R")).ui_check, cfg!(feature = "ui-check"));
+        assert!(!parse_args(&argv(&[]), None, None, local, Path::new("R")).ui_check);
     }
 
     #[test]

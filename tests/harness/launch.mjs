@@ -25,11 +25,12 @@ export const SHELLS = {
     close: cdp => cdp.send('Browser.close'),
   },
   // Built by scripts/build-tauri.ps1 -Features ui-check. The debugging port exists only in that build and only with --ui-check;
-  // the shell gives each data folder its own WebView2 profile (<data>/webview/main).
+  // the shell gives each data folder its own WebView2 profile (<data>/webview/main). --user-data-dir names Electron's userData
+  // folder of the same test (its Local State holds the safeStorage key), so saved API keys work in both shells.
   tauri: {
     exe: path.join(workRoot, 'tauri-build', 'lumen.exe'),
     appDir: path.join(workRoot, 'tauri-build', 'app'),
-    args: (dataDir, port) => ['--ui-check', `--test-data=${dataDir}`, `--remote-debugging-port=${port}`],
+    args: (dataDir, port) => ['--ui-check', `--test-data=${dataDir}`, `--user-data-dir=${dataDir}-profile`, `--remote-debugging-port=${port}`],
     env: () => ({}),
     target: /^http:\/\/lumen\.localhost\//,
     // Graceful quit like the title bar's close button (shutdown to the core, then exit).
