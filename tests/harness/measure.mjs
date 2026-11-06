@@ -106,19 +106,29 @@ function shellRssMB(rows, rootPid) {
 }
 
 // Remember the spawned tree (pid -> executable path) so cleanup kills only processes we started.
-function track(rows, rootPid, tracked) {
-  const root = rows.find(r => r.ProcessId === rootPid);
-  for (const r of [...(root ? [root] : []), ...descendants(rows, rootPid)]) tracked.set(r.ProcessId, r.ExecutablePath || r.Name);
+// Descendants of every still-running tracked process are added (covers orphans whose parent exited);
+// tracked PIDs no longer in the process table are dropped, so a later PID reuse cannot match.
+function track(rows, rootPid, tracked, rootAlive = true) {
+  const present = new Set(rows.map(r => r.ProcessId));
+  for (const pid of [...tracked.keys()]) if (!present.has(pid)) tracked.delete(pid);
+  const roots = new Set(tracked.keys());
+  if (rootAlive) roots.add(rootPid);
+  for (const root of roots) {
+    const self = rows.find(r => r.ProcessId === root);
+    for (const r of [...(self && rootAlive || root !== rootPid ? [self] : []), ...descendants(rows, root)]) {
+      if (r && (r.ProcessId !== rootPid || rootAlive)) tracked.set(r.ProcessId, r.ExecutablePath || r.Name);
+    }
+  }
 }
 
 // Kill only tracked PIDs that still exist with the same executable (guards against PID reuse). No path sweep.
 function killTracked(tracked) {
-  let rows;
-  try { rows = processTable(); } catch { return; }
-  for (const r of rows) {
-    if (tracked.get(r.ProcessId) === (r.ExecutablePath || r.Name)) {
-      try { execFileSync('taskkill', ['/PID', String(r.ProcessId), '/F'], { stdio: 'ignore' }); } catch {}
-    }
+  for (let pass = 0; pass < 3; pass++) {
+    let rows;
+    try { rows = processTable(); } catch { return; }
+    const victims = rows.filter(r => tracked.get(r.ProcessId) === (r.ExecutablePath || r.Name));
+    if (!victims.length) return;
+    for (const r of victims) { try { execFileSync('taskkill', ['/PID', String(r.ProcessId), '/F'], { stdio: 'ignore' }); } catch {} }
   }
 }
 
@@ -159,16 +169,18 @@ export async function measure({ shell = 'electron', exe, args = [], dataDir, idl
   const t0 = performance.now();
   const child = spawn(exe, [...args, ...launch.args], { stdio: 'ignore', env: { ...process.env, ...launch.env } });
   let exited = false;
-  child.on('exit', () => { exited = true; });
+  child.on('exit', () => { exited = true; tracked.delete(child.pid); });
   const tracked = new Map([[child.pid, exe]]);
   try {
     const startupMs = await waitReady(port, def.target, t0, timeoutMs);
-    track(processTable(), child.pid, tracked);
-    const wait = idleMs - (performance.now() - t0);
-    if (wait > 0) await sleep(wait);
+    // Poll the process tree about once a second after startup was measured (not during, to avoid perturbing it).
+    while (!exited && performance.now() - t0 < idleMs) {
+      track(processTable(), child.pid, tracked, !exited);
+      await sleep(Math.min(1000, Math.max(0, idleMs - (performance.now() - t0))));
+    }
     if (exited) throw new Error('Shell exited before idle sample');
     const rows = processTable();
-    track(rows, child.pid, tracked);
+    track(rows, child.pid, tracked, !exited);
     const idleRssMB = shellRssMB(rows, child.pid);
     return {
       startupMs: Math.round(startupMs),
@@ -176,7 +188,8 @@ export async function measure({ shell = 'electron', exe, args = [], dataDir, idl
       folderMB: Math.round(folderSizeMB(exeDir, def.folderExcludes) * 10) / 10,
     };
   } finally {
-    if (!exited) { try { track(processTable(), child.pid, tracked); } catch {} }
+    try { track(processTable(), child.pid, tracked, !exited); } catch {}
+    if (exited) tracked.delete(child.pid);
     killTracked(tracked);
   }
 }
@@ -187,7 +200,7 @@ async function cli() {
   const opt = {};
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i += 2) opt[argv[i].replace(/^--/, '')] = argv[i + 1];
-  const shell = SHELLS[opt.shell];
+  const shell = Object.hasOwn(SHELLS, opt.shell) ? SHELLS[opt.shell] : undefined;
   if (!shell) throw new Error(`Unknown --shell '${opt.shell}'. Known: ${Object.keys(SHELLS).join(', ')}`);
   if (!opt.out) throw new Error('--out <file> is required');
   const runs = Number(opt.runs || 5), idleMs = Number(opt['idle-ms'] || 30000);
