@@ -177,7 +177,9 @@ describe('core isolation', () => {
     const outside = path.join(freshDir('paste-outside'), 'keep.png'), traversal = path.join(clip, '..', '..', 'keep2.png');
     for (const f of [mine, second, outside, traversal]) fs.writeFileSync(f, png);
     const image = { decodeWebp: async () => { throw Error('unused'); }, normalize: async () => ({ png, width: 8, height: 8, original: { width: 8, height: 8 } }), thumbnail: async () => png };
-    const items = [{ type: 'text', text: 'hello' }, { type: 'image', mime: 'image/png', path: mine }, { type: 'image', mime: 'image/png', path: second }, { type: 'image', mime: 'image/png', path: outside }, { type: 'image', mime: 'image/png', path: traversal }];
+    const third = path.join(clip, 'third'); fs.writeFileSync(third, png);
+    const upper = path.join(clip.toUpperCase(), 'third');
+    const items = [{ type: 'text', text: 'hello' }, { type: 'image', mime: 'image/png', path: mine }, { type: 'image', mime: 'image/png', path: second }, { type: 'image', mime: 'image/png', path: outside }, { type: 'image', mime: 'image/png', path: traversal }, ...(process.platform === 'win32' ? [{ type: 'image', mime: 'image/png', path: upper }] : [])];
     const core = createCore({ platform: fakePlatform({ image, clipboard: { writeText() {}, writePng() {}, read: async () => items } }), dataDir: dir, test: true });
     await core.start();
     try {
@@ -185,9 +187,35 @@ describe('core isolation', () => {
       assert.equal(photos.length, 1);
       assert.equal(fs.existsSync(mine), false);
       assert.equal(fs.existsSync(second), false);
+      if (process.platform === 'win32') assert.equal(fs.existsSync(third), false, 'the folder is compared case-insensitively on Windows');
       assert.equal(fs.existsSync(outside), true, 'a path outside temp/clipboard is never deleted');
       assert.equal(fs.existsSync(traversal), true, 'a path that climbs out of temp/clipboard is never deleted');
     } finally { await core.stop(); }
+  });
+
+  test('core.lock stale takeover: two starters, only one wins', () => {
+    const { takeLock } = require(path.join(appDir, 'corelock.cjs'));
+    const lock = path.join(freshDir('lock-race'), 'core.lock');
+    const dead = 999999, A = 1111, B = 2222;
+    const alive = pid => pid === A || pid === B;
+    const holder = () => fs.readFileSync(lock, 'utf8').trim();
+    // B reads the dead PID; before B renames the file, A completes its takeover. B must not move A's live lock away for good.
+    fs.writeFileSync(lock, String(dead));
+    assert.throws(() => takeLock(lock, { pid: B, alive, beforeRename: () => { assert.equal(takeLock(lock, { pid: A, alive }), true); } }),
+      /core\.lock: Lumen is already running with this data folder \(process 1111\)/);
+    assert.equal(holder(), String(A), 'A still holds the lock');
+    assert.deepEqual(fs.readdirSync(path.dirname(lock)), ['core.lock'], 'no stale files left behind');
+    // The same interleaving the other way round: B wins first, A (who read the dead PID earlier) loses.
+    fs.writeFileSync(lock, String(dead));
+    assert.throws(() => takeLock(lock, { pid: A, alive, beforeRename: () => { takeLock(lock, { pid: B, alive }); } }), /already running.*\(process 2222\)/);
+    assert.equal(holder(), String(B));
+    // Without interference a dead holder is taken over, a live one is refused, and the file is created when absent.
+    fs.writeFileSync(lock, String(dead));
+    assert.equal(takeLock(lock, { pid: A, alive }), true); assert.equal(holder(), String(A));
+    assert.throws(() => takeLock(lock, { pid: B, alive }), /already running/);
+    fs.rmSync(lock); assert.equal(takeLock(lock, { pid: B, alive }), true); assert.equal(holder(), String(B));
+    // An empty or garbage file counts as stale.
+    fs.writeFileSync(lock, 'garbage'); assert.equal(takeLock(lock, { pid: A, alive }), true); assert.equal(holder(), String(A));
   });
 
   test('asset urls use platform base', async () => {

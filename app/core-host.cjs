@@ -20,7 +20,9 @@
 // through files under <data>/temp/rpc: image.decodeWebp [inPath, outPath], image.normalize [inPath, outPath, maxSide|null,
 // quality] (maxSide null = no limit; answer null when the image cannot be decoded, else {width, height, original}),
 // image.thumbnail [inPath, outPath, maxSide, fit]; the shell writes the PNG to outPath. browser.render [url, {}] can be
-// cancelled with the request {method:'browser.cancel', args:[renderRequestId]}.
+// cancelled with the request {method:'browser.cancel', args:[renderRequestId]}. The full list is in platform.cjs.
+// Once stdin has ended (the shell is gone) every platform request is rejected at once; after an explicit 'shutdown' message the
+// shell can still answer, so requests keep working until the core has stopped.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -28,9 +30,7 @@ const LINE_LIMIT = 64 * 1024 * 1024;
 
 // Nothing but protocol lines on stdout.
 const stdout = process.stdout;
-console.log = console.info = console.debug = (...a) => console.error(...a);
-process.on('unhandledRejection', e => console.error('[core-host] unhandled rejection:', e && e.stack || e));
-process.on('uncaughtException', e => console.error('[core-host] uncaught exception:', e && e.stack || e));
+let onShellGone = null;
 
 function parseArgs(argv) {
   const out = {uiCheck: false};
@@ -43,20 +43,22 @@ function parseArgs(argv) {
 }
 
 const emit = message => stdout.write(JSON.stringify(message) + '\n');
-const pendingPlatform = new Map();
-const callbacks = {};
-let platformSeq = 0;
+const CALLBACK_NAMES = ['browser.onNavigate', 'browser.onPopup', 'browser.onState'];
 
-// Asks the shell to run one platform method. The promise settles with the shell's platform-result.
-function rpc(method, args = []) {
-  const id = 'p' + (++platformSeq);
-  const promise = new Promise((resolve, reject) => { pendingPlatform.set(id, {resolve, reject}); emit({id, type: 'platform', method, args}); });
-  promise.id = id;
-  return promise;
-}
-
-function createRpcPlatform({data, assetBase, appDir, updateMode, version}) {
+// createRpcPlatform: the platform object whose methods are platform requests. `send(message)` writes one protocol line.
+// Returns {platform, state}; state.pending/callbacks/gone are what the stdin loop needs.
+function createRpcPlatform({data, assetBase, appDir, updateMode, version, send = emit}) {
   const {FUNCTIONS} = require('./platform.cjs');
+  const state = {pending: new Map(), callbacks: Object.create(null), gone: false, seq: 0};
+  // Asks the shell to run one platform method. The promise settles with the shell's platform-result.
+  function rpc(method, args = []) {
+    if (state.gone) return Object.assign(Promise.reject(Error('The shell is gone.')), {id: ''});
+    const id = 'p' + (++state.seq);
+    const promise = new Promise((resolve, reject) => { state.pending.set(id, {resolve, reject}); send({id, type: 'platform', method, args}); });
+    promise.id = id;
+    return promise;
+  }
+  const emit = send;
   const platform = {assetBase, appDir, updateMode, app: {version}};
   const set = (name, fn) => { const keys = name.split('.'); let o = platform; for (const k of keys.slice(0, -1)) o = o[k] = o[k] || {}; o[keys.at(-1)] = fn; };
   for (const name of FUNCTIONS) set(name, (...args) => rpc(name, args));
@@ -84,16 +86,14 @@ function createRpcPlatform({data, assetBase, appDir, updateMode, version}) {
     const request = rpc('browser.render', [url, plain]);
     if (!signal) return request;
     return new Promise((resolve, reject) => {
-      const abort = () => { pendingPlatform.delete(request.id); rpc('browser.cancel', [request.id]).catch(() => {}); reject(cancelled()); };
+      const abort = () => { state.pending.delete(request.id); rpc('browser.cancel', [request.id]).catch(() => {}); reject(cancelled()); };
       signal.addEventListener('abort', abort, {once: true});
       request.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
     });
   });
   // Callback registrations stay here; the shell is told once (so it starts forwarding) and pushes 'platform-event' messages.
-  for (const name of ['browser.onNavigate', 'browser.onPopup', 'browser.onState']) {
-    set(name, cb => { callbacks[name] = cb; rpc(name, []).catch(() => {}); });
-  }
-  return platform;
+  for (const name of CALLBACK_NAMES) set(name, cb => { state.callbacks[name] = cb; rpc(name, []).catch(() => {}); });
+  return {platform, state};
 }
 
 function backendDirFor(app) {
@@ -101,18 +101,33 @@ function backendDirFor(app) {
   return path.join(__dirname, 'backend');
 }
 
+// Process-wide guards, installed only when running as the host (not when a test requires this file).
+function installProcessGuards() {
+  console.log = console.info = console.debug = (...a) => console.error(...a);
+  process.on('unhandledRejection', e => console.error('[core-host] unhandled rejection:', e && e.stack || e));
+  // A broken stdout pipe means the shell is gone (shut down quietly); any other uncaught exception ends the process with an error.
+  process.on('uncaughtException', e => {
+    console.error('[core-host] uncaught exception:', e && e.stack || e);
+    if (e && e.code === 'EPIPE' && e.syscall === 'write') { if (onShellGone) onShellGone(); else process.exit(0); return; }
+    process.exit(1);
+  });
+}
+
 async function main() {
+  installProcessGuards();
   const args = parseArgs(process.argv.slice(2));
   if (!args.data || !args.app) { console.error('usage: node core-host.cjs --data <dir> --app <dir> [--ui-check] [--asset-base <url>] [--update-mode full|check-only] [--version <v>]'); process.exit(2); }
-  const platform = createRpcPlatform({data: path.resolve(args.data), assetBase: args.assetBase || 'lumen://app/', appDir: path.resolve(args.app),
+  const {platform, state} = createRpcPlatform({data: path.resolve(args.data), assetBase: args.assetBase || 'lumen://app/', appDir: path.resolve(args.app),
     updateMode: args.updateMode === 'check-only' ? 'check-only' : 'full', version: args.version || require('./package.json').version});
   const {createCore} = require('./core.cjs');
   const core = createCore({platform, dataDir: path.resolve(args.data), test: args.uiCheck, backendDir: backendDirFor(path.resolve(args.app))});
   let stopping = false;
 
-  async function shutdown(code) {
+  // gone: the shell cannot answer any more (stdin ended), so nothing pending or new can settle. An explicit shutdown message
+  // leaves the platform working: the core's own stop() may still need the shell.
+  async function shutdown(code, gone = false) {
+    if (gone) { state.gone = true; for (const p of state.pending.values()) p.reject(Error('The shell is gone.')); state.pending.clear(); }
     if (stopping) return; stopping = true;
-    for (const p of pendingPlatform.values()) p.reject(Error('Shutting down.')); pendingPlatform.clear();
     // core.stop() caps the engine's shutdown at 8 s; the host process never waits longer than that.
     try { await core.stop(); } catch (e) { console.error('[core-host] stop failed:', e && e.message); }
     stdout.write('', () => process.exit(code));
@@ -126,13 +141,16 @@ async function main() {
   function onLine(line) {
     let message; try { message = JSON.parse(line); } catch { return emit({type: 'protocol-error', reason: 'invalid-json'}); }
     if (!message || typeof message !== 'object') return emit({type: 'protocol-error', reason: 'invalid-message'});
-    if (message.type === 'call' && typeof message.channel === 'string') { if (stopping) return emit({id: message.id, type: 'result', ok: false, error: 'Lumen is shutting down.'}); return void onCall(message); }
+    if (message.type === 'call') {
+      if (typeof message.channel !== 'string') return message.id === undefined ? emit({type: 'protocol-error', reason: 'invalid-message'}) : emit({id: message.id, type: 'result', ok: false, error: 'Invalid call: channel must be a string.'}); if (stopping) return emit({id: message.id, type: 'result', ok: false, error: 'Lumen is shutting down.'}); return void onCall(message); }
     if (message.type === 'shutdown') return void shutdown(0);
     if (message.type === 'platform-result') {
-      const p = pendingPlatform.get(message.id); if (!p) return; pendingPlatform.delete(message.id);
+      const p = state.pending.get(message.id); if (!p) return; state.pending.delete(message.id);
       return message.ok ? p.resolve(message.value) : p.reject(Error(String(message.error || 'Platform call failed.')));
     }
-    if (message.type === 'platform-event') { try { callbacks[message.name]?.(message.payload); } catch (e) { console.error('[core-host] platform event failed:', e && e.message); } return; }
+    if (message.type === 'platform-event') {
+      if (!CALLBACK_NAMES.includes(message.name) || !message.payload || typeof message.payload !== 'object') return; // unknown names and non-object payloads are ignored
+      try { state.callbacks[message.name]?.(message.payload); } catch (e) { console.error('[core-host] platform event failed:', e && e.message); } return; }
     emit({type: 'protocol-error', reason: 'invalid-message'});
   }
 
@@ -154,12 +172,15 @@ async function main() {
       pos = nl + 1;
     }
   });
-  process.stdin.on('end', () => shutdown(0));
-  process.stdin.on('error', () => shutdown(0));
+  process.stdin.on('end', () => shutdown(0, true));
+  process.stdin.on('error', () => shutdown(0, true));
+  onShellGone = () => shutdown(0, true);
+  stdout.on('error', e => { if (e.code === 'EPIPE') shutdown(0, true); });
 
   try { await core.start(); }
   catch (e) { console.error('[core-host] start failed:', e && e.stack || e); try { await core.stop({now: true}); } catch {} stdout.write('', () => process.exit(1)); return; }
   emit({type: 'ready', channels: core.channels});
 }
 
-main().catch(e => { console.error('[core-host] fatal:', e && e.stack || e); process.exit(1); });
+if (require.main === module) main().catch(e => { console.error('[core-host] fatal:', e && e.stack || e); process.exit(1); });
+module.exports = {createRpcPlatform};

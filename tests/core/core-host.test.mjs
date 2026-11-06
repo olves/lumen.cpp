@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
@@ -26,8 +27,9 @@ function hostPidOf(parentPid) {
 
 // The fake shell: starts core-host.cjs, answers 'platform' requests, collects events and results.
 class FakeShell {
-  constructor(extra = []) {
+  constructor(extra = [], prepare = null) {
     this.dataDir = freshDir('data');
+    if (prepare) prepare(this.dataDir);
     this.lines = []; this.events = []; this.platformRequests = []; this.protocolErrors = []; this.stderr = ''; this.stdoutNoise = [];
     this.waiting = new Map(); this.seq = 0; this.ready = null; this.exit = null;
     this.platform = { 'dialog.open': async () => ({ canceled: true, filePaths: [] }) };
@@ -64,7 +66,7 @@ class FakeShell {
 }
 
 const shells = [];
-const launch = async (extra) => { const s = new FakeShell(extra); shells.push(s); await s.start(); return s; };
+const launch = async (extra, prepare) => { const s = new FakeShell(extra, prepare); shells.push(s); await s.start(); return s; };
 after(() => { for (const s of shells) s.kill(); });
 
 describe('core host', () => {
@@ -196,6 +198,114 @@ describe('core host', () => {
     assert.match(second.stderr, /core\.lock: Lumen is already running/);
     assert.equal(second.stdout, '', 'nothing on stdout');
     await shell.shutdown();
+  });
+
+  const LIMIT = 64 * 1024 * 1024;
+  const results = (shell, ids) => ids.map(id => new Promise(r => shell.waiting.set(id, r)));
+
+  test('a line of exactly 64 MiB is accepted', async () => {
+    const shell = await launch();
+    const head = '{"id":"big","type":"call","channel":"preferences","args":[],"pad":"', tail = '"}';
+    const line = head + 'a'.repeat(LIMIT - Buffer.byteLength(head) - Buffer.byteLength(tail)) + tail;
+    assert.equal(Buffer.byteLength(line), LIMIT);
+    const [pending] = results(shell, ['big']);
+    shell.child.stdin.write(line + '\n');
+    const r = await pending;
+    assert.equal(r.ok, true);
+    assert.deepEqual(shell.protocolErrors, []);
+    await shell.shutdown();
+  });
+
+  test('CRLF lines and several messages in one chunk', async () => {
+    const shell = await launch();
+    const call = id => JSON.stringify({ id, type: 'call', channel: 'preferences', args: [] });
+    const crlf = results(shell, ['crlf']);
+    shell.child.stdin.write(call('crlf') + '\r\n');
+    assert.equal((await crlf[0]).ok, true);
+    const ids = ['m1', 'm2', 'm3'], pending = results(shell, ids);
+    shell.child.stdin.write(ids.map(id => call(id) + '\n').join('') + '\n   \n');
+    for (const r of await Promise.all(pending)) assert.equal(r.ok, true);
+    assert.deepEqual(shell.protocolErrors, []);
+    await shell.shutdown();
+  });
+
+  test('a call with a non-string channel gets an error result', async () => {
+    const shell = await launch();
+    const [pending] = results(shell, ['bad1']);
+    shell.child.stdin.write(JSON.stringify({ id: 'bad1', type: 'call', channel: 5, args: [] }) + '\n');
+    const r = await pending;
+    assert.equal(r.ok, false);
+    assert.match(r.error, /channel must be a string/);
+    assert.equal((await shell.call('preferences', [])).ok, true);
+    await shell.shutdown();
+  });
+
+  test('platform-event reaches the core; unknown names and non-object payloads are ignored', async () => {
+    const shell = await launch();
+    for (const m of ['configure', 'create', 'show', 'hide', 'navigate', 'onNavigate', 'onPopup', 'onState']) shell.platform['browser.' + m] = async () => null;
+    shell.platform['browser.info'] = async () => ({ url: 'https://example.com/', title: 'Example', loading: false, canGoBack: false, canGoForward: false, zoom: 1 });
+    assert.equal((await shell.call('browser', ['open', { url: 'https://example.com/' }])).ok, true);
+    for (const name of ['browser.onNavigate', 'browser.onPopup', 'browser.onState']) assert.ok(shell.platformRequests.some(p => p.method === name), name + ' registered with the shell');
+    const errors = () => shell.events.filter(e => e.channel === 'browser-event' && e.payload.error);
+    shell.write({ type: 'platform-event', name: 'browser.onNavigate', payload: { type: 'fail', code: -105, description: 'Name not resolved', url: 'https://example.com/' } });
+    const first = await shell.until(() => errors()[0]);
+    assert.equal(first.payload.error.code, -105);
+    const before = shell.events.length;
+    shell.write({ type: 'platform-event', name: 'constructor', payload: { type: 'fail' } });
+    shell.write({ type: 'platform-event', name: '__proto__', payload: { type: 'fail' } });
+    shell.write({ type: 'platform-event', name: 'browser.nope', payload: { type: 'fail' } });
+    shell.write({ type: 'platform-event', name: 'browser.onNavigate', payload: 'fail' });
+    shell.write({ type: 'platform-event', name: 'browser.onNavigate', payload: null });
+    shell.write({ type: 'platform-event', name: 'browser.onNavigate', payload: { type: 'fail', code: -106, description: 'x', url: 'https://example.com/' } });
+    await shell.until(() => errors().some(e => e.payload.error.code === -106));
+    assert.equal(shell.events.slice(before).filter(e => e.channel === 'browser-event').length, 1, 'only the valid event produced a browser-event');
+    assert.equal(shell.exit, null);
+    await shell.shutdown();
+  });
+
+  test('browser.render abort sends browser.cancel; requests fail once the shell is gone', async () => {
+    const require = createRequire(import.meta.url);
+    const { createRpcPlatform } = require(hostScript);
+    const sent = [];
+    const { platform, state } = createRpcPlatform({ data: freshDir('rpc-unit'), assetBase: 'x://', appDir: 'x', updateMode: 'full', version: '1', send: m => sent.push(m) });
+    const abort = new AbortController();
+    const render = platform.browser.render('https://a.example/', { signal: abort.signal, ignored: () => {} });
+    const request = sent.find(m => m.method === 'browser.render');
+    assert.deepEqual(request.args, ['https://a.example/', {}], 'no signal or function crosses the wire');
+    abort.abort();
+    await assert.rejects(render, { cancelled: true });
+    const cancel = sent.find(m => m.method === 'browser.cancel');
+    assert.deepEqual(cancel.args, [request.id]);
+    await assert.rejects(platform.browser.render('https://b.example/', { signal: abort.signal }), { cancelled: true });
+    state.gone = true;
+    const before = sent.length;
+    await assert.rejects(platform.openExternal('https://x.example/'), /shell is gone/);
+    assert.equal(sent.length, before, 'nothing is sent once the shell is gone');
+  });
+
+  test('stdin EOF rejects pending and new platform calls and the core exits quickly', async () => {
+    const shell = await launch([], dir => fs.writeFileSync(path.join(dir, 'tools-settings.json'), JSON.stringify({ browser: { clearOnExit: true } })));
+    shell.platform['dialog.open'] = () => new Promise(() => {}); // never answered
+    const pending = shell.call('attach-text', ['en']);
+    await shell.until(() => shell.platformRequests.some(p => p.method === 'dialog.open'));
+    const t0 = Date.now();
+    shell.child.stdin.end();
+    const r = await pending;
+    assert.equal(r.ok, false, 'the pending platform call was rejected');
+    assert.match(r.error, /shell is gone/);
+    const exit = await Promise.race([shell.exited, sleep(7000).then(() => null)]);
+    assert.ok(exit, 'core-host exited');
+    assert.ok(Date.now() - t0 < 5000, 'exited in ' + (Date.now() - t0) + ' ms, not at the 8 s kill');
+    // stop() asks browser.clearData (clearOnExit): with the shell gone that request is rejected, never sent.
+    assert.equal(shell.platformRequests.some(p => p.method === 'browser.clearData'), false);
+  });
+
+  test('an explicit shutdown keeps platform requests working until the core stops', async () => {
+    const shell = await launch([], dir => fs.writeFileSync(path.join(dir, 'tools-settings.json'), JSON.stringify({ browser: { clearOnExit: true } })));
+    shell.platform['browser.clearData'] = async () => true;
+    const { exit } = await shell.shutdown();
+    assert.equal(exit.code, 0);
+    assert.ok(shell.platformRequests.some(p => p.method === 'browser.clearData'), 'clearData was sent and answered');
   });
 
   test('binary data travels as files: image.normalize through the shell', async () => {

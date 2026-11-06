@@ -31,6 +31,22 @@
 //    onPopup(cb)    cb(url)   (already checked; the core decides whether the panel follows it)
 //    onState(cb)    cb({type:'found', matches, active} | {type:'shortcut', name})
 //  artifact.open(html, kind, {title, dark})   artifact.close()
+//
+// A shell that runs the core out of process (core-host.cjs, newline-delimited JSON on stdin/stdout) answers each member above as
+// a request {id, type:'platform', method, args} with {id, type:'platform-result', ok, value|error}. Where the contract carries
+// something JSON cannot, core-host.cjs uses these conventions (the Rust shell implements them from here):
+//  - Buffers are files under <data>/temp/rpc; the core picks both paths and removes them afterwards. The shell writes PNG output
+//    to outPath:  image.decodeWebp [inPath, outPath] -> any value;  image.thumbnail [inPath, outPath, maxSide, fit] -> any value;
+//    image.normalize [inPath, outPath, maxSide|null, quality] -> null (cannot decode) | {width, height, original:{width, height}}
+//    (maxSide null = no limit).
+//  - browser.render [url, {}]: the AbortSignal stays in the core. When it aborts, the core stops waiting and sends the request
+//    {method:'browser.cancel', args:[idOfTheRenderRequest]}; the shell should stop that render (best effort, answer ignored).
+//  - browser.onNavigate / browser.onPopup / browser.onState (no args): the shell starts forwarding that callback and, for each
+//    event, sends {type:'platform-event', name:'browser.onNavigate'|'browser.onPopup'|'browser.onState', payload} to the core
+//    (payload is the callback's argument; it must be an object, other names and payloads are ignored).
+//  - app.version, assetBase, appDir, updateMode are command-line arguments of core-host.cjs and never requests.
+//  - After the shell closes the core's stdin every platform request fails at once; after an explicit {type:'shutdown'} the shell
+//    must keep answering until the core has exited.
 
 const FUNCTIONS = [
   'send', 'windowAction',
