@@ -10,10 +10,13 @@
 //                  {id, type:'platform-result', ok, value|error}   answer to a 'platform' request
 //                  {type:'platform-event', name, payload}          a callback event of the platform: name is
 //                                                                  'browser.onNavigate' | 'browser.onPopup' | 'browser.onState'
+//                  {id, type:'asset', path}                        a request of the shell's UI protocol (core.asset(urlPath))
 //  core -> shell   {type:'ready', channels}                        the core has started
 //                  {id, type:'result', ok, value|error}            answer to a 'call'; error is the message text
 //                  {type:'event', channel, payload}                platform.send (engine-event, agent-event, ...)
 //                  {id, type:'platform', method, args}             a platform service the shell must answer (platform.cjs)
+//                  {id, type:'asset-result', status, headers, filePath|body}   answer to 'asset': the shell serves the file at
+//                                                                  filePath, or body (UTF-8 text: index.html, 'Not found')
 //                  {type:'protocol-error', reason}                 'too-large' | 'invalid-json' | 'invalid-message'
 //
 // Platform values that are plain data come from the command line (assetBase, appDir, updateMode, app.version). Image buffers go
@@ -138,12 +141,24 @@ async function main() {
     catch (e) { emit({id: message.id, type: 'result', ok: false, error: String(e && e.message || e)}); }
   }
 
+  // The shell's lumen protocol (Tauri: http://lumen.localhost/) asks for one URL path; the core's allowlist and routes decide.
+  async function onAsset(message) {
+    try {
+      const r = await core.asset(message.path);
+      const out = {id: message.id, type: 'asset-result', status: r.status, headers: r.headers || {}};
+      if (r.body !== undefined) out.body = Buffer.isBuffer(r.body) ? r.body.toString('utf8') : String(r.body);
+      else if (r.filePath) out.filePath = r.filePath;
+      emit(out);
+    } catch (e) { console.error('[core-host] asset failed:', e && e.message); emit({id: message.id, type: 'asset-result', status: 500, headers: {}, body: 'Internal error'}); }
+  }
+
   function onLine(line) {
     let message; try { message = JSON.parse(line); } catch { return emit({type: 'protocol-error', reason: 'invalid-json'}); }
     if (!message || typeof message !== 'object') return emit({type: 'protocol-error', reason: 'invalid-message'});
     if (message.type === 'call') {
       if (typeof message.channel !== 'string') return message.id === undefined ? emit({type: 'protocol-error', reason: 'invalid-message'}) : emit({id: message.id, type: 'result', ok: false, error: 'Invalid call: channel must be a string.'}); if (stopping) return emit({id: message.id, type: 'result', ok: false, error: 'Lumen is shutting down.'}); return void onCall(message); }
     if (message.type === 'shutdown') return void shutdown(0);
+    if (message.type === 'asset') { if (message.id === undefined || typeof message.path !== 'string') return emit({type: 'protocol-error', reason: 'invalid-message'}); return void onAsset(message); }
     if (message.type === 'platform-result') {
       const p = state.pending.get(message.id); if (!p) return; state.pending.delete(message.id);
       return message.ok ? p.resolve(message.value) : p.reject(Error(String(message.error || 'Platform call failed.')));

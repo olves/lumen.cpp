@@ -1,6 +1,7 @@
 // Launches Lumen in test mode and returns a CDP handle.
 // launch({shell:'electron'|'tauri', dataDir, port, env}) -> {cdp, process, stop()}
 // Test mode passes the shell: --ui-check --test-data=<dir> --remote-debugging-port=<port>
+// LUMEN_SHELL=tauri needs work/tauri-build from scripts/build-tauri.ps1 -Features ui-check (app/ is mirrored on each launch).
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,13 +21,19 @@ export const SHELLS = {
     args: (dataDir, port) => ['--ui-check', `--test-data=${dataDir}`, `--user-data-dir=${dataDir}-profile`, `--remote-debugging-port=${port}`],
     env: () => ({}),
     target: /^lumen:\/\/app\//,
+    // Graceful quit: closing the browser ends the app (window-all-closed -> quit -> core shutdown).
+    close: cdp => cdp.send('Browser.close'),
   },
-  // Stub for Task 11; not runnable yet.
+  // Built by scripts/build-tauri.ps1 -Features ui-check. The debugging port exists only in that build and only with --ui-check;
+  // the shell gives each data folder its own WebView2 profile (<data>/webview/main).
   tauri: {
     exe: path.join(workRoot, 'tauri-build', 'lumen.exe'),
-    args: dataDir => ['--ui-check', `--test-data=${dataDir}`],
-    env: (_d, port) => ({ WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` }),
+    appDir: path.join(workRoot, 'tauri-build', 'app'),
+    args: (dataDir, port) => ['--ui-check', `--test-data=${dataDir}`, `--remote-debugging-port=${port}`],
+    env: () => ({}),
     target: /^http:\/\/lumen\.localhost\//,
+    // Graceful quit like the title bar's close button (shutdown to the core, then exit).
+    close: cdp => cdp.evaluate("window.lumen.window('close'); 0"),
   },
 };
 
@@ -70,7 +77,8 @@ export async function launch({ shell = 'electron', dataDir, port, env = {}, sync
     cdp, process: child, port, dataDir,
     async stop() {
       poll();
-      try { await cdp.send('Browser.close'); } catch {}
+      // An app that already exited has a dead CDP socket whose requests never settle: skip it, and never wait long.
+      if (!exited) { try { await Promise.race([def.close(cdp), sleep(3000)]); } catch {} }
       cdp.close();
       for (let i = 0; i < 100 && !exited; i++) await sleep(100); // graceful quit takes up to 8 s
       stopTracked();

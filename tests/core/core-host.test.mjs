@@ -45,7 +45,7 @@ class FakeShell {
     let m; try { m = JSON.parse(line); } catch { this.stdoutNoise.push(line); return; }
     this.lines.push(m);
     if (m.type === 'ready') { this.ready = m; this.onReady(m); }
-    else if (m.type === 'result') { this.waiting.get(m.id)?.(m); this.waiting.delete(m.id); }
+    else if (m.type === 'result' || m.type === 'asset-result') { this.waiting.get(m.id)?.(m); this.waiting.delete(m.id); }
     else if (m.type === 'event') this.events.push(m);
     else if (m.type === 'protocol-error') this.protocolErrors.push(m);
     else if (m.type === 'platform') this.answer(m);
@@ -60,6 +60,7 @@ class FakeShell {
   write(message) { this.child.stdin.write(JSON.stringify(message) + '\n'); }
   async start() { await Promise.race([this.readyPromise, this.exited.then(() => { throw Error('core-host exited before ready: ' + this.stderr); }), sleep(30000).then(() => { throw Error('core-host not ready in 30 s: ' + this.stderr); })]); return this.ready; }
   call(channel, args = []) { const id = 'c' + (++this.seq); return new Promise(resolve => { this.waiting.set(id, resolve); this.write({ id, type: 'call', channel, args }); }); }
+  asset(urlPath) { const id = 'a' + (++this.seq); return new Promise(resolve => { this.waiting.set(id, resolve); this.write({ id, type: 'asset', path: urlPath }); }); }
   async until(predicate, ms = 10000) { const end = Date.now() + ms; for (;;) { const hit = predicate(); if (hit) return hit; if (Date.now() > end) throw Error('timed out waiting'); await sleep(25); } }
   async shutdown() { const t0 = Date.now(); this.write({ type: 'shutdown' }); const exit = await Promise.race([this.exited, sleep(15000).then(() => null)]); return { exit, ms: Date.now() - t0 }; }
   kill() { try { this.child.kill(); } catch {} }
@@ -333,6 +334,29 @@ describe('core host', () => {
     for (let i = 0; i < 20 && fs.existsSync(rpcDir) && fs.readdirSync(rpcDir).length; i++) await sleep(50);
     assert.deepEqual(fs.existsSync(rpcDir) ? fs.readdirSync(rpcDir) : [], [], 'rpc temp files cleaned up');
     for (const p of shell.platformRequests) assert.ok(!JSON.stringify(p).includes('"type":"Buffer"'), 'no Buffer in JSON');
+    await shell.shutdown();
+  });
+
+  test('asset requests are answered by core.asset (the Tauri lumen protocol)', async () => {
+    const shell = await launch([], dir => fs.writeFileSync(path.join(dir, 'desktop-preferences.json'), JSON.stringify({ layout: 'studio', colorMode: 'light', designChosen: true })));
+    const index = await shell.asset('/');
+    assert.equal(index.status, 200);
+    assert.match(index.headers['content-type'], /^text\/html/);
+    assert.equal(typeof index.body, 'string');
+    assert.match(index.body, /<body data-layout="studio" data-mode="light"/, 'index.html carries the saved design');
+    assert.equal(index.filePath, undefined);
+    const css = await shell.asset('/style.css');
+    assert.equal(css.status, 200);
+    assert.equal(path.resolve(css.filePath), path.join(repoRoot, 'app', 'style.css'));
+    assert.equal(css.body, undefined);
+    for (const p of ['/core.cjs', '/../core.lock', '/photo/' + 'a'.repeat(64) + '.png', '/backend/lumen-host.exe']) {
+      const r = await shell.asset(p);
+      assert.equal(r.status, 404, p);
+      assert.equal(r.filePath, undefined, p);
+    }
+    const before = shell.protocolErrors.length;
+    shell.write({ type: 'asset', path: 7 });
+    await shell.until(() => shell.protocolErrors.length > before);
     await shell.shutdown();
   });
 });

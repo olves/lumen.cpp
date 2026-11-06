@@ -27,12 +27,13 @@ export const SHELLS = {
     target: /^lumen:\/\/app\//,
     folderExcludes: ['resources/app/backend/engines'],
   },
-  // Stub for Task 11; not runnable yet.
+  // Needs the test build (scripts/build-tauri.ps1 -Features ui-check): the shell opens WebView2's debugging port only there and
+  // only with --ui-check, and drops WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS otherwise. Task 11 measures with this definition.
   tauri: {
     exe: path.join(workRoot, 'tauri-build', 'lumen.exe'),
     launch: (dataDir, port) => ({
-      args: [`--test-data=${dataDir}`],
-      env: { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
+      args: ['--ui-check', `--test-data=${dataDir}`, `--remote-debugging-port=${port}`],
+      env: {},
     }),
     target: /^http:\/\/lumen\.localhost\//,
     folderExcludes: ['backend/engines', 'resources/app/backend/engines'],

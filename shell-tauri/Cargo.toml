@@ -1,0 +1,36 @@
+[package]
+name = "lumen"
+version = "1.0.5-beta"
+description = "lumen.cpp - Tauri shell (development build)"
+license = "Apache-2.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "lumen"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "=2.7.3", features = [] }
+
+[dependencies]
+# Pinned exactly: the shell will use Tauri's `unstable` multi-webview API later (spec 5.2, 6.1).
+tauri = { version = "=2.12.4", features = [] }
+tauri-plugin-single-instance = "=2.5.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+percent-encoding = "2"
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }
+
+[features]
+# Test builds only: lets --ui-check open WebView2's remote debugging port. Production builds have no code path for it.
+ui-check = []
+
+[profile.release]
+codegen-units = 4
+lto = false
+opt-level = "s"
+strip = true
+panic = "unwind"

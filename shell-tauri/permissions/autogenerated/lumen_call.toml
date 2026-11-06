@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-lumen-call"
+description = "Enables the lumen_call command without any pre-configured scope."
+commands.allow = ["lumen_call"]
+
+[[permission]]
+identifier = "deny-lumen-call"
+description = "Denies the lumen_call command without any pre-configured scope."
+commands.deny = ["lumen_call"]
