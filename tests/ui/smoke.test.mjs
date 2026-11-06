@@ -72,41 +72,65 @@ describe(`smoke (${shell})`, () => {
   // The conversation as shown: role, text and interrupted marker of every message.
   const transcript = cdp => cdp.evaluate(`[...document.querySelectorAll('.message')].map(n => ({ role: n.classList.contains('user') ? 'user' : 'assistant', text: n.querySelector('.message-body').textContent, interrupted: !!n.querySelector('.interrupted') }))`);
   let shown; // transcript captured before the restart
+  let cancelPrompt; // the prompt of the attempt that was cancelled
 
-  test('chat streams and cancels', { skip: NO_MODEL }, async () => {
+  // Sends `prompt`, clicks cancel inside the page the moment the first streamed text shows up (no polling gap),
+  // and returns whether the reply was marked interrupted. A reply that finishes before the click lands stays uninterrupted.
+  async function sendAndCancel(cdp, prompt, assistantsBefore) {
+    await cdp.type('#prompt', prompt);
+    await cdp.click('#send');
+    await cdp.waitFor(`document.querySelectorAll('.message.assistant').length>=${assistantsBefore + 1}`, 60000);
+    await cdp.evaluate(`new Promise((resolve, reject) => {
+      const end = Date.now() + 60000;
+      const tick = () => {
+        const last = ${LAST_ASSISTANT};
+        if ((last?.querySelector('.message-body').textContent || '').length >= 1) { document.getElementById('send').click(); resolve(true); }
+        else if (Date.now() > end) reject(new Error('no streamed text'));
+        else setTimeout(tick, 2);
+      };
+      tick();
+    })`);
+    await cdp.waitFor('state.busy === false', 30000);
+    return cdp.evaluate(`!!${LAST_ASSISTANT}?.querySelector('.interrupted')`);
+  }
+
+  test('chat streams and cancels', { skip: NO_MODEL }, async t => {
     const { cdp } = app;
     await cdp.type('#prompt', 'Merhaba');
     await cdp.click('#send');
     await cdp.waitFor(`(${LAST_ASSISTANT}?.querySelector('.message-body').textContent||'').length>=1`, 60000);
     await cdp.waitFor('state.busy === false', 120000);
-    await cdp.type('#prompt', CANCEL_PROMPT);
-    await cdp.click('#send');
-    await cdp.waitFor("document.querySelectorAll('.message.assistant').length>=2", 60000);
-    await new Promise(r => setTimeout(r, 1000));
-    await cdp.click('#send'); // while busy the send button cancels
-    await cdp.waitFor(`!!${LAST_ASSISTANT}?.querySelector('.interrupted')`, 30000);
-    await cdp.waitFor('state.busy === false', 30000);
+    // If the reply completes before the click lands, retry once with a fresh prompt; fail only if both complete uninterrupted.
+    const prompts = [CANCEL_PROMPT, 'List the numbers from 2000 down to 1, one per line, with no other text.'];
+    let interrupted = false;
+    for (let i = 0; i < prompts.length && !interrupted; i++) {
+      interrupted = await sendAndCancel(cdp, prompts[i], 1 + i);
+      cancelPrompt = prompts[i];
+      console.log(`# cancel attempt ${i + 1}: ${interrupted ? 'interrupted' : 'reply completed before cancel'}`);
+    }
+    assert.ok(interrupted, 'both attempts completed uninterrupted');
     shown = await transcript(cdp);
     await shot('chat');
   });
 
   test('persists', { skip: NO_MODEL }, async () => {
-    assert.equal(shown.length, 4, 'chat step left 4 messages');
+    assert.ok(shown.length === 4 || shown.length === 6, 'chat step left 4 messages (6 after a retry)');
     await app.stop();
     await start();
     await app.cdp.click('.history-item');
-    await app.cdp.waitFor("document.querySelectorAll('.message').length>=4", 10000);
+    await app.cdp.waitFor(`document.querySelectorAll('.message').length>=${shown.length}`, 10000);
     const after = await transcript(app.cdp);
     await shot('persists');
-    assert.equal(after.length, 4);
+    const n = shown.length;
+    assert.equal(after.length, n);
     assert.deepEqual([after[0].role, after[0].text], ['user', 'Merhaba']);
-    assert.deepEqual([after[2].role, after[2].text], ['user', CANCEL_PROMPT]);
+    assert.deepEqual([after[n - 2].role, after[n - 2].text], ['user', cancelPrompt]);
     assert.equal(after[1].role, 'assistant');
     assert.ok(after[1].text.length > 0, 'first reply is not empty');
     assert.equal(after[1].text, shown[1].text, 'first reply is unchanged after restart');
-    assert.equal(after[3].role, 'assistant');
-    assert.equal(shown[3].interrupted, true);
-    assert.equal(after[3].interrupted, true, 'cancelled reply still marked interrupted');
+    assert.equal(after[n - 1].role, 'assistant');
+    assert.equal(shown[n - 1].interrupted, true);
+    assert.equal(after[n - 1].interrupted, true, 'cancelled reply still marked interrupted');
   });
 
   test('language', async t => {
