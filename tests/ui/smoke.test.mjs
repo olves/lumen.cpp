@@ -67,28 +67,46 @@ describe(`smoke (${shell})`, () => {
     assert.deepEqual(cdp.errors, [], 'console errors: ' + cdp.errors.join(' | '));
   });
 
+  const CANCEL_PROMPT = 'Count from 1 to 1000, one number per line, with no other text.';
+  const LAST_ASSISTANT = "[...document.querySelectorAll('.message.assistant')].at(-1)";
+  // The conversation as shown: role, text and interrupted marker of every message.
+  const transcript = cdp => cdp.evaluate(`[...document.querySelectorAll('.message')].map(n => ({ role: n.classList.contains('user') ? 'user' : 'assistant', text: n.querySelector('.message-body').textContent, interrupted: !!n.querySelector('.interrupted') }))`);
+  let shown; // transcript captured before the restart
+
   test('chat streams and cancels', { skip: NO_MODEL }, async () => {
     const { cdp } = app;
-    const assistant = '.message.assistant';
     await cdp.type('#prompt', 'Merhaba');
     await cdp.click('#send');
-    await cdp.waitFor(`(document.querySelector('${assistant}:last-of-type .message-body')?.textContent||'').length>=1`, 60000);
+    await cdp.waitFor(`(${LAST_ASSISTANT}?.querySelector('.message-body').textContent||'').length>=1`, 60000);
     await cdp.waitFor('state.busy === false', 120000);
-    await cdp.type('#prompt', 'Count from 1 to 1000, one number per line, with no other text.');
+    await cdp.type('#prompt', CANCEL_PROMPT);
     await cdp.click('#send');
     await cdp.waitFor("document.querySelectorAll('.message.assistant').length>=2", 60000);
     await new Promise(r => setTimeout(r, 1000));
     await cdp.click('#send'); // while busy the send button cancels
-    await cdp.waitFor("!!document.querySelector('.message.assistant:last-of-type .interrupted')", 30000);
+    await cdp.waitFor(`!!${LAST_ASSISTANT}?.querySelector('.interrupted')`, 30000);
+    await cdp.waitFor('state.busy === false', 30000);
+    shown = await transcript(cdp);
     await shot('chat');
   });
 
   test('persists', { skip: NO_MODEL }, async () => {
+    assert.equal(shown.length, 4, 'chat step left 4 messages');
     await app.stop();
     await start();
     await app.cdp.click('.history-item');
     await app.cdp.waitFor("document.querySelectorAll('.message').length>=4", 10000);
+    const after = await transcript(app.cdp);
     await shot('persists');
+    assert.equal(after.length, 4);
+    assert.deepEqual([after[0].role, after[0].text], ['user', 'Merhaba']);
+    assert.deepEqual([after[2].role, after[2].text], ['user', CANCEL_PROMPT]);
+    assert.equal(after[1].role, 'assistant');
+    assert.ok(after[1].text.length > 0, 'first reply is not empty');
+    assert.equal(after[1].text, shown[1].text, 'first reply is unchanged after restart');
+    assert.equal(after[3].role, 'assistant');
+    assert.equal(shown[3].interrupted, true);
+    assert.equal(after[3].interrupted, true, 'cancelled reply still marked interrupted');
   });
 
   test('language', async t => {
