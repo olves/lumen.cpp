@@ -1,5 +1,6 @@
-// Test hook, loaded only with --ui-check. Depends only on { platform, env }, never on electron directly.
-//   platform.showOpenDialog(options) -> {canceled, filePaths}   the real open dialog
+// Test hook, loaded only with --ui-check. Installed by the core (core.cjs), so every shell gets it. Depends only on
+// { platform, env }, never on electron directly.
+//   platform.dialog.open(options) -> {canceled, filePaths}   the real open dialog (platform.cjs)
 // LUMEN_TEST_FILES: JSON array of paths. When set, open dialogs return those paths instead of asking.
 // The update/import overrides below are returned only here, so they cannot take effect outside test mode.
 'use strict';
@@ -19,7 +20,7 @@ function install({ platform, env = {} }) {
     },
     openDialog: options => files
       ? Promise.resolve({ canceled: false, filePaths: [...files] })
-      : platform.showOpenDialog(options),
+      : platform.dialog.open(options),
   };
 }
 

@@ -1,7 +1,7 @@
 'use strict';
 // Connections in <data>/connections.json: cloud model providers, MCP servers and the local API server. All of them are off
-// until the user turns them on. Secrets (provider keys, MCP access tokens, the local API token) are encrypted with Electron
-// safeStorage (DPAPI on Windows), stay in the main process and are never shown to the renderer except the local API token,
+// until the user turns them on. Secrets (provider keys, MCP access tokens, the local API token) are encrypted with platform.secrets
+// (Electron safeStorage, DPAPI on Windows), stay in the main process and are never shown to the renderer except the local API token,
 // which is the user's own key for their own computer.
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
 
@@ -30,12 +30,12 @@ function endpoint(raw, what) {
 }
 function short(text, n) { text = String(text || '').replace(/\s+/g, ' ').trim(); return text.length > n ? text.slice(0, n - 1) + '…' : text; }
 
-function createConnections(data, safeStorage) {
+function createConnections(data, secrets) {
   const file = path.join(data, 'connections.json');
   let cache = null;
-  const canEncrypt = () => { try { return safeStorage.isEncryptionAvailable(); } catch { return false; } };
-  const encrypt = text => { if (!canEncrypt()) throw Error('Secure storage is not available on this system, so the secret was not saved.'); return safeStorage.encryptString(text).toString('base64'); };
-  const decrypt = value => { if (!value || !canEncrypt()) return ''; try { return safeStorage.decryptString(Buffer.from(value, 'base64')); } catch { return ''; } };
+  const canEncrypt = () => { try { return secrets.available(); } catch { return false; } };
+  const encrypt = text => { if (!canEncrypt()) throw Error('Secure storage is not available on this system, so the secret was not saved.'); return secrets.encrypt(text); };
+  const decrypt = value => { if (!value || !canEncrypt()) return ''; try { return secrets.decrypt(value); } catch { return ''; } };
 
   function sanitize(v = {}) {
     const c = v.cloud || {}, m = v.mcp || {}, a = v.api || {};

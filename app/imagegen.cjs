@@ -34,7 +34,7 @@ const localName = f => 'img-' + f.sha.slice(0, 12) + '-' + path.basename(f.file)
 function pngSize(buf) { return buf.length > 24 && buf.readUInt32BE(0) === 0x89504e47 ? {width: buf.readUInt32BE(16), height: buf.readUInt32BE(20)} : null; }
 function freePort() { return new Promise((resolve, reject) => { const s = net.createServer(); s.unref(); s.on('error', reject); s.listen(0, '127.0.0.1', () => { const {port} = s.address(); s.close(() => resolve(port)); }); }); }
 
-function createImageGen({dataDir, nativeImage, downloader, cloud, connections, emit = () => {}, log = () => {}, releaseChatModel = async () => {}, fetchImpl = fetch}) {
+function createImageGen({dataDir, image, downloader, cloud, connections, emit = () => {}, log = () => {}, releaseChatModel = async () => {}, fetchImpl = fetch}) {
   const runtimeDir = path.join(dataDir, 'image-runtime'), modelsDir = path.join(dataDir, 'models'), outDir = path.join(dataDir, 'generated');
   const settingsFile = path.join(dataDir, 'image-settings.json'), linkFile = path.join(dataDir, 'conversation-generated.json');
   let settings = null, links = null, install = null, server = null, idleTimer = null, flight = null;
@@ -174,10 +174,10 @@ function createImageGen({dataDir, nativeImage, downloader, cloud, connections, e
     const sha = crypto.createHash('sha256').update(buffer).digest('hex'); fs.mkdirSync(outDir, {recursive: true});
     const file = path.join(outDir, sha + '.png'); if (!fs.existsSync(file)) fs.writeFileSync(file, buffer);
     const thumb = path.join(outDir, sha + '.thumb.png');
-    if (!fs.existsSync(thumb)) { try { const img = nativeImage.createFromBuffer(buffer); const w = Math.min(512, size.width); fs.writeFileSync(thumb, img.resize({width: w, quality: 'good'}).toPNG()); } catch {} }
+    if (!fs.existsSync(thumb)) { try { fs.writeFileSync(thumb, await image.thumbnail(buffer, 512, 'width')); } catch {} }
     return {sha, ...size};
   }
-  function toPng(buffer) { if (pngSize(buffer)) return buffer; const img = nativeImage.createFromBuffer(buffer); if (img.isEmpty()) throw imgError('invalid', 'The image could not be read.'); return img.toPNG(); }
+  async function toPng(buffer) { if (pngSize(buffer)) return buffer; const img = await image.normalize(buffer, Infinity, 'best'); if (!img) throw imgError('invalid', 'The image could not be read.'); return img.png; }
   async function localGenerate(p, options, onProgress, signal) {
     const s = readSettings(), kind = s.engine && installed(s.engine) ? s.engine : Object.keys(ENGINES).find(installed);
     if (!kind) throw imgError('setup', 'Install the image engine in Settings → Images first.');
@@ -233,7 +233,7 @@ function createImageGen({dataDir, nativeImage, downloader, cloud, connections, e
         label = m[2] + ' · ' + connections.providerLabel(m[1]); engine = 'cloud';
       } else throw imgError('invalid', 'Choose an image model.');
       if (!buffers.length) throw imgError('engine', 'No image was returned.');
-      const images = []; for (const b of buffers) images.push(await saveImage(toPng(b)));
+      const images = []; for (const b of buffers) images.push(await saveImage(await toPng(b)));
       return {images, model, label, engine, prompt: opts.prompt, negative: opts.negative, shape: opts.shape, fast: opts.fast, steps: engine === 'local' ? (opts.steps || PACKAGES.find(x => 'local:' + x.id === model).steps) : null, seed: opts.seed, seconds: Math.round((Date.now() - started) / 100) / 10};
     } catch (error) { if (!error.cancelled) log('[images] generation failed (' + model + '): ' + error.message + (server ? ' | engine: ' + server.tail().slice(-500).replace(/\s+/g, ' ') : '')); throw error; }
     finally { flight = null; if (server) armIdle(); }

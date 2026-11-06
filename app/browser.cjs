@@ -1,111 +1,50 @@
 'use strict';
-// Remote pages never run in Lumen's privileged UI. Both surfaces below use the separate "persist:lumen-web" session,
-// no preload, no Node, sandboxed renderers, and no access to Lumen IPC:
-//  - render(url): one reusable hidden window, only used when the lightweight reader finds almost no text;
-//    it is destroyed after a minute of inactivity;
-//  - the panel: one WebContentsView placed over the browser panel area of the main window.
-// Permissions, downloads, dialogs and popups are refused; requests to local/private addresses are cancelled.
-const {BrowserWindow,WebContentsView,session,shell}=require('electron');
-const dns=require('node:dns').promises,net=require('node:net');
-const {checkUrl,privateAddress,blockedHostname}=require('./web.cjs');
+// The in-app browser: the user's web panel next to the chat and the hidden JavaScript renderer used by the web reader.
+// Pages, sessions and windows belong to the shell (platform.browser; Electron: electron/browser-view.cjs), which keeps them
+// in a separate web session with no preload, no Node, sandboxed renderers, no access to Lumen IPC, and refuses permissions,
+// downloads, dialogs, popups and requests to local/private addresses. This file decides what the panel shows (state,
+// errors, find results, zoom), the address bar, and the chat commands (click, scroll, settle).
+const {checkUrl}=require('./web.cjs');
 
 const PARTITION='persist:lumen-web';
-const webPreferences={partition:PARTITION,sandbox:true,contextIsolation:true,nodeIntegration:false,nodeIntegrationInSubFrames:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false,disableDialogs:true,safeDialogs:true,autoplayPolicy:'document-user-activation-required',enableWebSQL:false,navigateOnDragDrop:false};
 
 const searchEngines={duckduckgo:['https://duckduckgo.com/?q=','https://duckduckgo.com/'],google:['https://www.google.com/search?q=','https://www.google.com/'],bing:['https://www.bing.com/search?q=','https://www.bing.com/'],brave:['https://search.brave.com/search?q=','https://search.brave.com/'],startpage:['https://www.startpage.com/do/search?q=','https://www.startpage.com/']};
 
-function createBrowser({getWindow,emit,getSettings=()=>({})}){
- const web=session.fromPartition(PARTITION);
- const hostChecks=new Map();
- async function hostAllowed(hostname){
-  const host=hostname.replace(/^\[|\]$/g,'');
-  if(blockedHostname(host))return false;
-  if(net.isIP(host))return !privateAddress(host);
-  const hit=hostChecks.get(host);if(hit&&hit.expires>Date.now())return hit.ok;
-  let ok=false;try{const answers=await dns.lookup(host,{all:true});ok=answers.length>0&&answers.every(a=>!privateAddress(a.address));}catch{ok=false;}
-  if(hostChecks.size>500)hostChecks.delete(hostChecks.keys().next().value);hostChecks.set(host,{ok,expires:Date.now()+60000});return ok;
- }
- web.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
- web.setPermissionCheckHandler(()=>false);
- web.setDevicePermissionHandler?.(()=>false);
- web.setDisplayMediaRequestHandler?.((_request,callback)=>callback({}));
- web.on('will-download',event=>event.preventDefault());
- web.setSpellCheckerEnabled?.(false);
- web.webRequest.onBeforeSendHeaders({urls:['<all_urls>']},(details,callback)=>{if(getSettings().privacySignals===false)return callback({requestHeaders:details.requestHeaders});callback({requestHeaders:{...details.requestHeaders,'Sec-GPC':'1',DNT:'1'}});});
- web.webRequest.onBeforeRequest({urls:['<all_urls>']},(details,callback)=>{
-  let url;try{url=new URL(details.url);}catch{return callback({cancel:true});}
-  if(['data:','blob:','about:'].includes(url.protocol))return callback({});
-  if(!['http:','https:','ws:','wss:'].includes(url.protocol)||url.username||url.password)return callback({cancel:true});
-  hostAllowed(url.hostname).then(ok=>callback({cancel:!ok}),()=>callback({cancel:true}));
- });
-
- function guard(wc,onPopup){
-  wc.setWindowOpenHandler(({url})=>{try{onPopup?.(checkUrl(url).href);}catch{}return {action:'deny'};});
-  const navigation=(event,url)=>{try{checkUrl(url);}catch{event.preventDefault();}};
-  wc.on('will-navigate',navigation);wc.on('will-redirect',navigation);wc.on('will-frame-navigate',e=>{if(!/^(https?|about|data|blob):/.test(e.url))e.preventDefault();});
-  wc.on('will-attach-webview',event=>event.preventDefault());
-  wc.on('login',event=>event.preventDefault());
-  wc.on('select-client-certificate',event=>event.preventDefault());
-  wc.setAudioMuted(true);
- }
-
- // ---------- Hidden renderer for JavaScript pages ----------
- let renderWin=null,renderIdle=null,renderChain=Promise.resolve();
- function renderWindow(){if(renderWin&&!renderWin.isDestroyed())return renderWin;renderWin=new BrowserWindow({show:false,width:1280,height:900,webPreferences:{...webPreferences,backgroundThrottling:false}});guard(renderWin.webContents);return renderWin;}
- function render(url,{signal}={}){const task=renderChain.then(()=>renderNow(url,signal));renderChain=task.catch(()=>{});return task;}
- async function renderNow(raw,signal){
-  const url=checkUrl(raw).href;if(signal?.aborted)throw Object.assign(Error('Cancelled'),{code:'aborted'});
-  clearTimeout(renderIdle);const win=renderWindow(),wc=win.webContents;
-  try{
-   await new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>{wc.stop();reject(Object.assign(Error('The page took too long to load.'),{code:'timeout'}));},20000);
-    const cleanup=()=>{clearTimeout(timer);wc.off('did-finish-load',finished);wc.off('did-fail-load',failed);signal?.removeEventListener('abort',aborted);};
-    const finished=()=>{cleanup();resolve();};
-    const failed=(_e,code,description,_url,isMainFrame)=>{if(!isMainFrame||code===-3)return;cleanup();reject(Object.assign(Error(code===-20?'This address is blocked.':'The page could not be loaded ('+description+').'),{code:'load'}));};
-    const aborted=()=>{cleanup();wc.stop();reject(Object.assign(Error('Cancelled'),{code:'aborted'}));};
-    wc.on('did-finish-load',finished);wc.on('did-fail-load',failed);signal?.addEventListener('abort',aborted,{once:true});
-    wc.loadURL(url).catch(()=>{});
-   });
-   // Give client-side rendering a moment, still cancellable.
-   await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,1200);signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(Object.assign(Error('Cancelled'),{code:'aborted'}));},{once:true});});
-   const page=await wc.executeJavaScriptInIsolatedWorld(1009,[{code:'({title:document.title,url:location.href,text:(document.body?document.body.innerText:"").slice(0,200000)})'}]);
-   checkUrl(page.url);
-   return {title:String(page.title||'').slice(0,300),url:page.url,text:String(page.text||'').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim()};
-  }finally{
-   renderIdle=setTimeout(()=>{if(renderWin&&!renderWin.isDestroyed())renderWin.destroy();renderWin=null;},60000);
-  }
- }
-
- // ---------- User-visible panel ----------
- let view=null,attached=false,bounds=null,lastError=null,findResult=null,viewJavascript=null;
- function state(){const wc=view?.webContents;return {zoom:wc&&!wc.isDestroyed()?Math.round(wc.getZoomFactor()*100):getSettings().zoom||100,find:findResult,open:!!view,url:wc&&!wc.isDestroyed()?wc.getURL():'',title:wc&&!wc.isDestroyed()?wc.getTitle():'',loading:!!wc&&!wc.isDestroyed()&&wc.isLoading(),canGoBack:!!wc&&!wc.isDestroyed()&&wc.navigationHistory.canGoBack(),canGoForward:!!wc&&!wc.isDestroyed()&&wc.navigationHistory.canGoForward(),error:lastError};}
- const update=()=>{place();emit(state());};
+function createBrowser({platform,emit,getSettings=()=>({})}){
+ const b=platform.browser;
+ b.configure(getSettings());
+ let open=false,bounds=null,lastError=null,findResult=null,viewJavascript=null,userZoom=false;
+ async function state(){const i=open?await b.info():null;return {zoom:i?Math.round(i.zoom*100):getSettings().zoom||100,find:findResult,open,url:i?i.url:'',title:i?i.title:'',loading:!!i&&i.loading,canGoBack:!!i&&i.canGoBack,canGoForward:!!i&&i.canGoForward,error:lastError};}
+ const update=async()=>{place();emit(await state());};
  function place(){
-  const win=getWindow();if(!win||win.isDestroyed()||!view)return;
+  if(!open)return;
   const show=!!bounds&&!lastError;
-  if(show&&!attached){win.contentView.addChildView(view);attached=true;}
-  if(attached){if(show)view.setBounds(bounds);view.setVisible(show);}
+  if(show)b.show(bounds);else b.hide();
  }
  function ensure(){
-  if(view)return view;
+  if(open)return;
   const settings=getSettings();viewJavascript=settings.javascript!==false;
-  view=new WebContentsView({webPreferences:{...webPreferences,javascript:viewJavascript}});const wc=view.webContents;
-  // Pop-ups never open new windows: they either replace the panel page or are blocked, as chosen in Settings.
-  guard(wc,url=>{if(getSettings().popups==='block')return;lastError=null;wc.loadURL(url).catch(()=>{});});
-  wc.on('did-finish-load',()=>{const zoom=(getSettings().zoom||100)/100;if(Math.abs(wc.getZoomFactor()-zoom)>0.001&&!wc.__userZoom)wc.setZoomFactor(zoom);});
-  wc.on('found-in-page',(_e,result)=>{findResult={matches:result.matches,active:result.activeMatchOrdinal};emit(state());});
-  // Keyboard shortcuts typed while the page has focus are handled by Lumen's panel, not by the page.
-  wc.on('before-input-event',(event,input)=>{if(input.type!=='keyDown')return;const mod=input.control||input.meta,key=String(input.key||'').toLowerCase();let shortcut=null;
-   if(mod&&key==='f')shortcut='find';else if(mod&&key==='l')shortcut='address';else if(mod&&(key==='='||key==='+'))shortcut='zoom-in';else if(mod&&key==='-')shortcut='zoom-out';else if(mod&&key==='0')shortcut='zoom-reset';else if(key==='escape'&&findResult)shortcut='find-close';else if(input.alt&&key==='arrowleft')shortcut='back';else if(input.alt&&key==='arrowright')shortcut='forward';else if(key==='f5'||(mod&&key==='r'))shortcut='reload';
-   if(!shortcut)return;event.preventDefault();if(shortcut.startsWith('zoom'))zoom(shortcut==='zoom-in'?1:shortcut==='zoom-out'?-1:0);else if(shortcut==='back'&&wc.navigationHistory.canGoBack())wc.navigationHistory.goBack();else if(shortcut==='forward'&&wc.navigationHistory.canGoForward())wc.navigationHistory.goForward();else if(shortcut==='reload')wc.reload();else emit({...state(),shortcut});});
-  wc.setAudioMuted(false);
-  wc.on('did-start-loading',()=>{lastError=null;update();});
-  for(const name of ['did-stop-loading','did-navigate','did-navigate-in-page','page-title-updated'])wc.on(name,update);
-  wc.on('did-fail-load',(_e,code,description,url,isMainFrame)=>{if(!isMainFrame||code===-3)return;lastError={code,blocked:code===-20,description,url};update();});
-  wc.on('render-process-gone',()=>{lastError={code:-1,description:'The page stopped responding.',url:wc.getURL()};update();});
-  return view;
+  b.create({javascript:viewJavascript});open=true;userZoom=false;
  }
- function close(silent=false){findResult=null;if(!view)return state();const win=getWindow();if(attached&&win&&!win.isDestroyed())win.contentView.removeChildView(view);attached=false;try{view.webContents.close();}catch{}view=null;lastError=null;if(!silent)emit(state());return state();}
+ // Pop-ups never open new windows: they either replace the panel page or are blocked, as chosen in Settings.
+ b.onPopup(url=>{if(!open||getSettings().popups==='block')return;lastError=null;b.navigate(url);});
+ b.onNavigate(async e=>{
+  if(!open)return;
+  // A user zoom is kept across page loads; otherwise each page gets the zoom from Settings.
+  if(e.type==='finish'){const zoom=(getSettings().zoom||100)/100;const i=await b.info();if(i&&Math.abs(i.zoom-zoom)>0.001&&!userZoom)b.setZoom(zoom);return;}
+  if(e.type==='start')lastError=null;
+  else if(e.type==='fail')lastError={code:e.code,blocked:e.code===-20,description:e.description,url:e.url};
+  else if(e.type==='gone')lastError={code:-1,description:'The page stopped responding.',url:e.url};
+  update();
+ });
+ // Keyboard shortcuts typed while the page has focus are handled by Lumen's panel, not by the page.
+ b.onState(async e=>{
+  if(!open)return;
+  if(e.type==='found'){findResult={matches:e.matches,active:e.active};emit(await state());return;}
+  if(e.type!=='shortcut')return;const shortcut=e.name;
+  if(shortcut.startsWith('zoom'))zoom(shortcut==='zoom-in'?1:shortcut==='zoom-out'?-1:0);else if(shortcut==='back')b.back();else if(shortcut==='forward')b.forward();else if(shortcut==='reload')b.reload();else emit({...await state(),shortcut});
+ });
+ async function close(silent=false){findResult=null;if(!open)return state();await b.close();open=false;userZoom=false;lastError=null;if(!silent)emit(await state());return state();}
  // Address bar: a URL opens directly; anything else (spaces, no dot) is searched with the chosen engine.
  function normalize(input){
   const text=String(input||'').trim();if(!text||text.length>2000)throw Object.assign(Error('Enter a web address.'),{code:'invalid-url'});
@@ -117,7 +56,6 @@ function createBrowser({getWindow,emit,getSettings=()=>({})}){
  // The page is searched in an isolated world (page scripts cannot see or change the search) for a visible link/button whose
  // text matches; it is clicked with a real mouse event at its center. Lumen never types into pages. Buttons that look like
  // paying, sending, deleting, posting or confirming report "confirm" first, so the user decides.
- const PAGE_WORLD=1101;
  const RISKY=String.raw`(^|\s)(satın al|hemen al|öde|ödeme yap|ödemeyi tamamla|siparişi (ver|tamamla|onayla)|sipariş ver|gönder|sil|kaldır|onayla|paylaş|yayınla|abone ol|aboneliği iptal|hesabı (sil|kapat)|transfer|buy|buy now|purchase|pay|pay now|checkout|place order|order now|send|delete|remove|confirm|submit|publish|post|share|subscribe|unsubscribe|transfer)($|\s)`;
  const finder=labels=>`(()=>{const n=s=>String(s||'').replace(/\\s+/g,' ').trim().toLocaleLowerCase('tr-TR').replace(/ı/g,'i').replace(/[.:…!?]+$/,'');const want=${JSON.stringify(labels)}.map(n).filter(Boolean);
   const list=[];for(const el of document.querySelectorAll('a[href],button,[role=button],[role=link],[role=tab],[role=menuitem],input[type=submit],input[type=button],summary')){const r=el.getBoundingClientRect();if(r.width<2||r.height<2)continue;const cs=getComputedStyle(el);if(cs.visibility==='hidden'||cs.display==='none'||el.disabled||el.getAttribute('aria-disabled')==='true')continue;const text=n(el.innerText||el.value||el.getAttribute('aria-label')||el.title);if(!text||text.length>120)continue;list.push({el,text});}
@@ -126,54 +64,53 @@ function createBrowser({getWindow,emit,getSettings=()=>({})}){
   const el=best.c.el,form=el.closest('form');const risky=new RegExp(${JSON.stringify(RISKY)}).test(best.c.text)||!!(form&&form.querySelector('[autocomplete^="cc-"]'));
   el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});const r=el.getBoundingClientRect();const token=Math.random().toString(36).slice(2);el.setAttribute('data-lumen-target',token);window.__lumenHit=null;el.addEventListener('click',()=>{window.__lumenHit=token;},{capture:true,once:true});
   return {status:'found',token,text:String(el.innerText||el.value||el.getAttribute('aria-label')||el.title||'').replace(/\\s+/g,' ').trim().slice(0,80),risky,x:r.left+r.width/2,y:r.top+r.height/2};})()`;
- function idle(wc,ms){if(!wc.isLoading())return Promise.resolve();return new Promise(resolve=>{const done=()=>{clearTimeout(timer);wc.removeListener('did-stop-loading',done);resolve();};const timer=setTimeout(done,ms);wc.on('did-stop-loading',done);});}
  async function click(labels,{force=false}={}){
-  const wc=view?.webContents;if(!wc||wc.isDestroyed())return {status:'closed'};
+  if(!open||!await b.info())return {status:'closed'};
   if(getSettings().javascript===false)return {status:'no-script'};
-  await idle(wc,15000);
-  let found;try{found=await wc.executeJavaScriptInIsolatedWorld(PAGE_WORLD,[{code:finder(labels)}]);}catch{return {status:'unavailable'};}
+  await b.waitIdle(15000);
+  let found;try{found=await b.evalIsolated(finder(labels));}catch{return {status:'unavailable'};}
   if(!found||found.status!=='found')return found||{status:'unavailable'};
-  if(found.risky&&!force)return {status:'confirm',text:found.text,url:wc.getURL()};
-  const zoomFactor=wc.getZoomFactor(),x=Math.round(found.x*zoomFactor),y=Math.round(found.y*zoomFactor);
-  wc.sendInputEvent({type:'mouseMove',x,y});wc.sendInputEvent({type:'mouseDown',x,y,button:'left',clickCount:1});wc.sendInputEvent({type:'mouseUp',x,y,button:'left',clickCount:1});
+  if(found.risky&&!force)return {status:'confirm',text:found.text,url:(await b.info())?.url||''};
+  const zoomFactor=(await b.info())?.zoom||1,x=Math.round(found.x*zoomFactor),y=Math.round(found.y*zoomFactor);
+  await b.input({type:'mouseMove',x,y});await b.input({type:'mouseDown',x,y,button:'left',clickCount:1});await b.input({type:'mouseUp',x,y,button:'left',clickCount:1});
   await new Promise(r=>setTimeout(r,250));
   // If the mouse click did not reach the element (an overlay, or the panel is not on screen), click the element itself.
-  let how='mouse';try{how=await wc.executeJavaScriptInIsolatedWorld(PAGE_WORLD,[{code:`(()=>{const el=document.querySelector('[data-lumen-target="${found.token}"]');const hit=window.__lumenHit===${JSON.stringify(found.token)};if(!hit&&el)el.click();el&&el.removeAttribute('data-lumen-target');return hit?'mouse':'element';})()`}]);}catch{}
+  let how='mouse';try{how=await b.evalIsolated(`(()=>{const el=document.querySelector('[data-lumen-target="${found.token}"]');const hit=window.__lumenHit===${JSON.stringify(found.token)};if(!hit&&el)el.click();el&&el.removeAttribute('data-lumen-target');return hit?'mouse':'element';})()`);}catch{}
   await new Promise(r=>setTimeout(r,500));
-  return {status:'clicked',how,text:found.text,url:wc.getURL()};
+  return {status:'clicked',how,text:found.text,url:(await b.info())?.url||''};
  }
  async function scroll(direction){
-  const wc=view?.webContents;if(!wc||wc.isDestroyed())return {status:'closed'};
+  if(!open||!await b.info())return {status:'closed'};
   const code={down:'window.scrollBy({top:innerHeight*0.8,behavior:"instant"})',up:'window.scrollBy({top:-innerHeight*0.8,behavior:"instant"})',top:'window.scrollTo({top:0,behavior:"instant"})',bottom:'window.scrollTo({top:document.scrollingElement.scrollHeight,behavior:"instant"})'}[direction];
   if(!code)return {status:'invalid'};
-  try{await wc.executeJavaScriptInIsolatedWorld(PAGE_WORLD,[{code:code+';0'}]);}catch{return {status:'unavailable'};}
+  try{await b.evalIsolated(code+';0');}catch{return {status:'unavailable'};}
   return {status:'scrolled'};
  }
  const zoomSteps=[50,67,75,80,90,100,110,125,150,175,200];
- function zoom(step){const wc=view?.webContents;if(!wc||wc.isDestroyed())return state();const current=Math.round(wc.getZoomFactor()*100);let next=getSettings().zoom||100;
+ async function zoom(step){const i=open?await b.info():null;if(!i)return state();const current=Math.round(i.zoom*100);let next=getSettings().zoom||100;
   if(step>0)next=zoomSteps.find(z=>z>current)||200;else if(step<0)next=[...zoomSteps].reverse().find(z=>z<current)||50;
-  wc.__userZoom=step!==0;wc.setZoomFactor(next/100);emit(state());return state();}
+  userZoom=step!==0;await b.setZoom(next/100);emit(await state());return state();}
  return {
-  render,
+  render:(url,options)=>b.render(url,options),
   home(){const settings=getSettings();return this.open(settings.homePage||(searchEngines[settings.searchEngine]||searchEngines.duckduckgo)[1]);},
-  find(text,{forward=true,next=false}={}){const wc=view?.webContents;if(!wc||wc.isDestroyed())return false;if(!text){wc.stopFindInPage('clearSelection');findResult=null;emit(state());return true;}// Electron: findNext=true starts a new search session; follow-up steps through matches pass false.
-  wc.findInPage(text,{forward,findNext:!next});return true;},
-  stopFind(){view?.webContents.stopFindInPage('keepSelection');findResult=null;emit(state());return true;},
+  async find(text,{forward=true,next=false}={}){if(!open||!await b.info())return false;if(!text){await b.stopFind('clearSelection');findResult=null;emit(await state());return true;}// Electron: findNext=true starts a new search session; follow-up steps through matches pass false.
+  await b.find(text,{forward,findNext:!next});return true;},
+  async stopFind(){if(open)await b.stopFind('keepSelection');findResult=null;emit(await state());return true;},
   zoom:step=>zoom(Number(step)||0),
   // Settings that need a new page process (JavaScript) recreate the panel at the same address; others apply live.
-  applySettings(){if(!view)return;const settings=getSettings(),wc=view.webContents;if((settings.javascript!==false)!==viewJavascript){const url=wc.getURL();close(true);if(/^https?:/.test(url))this.open(url);else emit(state());place();return;}if(!wc.__userZoom)wc.setZoomFactor((settings.zoom||100)/100);emit(state());},
-  open(url){const target=normalize(url);ensure();lastError=null;view.webContents.loadURL(target).catch(()=>{});update();return state();},
-  back(){if(view?.webContents.navigationHistory.canGoBack())view.webContents.navigationHistory.goBack();return state();},
-  forward(){if(view?.webContents.navigationHistory.canGoForward())view.webContents.navigationHistory.goForward();return state();},
-  reload(){if(view){lastError=null;view.webContents.reload();}return state();},
-  stop(){view?.webContents.stop();return state();},
+  async applySettings(){const settings=getSettings();b.configure(settings);if(!open)return;if((settings.javascript!==false)!==viewJavascript){const url=(await b.info())?.url||'';await close(true);if(/^https?:/.test(url))this.open(url);else emit(await state());place();return;}if(!userZoom)await b.setZoom((settings.zoom||100)/100);emit(await state());},
+  async open(url){const target=normalize(url);ensure();lastError=null;b.navigate(target);await update();return state();},
+  async back(){if(open)await b.back();return state();},
+  async forward(){if(open)await b.forward();return state();},
+  async reload(){if(open){lastError=null;await b.reload();}return state();},
+  async stop(){if(open)await b.stop();return state();},
   click,scroll,
   // Waits (bounded) until the panel page has finished loading, for chained commands such as "open X and click Y".
-  async settle(ms=15000){const wc=view?.webContents;if(wc&&!wc.isDestroyed())await idle(wc,ms);return state();},
+  async settle(ms=15000){if(open&&await b.info())await b.waitIdle(ms);return state();},
   close,
   bounds(rect){if(rect&&[rect.x,rect.y,rect.width,rect.height].every(Number.isFinite)&&rect.width>=80&&rect.height>=80)bounds={x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.width),height:Math.round(rect.height)};else bounds=null;place();return true;},
-  async external(url){const target=normalize(url);await shell.openExternal(target);return true;},
-  async clearData(){close();if(renderWin&&!renderWin.isDestroyed())renderWin.destroy();renderWin=null;hostChecks.clear();await web.clearStorageData();await web.clearCache();await web.clearHostResolverCache?.();return true;},
+  async external(url){const target=normalize(url);await platform.openExternal(target);return true;},
+  async clearData(){await close();await b.clearData();return true;},
   state
  };
 }
