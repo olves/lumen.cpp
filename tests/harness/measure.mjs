@@ -12,9 +12,38 @@ const workRoot = path.resolve(here, '..', '..', '..', 'work');
 const EXCLUDED_PROCS = ['lumen-host.exe', 'llama-server.exe'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Shell definitions. Add 'tauri' here later with its exe path.
+// Shell definitions. A new shell is added here only; measure() has no shell-specific code.
+//   exe:            default executable
+//   launch(d, p):   {args, env} for data dir d and debugging port p
+//   target:         regex matched against the app page URL in the CDP target list
+//   folderExcludes: paths (relative to the exe folder) not counted in folderMB (engines/models)
 export const SHELLS = {
-  electron: { exe: path.join(workRoot, 'electron-dev', 'lumen.cpp.exe') },
+  electron: {
+    exe: path.join(workRoot, 'electron-dev', 'lumen.cpp.exe'),
+    // A separate user-data-dir also gives a separate single-instance lock, so a running Lumen is unaffected.
+    launch: (dataDir, port) => ({
+      args: [`--test-data=${dataDir}`, `--user-data-dir=${dataDir}-profile`, `--remote-debugging-port=${port}`],
+      env: {},
+    }),
+    target: /^lumen:\/\/app\//,
+    folderExcludes: ['resources/app/backend/engines'],
+  },
+  // Stub for Task 11; not runnable yet.
+  tauri: {
+    exe: path.join(workRoot, 'tauri-build', 'lumen.exe'),
+    launch: (dataDir, port) => ({
+      args: [`--test-data=${dataDir}`],
+      env: { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
+    }),
+    target: /^http:\/\/lumen\.localhost\//,
+    folderExcludes: ['backend/engines', 'resources/app/backend/engines'],
+  },
+};
+
+export const DEFINITIONS = {
+  startupMs: 'spawn -> document.readyState complete on the app page (CDP)',
+  idleRssMB: 'sum of working sets of the shell process tree 30 s after spawn, excluding lumen-host and llama-server trees',
+  folderMB: 'shell folder size minus engines and models',
 };
 
 function freePort() {
@@ -25,13 +54,13 @@ function freePort() {
   });
 }
 
-function folderSizeMB(dir) {
-  const skip = path.join(dir, 'resources', 'app', 'backend', 'engines').toLowerCase();
+function folderSizeMB(dir, excludes = []) {
+  const skip = new Set(excludes.map(x => path.join(dir, x).toLowerCase()));
   let total = 0;
   const walk = d => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       const p = path.join(d, e.name);
-      if (p.toLowerCase() === skip) continue;
+      if (skip.has(p.toLowerCase())) continue;
       if (e.isDirectory()) walk(p);
       else if (e.isFile() && !/\.(gguf|partial)$/i.test(e.name)) total += fs.statSync(p).size;
     }
@@ -63,8 +92,7 @@ function descendants(rows, rootPid) {
 }
 
 // Sum of working sets of the shell process tree, excluding the engine processes (and anything below them).
-function shellRssMB(rootPid) {
-  const rows = processTable();
+function shellRssMB(rows, rootPid) {
   const byPid = new Map(rows.map(r => [r.ProcessId, r]));
   const excluded = new Set();
   for (const r of descendants(rows, rootPid)) {
@@ -77,15 +105,20 @@ function shellRssMB(rootPid) {
   return tree.reduce((s, r) => s + Number(r.WorkingSetSize || 0), 0) / 1048576;
 }
 
-// Kill the tree and any leftover process whose executable lives under dir (never touches other Lumen installs).
-function killAll(rootPid, dir) {
-  try { execFileSync('taskkill', ['/PID', String(rootPid), '/T', '/F'], { stdio: 'ignore' }); } catch {}
-  const prefix = dir.toLowerCase() + path.sep;
-  for (let i = 0; i < 5; i++) {
-    let left;
-    try { left = processTable().filter(r => r.ExecutablePath && r.ExecutablePath.toLowerCase().startsWith(prefix)); } catch { break; }
-    if (!left.length) return;
-    for (const r of left) { try { execFileSync('taskkill', ['/PID', String(r.ProcessId), '/F'], { stdio: 'ignore' }); } catch {} }
+// Remember the spawned tree (pid -> executable path) so cleanup kills only processes we started.
+function track(rows, rootPid, tracked) {
+  const root = rows.find(r => r.ProcessId === rootPid);
+  for (const r of [...(root ? [root] : []), ...descendants(rows, rootPid)]) tracked.set(r.ProcessId, r.ExecutablePath || r.Name);
+}
+
+// Kill only tracked PIDs that still exist with the same executable (guards against PID reuse). No path sweep.
+function killTracked(tracked) {
+  let rows;
+  try { rows = processTable(); } catch { return; }
+  for (const r of rows) {
+    if (tracked.get(r.ProcessId) === (r.ExecutablePath || r.Name)) {
+      try { execFileSync('taskkill', ['/PID', String(r.ProcessId), '/F'], { stdio: 'ignore' }); } catch {}
+    }
   }
 }
 
@@ -102,11 +135,11 @@ function cdpEvaluate(wsUrl, expression) {
   });
 }
 
-async function waitReady(port, t0, timeoutMs) {
+async function waitReady(port, target, t0, timeoutMs) {
   while (performance.now() - t0 < timeoutMs) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-      const page = list.find(t => t.type === 'page' && /^lumen:\/\/app\//.test(t.url) && t.webSocketDebuggerUrl);
+      const page = list.find(t => t.type === 'page' && target.test(t.url) && t.webSocketDebuggerUrl);
       if (page && await cdpEvaluate(page.webSocketDebuggerUrl, "document.readyState==='complete'") === true) return performance.now() - t0;
     } catch {}
     await sleep(25);
@@ -114,30 +147,37 @@ async function waitReady(port, t0, timeoutMs) {
   throw new Error('Main window did not reach readyState complete in time');
 }
 
-export async function measure({ exe, args = [], dataDir, idleMs = 30000, timeoutMs = 60000 }) {
-  exe = path.resolve(exe);
+// shell: key of SHELLS or a shell definition object. exe defaults to the shell's exe.
+export async function measure({ shell = 'electron', exe, args = [], dataDir, idleMs = 30000, timeoutMs = 60000 }) {
+  const def = typeof shell === 'string' ? SHELLS[shell] : shell;
+  if (!def) throw new Error(`Unknown shell '${shell}'`);
+  exe = path.resolve(exe || def.exe);
   const exeDir = path.dirname(exe);
   fs.mkdirSync(dataDir, { recursive: true });
   const port = await freePort();
-  // A separate user-data-dir also gives a separate single-instance lock, so a running Lumen is unaffected.
-  const full = [...args, `--test-data=${dataDir}`, `--user-data-dir=${dataDir}-profile`, `--remote-debugging-port=${port}`];
+  const launch = def.launch(dataDir, port);
   const t0 = performance.now();
-  const child = spawn(exe, full, { stdio: 'ignore' });
+  const child = spawn(exe, [...args, ...launch.args], { stdio: 'ignore', env: { ...process.env, ...launch.env } });
   let exited = false;
   child.on('exit', () => { exited = true; });
+  const tracked = new Map([[child.pid, exe]]);
   try {
-    const startupMs = await waitReady(port, t0, timeoutMs);
+    const startupMs = await waitReady(port, def.target, t0, timeoutMs);
+    track(processTable(), child.pid, tracked);
     const wait = idleMs - (performance.now() - t0);
     if (wait > 0) await sleep(wait);
     if (exited) throw new Error('Shell exited before idle sample');
-    const idleRssMB = shellRssMB(child.pid);
+    const rows = processTable();
+    track(rows, child.pid, tracked);
+    const idleRssMB = shellRssMB(rows, child.pid);
     return {
       startupMs: Math.round(startupMs),
       idleRssMB: Math.round(idleRssMB * 10) / 10,
-      folderMB: Math.round(folderSizeMB(exeDir) * 10) / 10,
+      folderMB: Math.round(folderSizeMB(exeDir, def.folderExcludes) * 10) / 10,
     };
   } finally {
-    killAll(child.pid, exeDir);
+    if (!exited) { try { track(processTable(), child.pid, tracked); } catch {} }
+    killTracked(tracked);
   }
 }
 
@@ -156,12 +196,12 @@ async function cli() {
   const results = [];
   for (let i = 1; i <= runs; i++) {
     const dataDir = path.join(workRoot, 'measure', `data-${stamp}-${i}`);
-    const r = await measure({ exe, args: [], dataDir, idleMs });
+    const r = await measure({ shell, exe, dataDir, idleMs });
     console.log(`run ${i}: ${JSON.stringify(r)}`);
     results.push(r);
   }
   const out = {
-    shell: opt.shell, exe, runs: results.length, idleMs, measuredAt: new Date().toISOString(),
+    shell: opt.shell, exe, runs: results.length, idleMs, measuredAt: new Date().toISOString(), definitions: DEFINITIONS,
     startupMs: median(results.map(r => r.startupMs)),
     idleRssMB: median(results.map(r => r.idleRssMB)),
     folderMB: median(results.map(r => r.folderMB)),
