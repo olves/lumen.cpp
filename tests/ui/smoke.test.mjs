@@ -73,28 +73,34 @@ describe(`smoke (${shell})`, () => {
   const transcript = cdp => cdp.evaluate(`[...document.querySelectorAll('.message')].map(n => ({ role: n.classList.contains('user') ? 'user' : 'assistant', text: n.querySelector('.message-body').textContent, interrupted: !!n.querySelector('.interrupted') }))`);
   let shown; // transcript captured before the restart
   let cancelPrompt; // the prompt of the attempt that was cancelled
+  let attempts = 0; // cancel attempts used (1, or 2 after a retry)
+  // Test seam (test file only): LUMEN_TEST_FORCE_RETRY=1 lets attempt 1 finish without a cancel click, so the retry path runs.
+  const FORCE_RETRY = process.env.LUMEN_TEST_FORCE_RETRY === '1';
 
-  // Sends `prompt`, clicks cancel inside the page the moment the first streamed text shows up (no polling gap),
-  // and returns whether the reply was marked interrupted. A reply that finishes before the click lands stays uninterrupted.
-  async function sendAndCancel(cdp, prompt, assistantsBefore) {
+  // Sends `prompt` and, the moment the first streamed text shows up, clicks cancel inside the page (no polling gap) -
+  // but only while the app is still busy, so a finished reply never makes #send submit the composer. Returns whether the
+  // reply ended up marked interrupted. A reply that finishes before the click lands stays uninterrupted.
+  async function sendAndCancel(cdp, prompt, assistantsBefore, { click = true } = {}) {
     await cdp.type('#prompt', prompt);
     await cdp.click('#send');
     await cdp.waitFor(`document.querySelectorAll('.message.assistant').length>=${assistantsBefore + 1}`, 60000);
     await cdp.evaluate(`new Promise((resolve, reject) => {
-      const end = Date.now() + 60000;
+      const end = Date.now() + 60000, click = ${click};
       const tick = () => {
         const last = ${LAST_ASSISTANT};
-        if ((last?.querySelector('.message-body').textContent || '').length >= 1) { document.getElementById('send').click(); resolve(true); }
-        else if (Date.now() > end) reject(new Error('no streamed text'));
+        if ((last?.querySelector('.message-body').textContent || '').length >= 1) {
+          if (click && state.busy) document.getElementById('send').click();
+          resolve(true);
+        } else if (Date.now() > end) reject(new Error('no streamed text'));
         else setTimeout(tick, 2);
       };
       tick();
     })`);
-    await cdp.waitFor('state.busy === false', 30000);
-    return cdp.evaluate(`!!${LAST_ASSISTANT}?.querySelector('.interrupted')`);
+    await cdp.waitFor('state.busy === false', 120000);
+    try { await cdp.waitFor(`!!${LAST_ASSISTANT}?.querySelector('.interrupted')`, 5000); return true; } catch { return false; }
   }
 
-  test('chat streams and cancels', { skip: NO_MODEL }, async t => {
+  test('chat streams and cancels', { skip: NO_MODEL }, async () => {
     const { cdp } = app;
     await cdp.type('#prompt', 'Merhaba');
     await cdp.click('#send');
@@ -104,24 +110,26 @@ describe(`smoke (${shell})`, () => {
     const prompts = [CANCEL_PROMPT, 'List the numbers from 2000 down to 1, one per line, with no other text.'];
     let interrupted = false;
     for (let i = 0; i < prompts.length && !interrupted; i++) {
-      interrupted = await sendAndCancel(cdp, prompts[i], 1 + i);
+      attempts = i + 1;
       cancelPrompt = prompts[i];
-      console.log(`# cancel attempt ${i + 1}: ${interrupted ? 'interrupted' : 'reply completed before cancel'}`);
+      interrupted = await sendAndCancel(cdp, prompts[i], 1 + i, { click: !(FORCE_RETRY && i === 0) });
+      console.log(`# cancel attempt ${attempts}: ${interrupted ? 'interrupted' : 'reply completed before cancel'}`);
     }
     assert.ok(interrupted, 'both attempts completed uninterrupted');
+    if (FORCE_RETRY) assert.equal(attempts, 2, 'forced retry used the second attempt');
     shown = await transcript(cdp);
     await shot('chat');
   });
 
   test('persists', { skip: NO_MODEL }, async () => {
-    assert.ok(shown.length === 4 || shown.length === 6, 'chat step left 4 messages (6 after a retry)');
+    const n = 2 + 2 * attempts; // Merhaba pair + one pair per cancel attempt
+    assert.equal(shown.length, n, `chat step left ${n} messages`);
     await app.stop();
     await start();
     await app.cdp.click('.history-item');
-    await app.cdp.waitFor(`document.querySelectorAll('.message').length>=${shown.length}`, 10000);
+    await app.cdp.waitFor(`document.querySelectorAll('.message').length>=${n}`, 10000);
     const after = await transcript(app.cdp);
     await shot('persists');
-    const n = shown.length;
     assert.equal(after.length, n);
     assert.deepEqual([after[0].role, after[0].text], ['user', 'Merhaba']);
     assert.deepEqual([after[n - 2].role, after[n - 2].text], ['user', cancelPrompt]);
