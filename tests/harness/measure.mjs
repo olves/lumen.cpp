@@ -105,30 +105,36 @@ function shellRssMB(rows, rootPid) {
   return tree.reduce((s, r) => s + Number(r.WorkingSetSize || 0), 0) / 1048576;
 }
 
-// Remember the spawned tree (pid -> executable path) so cleanup kills only processes we started.
-// Descendants of every still-running tracked process are added (covers orphans whose parent exited);
-// tracked PIDs no longer in the process table are dropped, so a later PID reuse cannot match.
-function track(rows, rootPid, tracked, rootAlive = true) {
-  const present = new Set(rows.map(r => r.ProcessId));
-  for (const pid of [...tracked.keys()]) if (!present.has(pid)) tracked.delete(pid);
+const identity = r => String(r.ExecutablePath || r.Name).toLowerCase();
+
+// Remember the spawned tree (pid -> identity) so cleanup kills only processes we started.
+// Entries whose PID is gone or now belongs to a different executable are dropped BEFORE their children are
+// expanded, so a reused PID is never trusted. Descendants of every still-valid tracked process are added
+// (covers orphans whose parent exited). The root is only (re)recorded while it is alive.
+function track(rows, rootPid, tracked, rootAlive) {
+  const byPid = new Map(rows.map(r => [r.ProcessId, r]));
+  for (const [pid, id] of [...tracked]) {
+    const row = byPid.get(pid);
+    if (!row || identity(row) !== id || (pid === rootPid && !rootAlive)) tracked.delete(pid);
+  }
   const roots = new Set(tracked.keys());
-  if (rootAlive) roots.add(rootPid);
-  for (const root of roots) {
-    const self = rows.find(r => r.ProcessId === root);
-    for (const r of [...(self && rootAlive || root !== rootPid ? [self] : []), ...descendants(rows, root)]) {
-      if (r && (r.ProcessId !== rootPid || rootAlive)) tracked.set(r.ProcessId, r.ExecutablePath || r.Name);
-    }
+  if (rootAlive && byPid.has(rootPid)) roots.add(rootPid);
+  for (const pid of roots) {
+    tracked.set(pid, identity(byPid.get(pid)));
+    for (const d of descendants(rows, pid)) tracked.set(d.ProcessId, identity(d));
   }
 }
 
-// Kill only tracked PIDs that still exist with the same executable (guards against PID reuse). No path sweep.
+// Kill only tracked PIDs that still exist with the same executable. Identity is re-checked inside the same
+// PowerShell call, immediately before each kill, and the process table is re-read between passes. No path sweep.
 function killTracked(tracked) {
+  const script = '$m=ConvertFrom-Json $env:LUMEN_KILL; foreach($e in $m){$p=Get-CimInstance Win32_Process -Filter ("ProcessId="+$e.pid); if($p){$id=$p.ExecutablePath; if(-not $id){$id=$p.Name}; if($id.ToLower() -eq $e.id){Stop-Process -Id $e.pid -Force -ErrorAction SilentlyContinue}}}';
   for (let pass = 0; pass < 3; pass++) {
     let rows;
     try { rows = processTable(); } catch { return; }
-    const victims = rows.filter(r => tracked.get(r.ProcessId) === (r.ExecutablePath || r.Name));
+    const victims = rows.filter(r => tracked.get(r.ProcessId) === identity(r)).map(r => ({ pid: r.ProcessId, id: identity(r) }));
     if (!victims.length) return;
-    for (const r of victims) { try { execFileSync('taskkill', ['/PID', String(r.ProcessId), '/F'], { stdio: 'ignore' }); } catch {} }
+    try { execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: 'ignore', env: { ...process.env, LUMEN_KILL: JSON.stringify(victims) } }); } catch {}
   }
 }
 
@@ -145,13 +151,15 @@ function cdpEvaluate(wsUrl, expression) {
   });
 }
 
-async function waitReady(port, target, t0, timeoutMs) {
+async function waitReady(port, target, t0, timeoutMs, onTick) {
+  let nextTick = 1000; // first process-tree poll only after 1 s so sub-second startups are not perturbed
   while (performance.now() - t0 < timeoutMs) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
       const page = list.find(t => t.type === 'page' && target.test(t.url) && t.webSocketDebuggerUrl);
       if (page && await cdpEvaluate(page.webSocketDebuggerUrl, "document.readyState==='complete'") === true) return performance.now() - t0;
     } catch {}
+    if (performance.now() - t0 >= nextTick) { onTick(); nextTick = performance.now() - t0 + 1000; }
     await sleep(25);
   }
   throw new Error('Main window did not reach readyState complete in time');
@@ -168,14 +176,16 @@ export async function measure({ shell = 'electron', exe, args = [], dataDir, idl
   const launch = def.launch(dataDir, port);
   const t0 = performance.now();
   const child = spawn(exe, [...args, ...launch.args], { stdio: 'ignore', env: { ...process.env, ...launch.env } });
+  const tracked = new Map();
   let exited = false;
   child.on('exit', () => { exited = true; tracked.delete(child.pid); });
-  const tracked = new Map([[child.pid, exe]]);
+  const poll = () => { try { track(processTable(), child.pid, tracked, !exited); } catch {} };
   try {
-    const startupMs = await waitReady(port, def.target, t0, timeoutMs);
-    // Poll the process tree about once a second after startup was measured (not during, to avoid perturbing it).
+    const startupMs = await waitReady(port, def.target, t0, timeoutMs, poll);
+    poll();
+    // Keep polling the process tree about once a second until the idle sample.
     while (!exited && performance.now() - t0 < idleMs) {
-      track(processTable(), child.pid, tracked, !exited);
+      poll();
       await sleep(Math.min(1000, Math.max(0, idleMs - (performance.now() - t0))));
     }
     if (exited) throw new Error('Shell exited before idle sample');
@@ -188,7 +198,7 @@ export async function measure({ shell = 'electron', exe, args = [], dataDir, idl
       folderMB: Math.round(folderSizeMB(exeDir, def.folderExcludes) * 10) / 10,
     };
   } finally {
-    try { track(processTable(), child.pid, tracked, !exited); } catch {}
+    poll();
     if (exited) tracked.delete(child.pid);
     killTracked(tracked);
   }
