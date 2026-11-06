@@ -5,22 +5,34 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { launch, workRoot } from '../harness/launch.mjs';
+import { launch, workRoot, repoRoot } from '../harness/launch.mjs';
 
 const shell = process.env.LUMEN_SHELL || 'electron';
 const runDir = path.join(workRoot, 'ui-tests', new Date().toISOString().replace(/[:.]/g, '-'));
 const dataDir = path.join(runDir, 'data');
 const userData = path.join(process.env.LOCALAPPDATA || '', 'lumen.cpp');
 
-// Gemma 4 E2B if installed, else the smallest installed chat GGUF. Never downloads anything.
+// Gemma 4 E2B if installed, else the smallest chat GGUF. Searches the user's models folder first (read-only), then
+// LUMEN_TEST_MODELS (default <work>/test-models). Never downloads anything.
+function chatGgufs(dir) {
+  try { return fs.readdirSync(dir).filter(f => /[.]gguf$/i.test(f) && !/mmproj|mtp|^img-/i.test(f)).map(f => path.join(dir, f)); } catch { return []; }
+}
 function pickModel() {
-  const dir = path.join(userData, 'models');
-  let files = [];
-  try { files = fs.readdirSync(dir).filter(f => /\.gguf$/i.test(f) && !/mmproj|mtp|^img-/i.test(f)); } catch {}
-  if (!files.length) return null;
-  const size = f => fs.statSync(path.join(dir, f)).size;
-  const gemma = files.find(f => /gemma[-_ ]?4.*e2b/i.test(f));
-  return path.join(dir, gemma || files.sort((a, b) => size(a) - size(b))[0]);
+  const dirs = [path.join(userData, 'models'), process.env.LUMEN_TEST_MODELS || path.join(workRoot, 'test-models')];
+  for (const dir of dirs) {
+    const files = chatGgufs(dir);
+    if (!files.length) continue;
+    return files.find(f => /gemma[-_ ]?4.*e2b/i.test(f)) || files.sort((x, y) => fs.statSync(x).size - fs.statSync(y).size)[0];
+  }
+  return null;
+}
+
+// The app resolves an installed model as models/<LocalFile || File> from its catalog, so link under that name.
+function installedName(model) {
+  const base = path.basename(model);
+  const bundled = JSON.parse(fs.readFileSync(path.join(repoRoot, 'app', 'backend', 'models.catalog.json'), 'utf8').replace(/^﻿/, ''));
+  const entry = bundled.find(m => String(m.File).toLowerCase() === base.toLowerCase() || m.LocalFile === base);
+  return entry ? (entry.LocalFile || entry.File) : base;
 }
 
 function prepareData(model) {
@@ -32,10 +44,10 @@ function prepareData(model) {
   const engine = path.join(dataDir, 'engine-preferences.json');
   if (!fs.existsSync(engine)) fs.writeFileSync(engine, JSON.stringify({ SetupDone: true, Backend: 'cpu' }));
   if (!model) return;
-  const dest = path.join(dataDir, 'models', path.basename(model));
+  const dest = path.join(dataDir, 'models', installedName(model));
   if (!fs.existsSync(dest)) fs.linkSync(model, dest); // hard link: no extra disk space, the original is never modified
   const catalog = path.join(userData, 'catalog.json');
-  if (fs.existsSync(catalog) && !fs.existsSync(path.join(dataDir, 'catalog.json'))) fs.copyFileSync(catalog, path.join(dataDir, 'catalog.json'));
+  if (model.startsWith(userData) && fs.existsSync(catalog) && !fs.existsSync(path.join(dataDir, 'catalog.json'))) fs.copyFileSync(catalog, path.join(dataDir, 'catalog.json'));
 }
 
 const model = pickModel();

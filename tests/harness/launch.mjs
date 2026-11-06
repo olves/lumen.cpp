@@ -9,7 +9,7 @@ import { connect } from './cdp.mjs';
 import { sleep, freePort, processTable, track, killTracked } from './procs.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..', '..');
+export const repoRoot = path.resolve(here, '..', '..');
 export const workRoot = path.resolve(repoRoot, '..', 'work');
 
 export const SHELLS = {
