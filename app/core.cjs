@@ -3,7 +3,8 @@
 // are unchanged except that window, dialog, clipboard, image, secret, browser and preview services come from the shell's
 // platform object (platform.cjs). Each shell (shell-electron.cjs today, a Node sidecar under Tauri later) checks who is calling,
 // then passes the channel and the renderer's arguments to call().
-//   createCore({platform, dataDir, test}) -> {channels, call(channel, args[]), start(), stop(), asset(urlPath)}
+//   createCore({platform, dataDir, test, backendDir}) -> {channels, call(channel, args[]), start(), stop(), asset(urlPath)}
+//   backendDir: folder with lumen-host.exe and lumen-image-ocr.exe (default: backend/ next to this file).
 //   start(): takes <data>/core.lock (one core per data folder), starts lumen-host and the services.
 //   stop(): the shutdown sequence (cancel, unload, at most 8 s), then releases the lock.
 const {spawn}=require('node:child_process');const fs=require('node:fs');const path=require('node:path');const readline=require('node:readline');
@@ -14,10 +15,10 @@ const CHANNELS=["photos","vision","drafts","models-info","variants","run","impor
 
 function alive(pid){try{process.kill(pid,0);return true;}catch(e){return e.code==='EPERM';}}
 
-function createCore({platform,dataDir,test=false}){
+function createCore({platform,dataDir,test=false,backendDir=path.join(__dirname,'backend')}){
  assertPlatform(platform);
  const data=dataDir;const prefPath=path.join(data,'desktop-preferences.json');let host=null;let seq=0;const pending=new Map();
-const photoStore=require('./photos.cjs').createStore(data,platform.image,path.join(__dirname,'backend','lumen-image-ocr.exe'),platform.assetBase);const skillStore=require('./skills.cjs').createStore(data);let skillFlight=null;
+const photoStore=require('./photos.cjs').createStore(data,platform.image,path.join(backendDir,'lumen-image-ocr.exe'),platform.assetBase);const skillStore=require('./skills.cjs').createStore(data);let skillFlight=null;
 const {createAgent,createActivityStore,createReasoningStore}=require('./agent.cjs'),{createWeb}=require('./web.cjs'),{createToolSettings}=require('./toolsettings.cjs'),{createDownloader}=require('./downloader.cjs'),{createBrowser}=require('./browser.cjs');
 const activityStore=createActivityStore(data),reasoningStore=createReasoningStore(data);
 const {createRunSettings,cleanDefaults}=require('./runsettings.cjs'),runSettings=createRunSettings(data);
@@ -32,7 +33,7 @@ function withCloud(models){return Array.isArray(models)?[...models.filter(m=>!m.
 // chat and nowhere else. The user message is saved first; a stopped reply keeps what arrived, marked as interrupted.
 async function cloudSend(args){
  const chat=args.chat,target=connections?.parseCloud(chat?.Model);
- if(!target)throw Error('Unknown cloud model.');if(!connections.public().cloud.enabled)throw Error('Cloud models are turned off. Turn them on in Settings → Cloud models.');
+ if(!target)throw Error('Unknown cloud model.');if(!connections.summary().cloud.enabled)throw Error('Cloud models are turned off. Turn them on in Settings → Cloud models.');
  if(skillFlight||agent?.active())throw Error('A response is already running.');
  const emit=e=>platform.send('engine-event',e);
  skillFlight={id:chat.Id,snapshot:chat};const controller=new AbortController();cloudFlight=controller;let streamed='',reasoning='',firstThought=0,firstText=0;
@@ -193,14 +194,22 @@ async function request(action,args={}){
  // ---------- Data-folder lock (spec §7): one core per data folder, whichever shell runs it ----------
  const lockPath=path.join(data,'core.lock');let locked=false;
  function takeLock(){
-  for(let attempt=0;attempt<2;attempt++){
-   try{fs.writeFileSync(lockPath,String(process.pid),{flag:'wx'});locked=true;return;}
+  for(let attempt=0;attempt<3;attempt++){
+   let created=false;
+   try{fs.writeFileSync(lockPath,String(process.pid),{flag:'wx'});created=true;}
    catch(e){if(e.code!=='EEXIST')throw e;}
+   if(created){
+    // Another process may have taken over the same stale lock a moment before: the file must still hold our PID.
+    let owner=0;try{owner=Number(fs.readFileSync(lockPath,'utf8').trim());}catch{}
+    if(owner===process.pid){locked=true;return;}
+    continue;
+   }
    let pid=0;try{pid=Number(fs.readFileSync(lockPath,'utf8').trim());}catch{}
-   if(Number.isInteger(pid)&&pid>0&&alive(pid))throw Error('Lumen is already running with this data folder (process '+pid+').');
-   fs.rmSync(lockPath,{force:true}); // left by a process that is gone
+   if(Number.isInteger(pid)&&pid>0&&alive(pid))throw Error('core.lock: Lumen is already running with this data folder (process '+pid+').');
+   // Left by a process that is gone: rename it to a unique name (only one process can win the rename), then try again.
+   const aside=lockPath+'.stale-'+process.pid+'-'+Date.now();try{fs.renameSync(lockPath,aside);fs.rmSync(aside,{force:true});}catch{}
   }
-  throw Error('Could not lock the data folder.');
+  throw Error('core.lock: could not lock the data folder.');
  }
  function releaseLock(){if(!locked)return;locked=false;try{if(fs.readFileSync(lockPath,'utf8').trim()===String(process.pid))fs.rmSync(lockPath,{force:true});}catch{}}
 
@@ -216,7 +225,7 @@ async function request(action,args={}){
  // lumen-host (backend/LumenHost.cs + LumenCore.cs) is the local engine process: chats, models, engine setup and llama-server.
  const fail=e=>{for(const p of pending.values())p.reject(e);pending.clear();platform.send('engine-event',{type:'fatal',data:{message:e.message}});};
  function startHost(){
-  const child=spawn(path.join(__dirname,'backend','lumen-host.exe'),['--bridge',data],{windowsHide:true,stdio:['pipe','pipe','pipe']});host=child;hostReady=true;
+  const child=spawn(path.join(backendDir,'lumen-host.exe'),['--bridge',data],{windowsHide:true,stdio:['pipe','pipe','pipe']});host=child;hostReady=true;
   child.stderr.on('data',d=>fs.appendFileSync(path.join(data,'desktop-engine.log'),d));
   child.on('error',e=>{if(host===child)fail(e);});
   child.on('exit',()=>{if(host!==child)return;fail(Error('Local engine stopped. Restart Lumen.'));});
@@ -230,7 +239,8 @@ async function request(action,args={}){
  handle('delete-chat',async(id,title,language)=>{if(typeof id!=='string'||!/^[a-fA-F0-9]{32}$/.test(id))throw Error('Invalid conversation ID');const tr=language==='tr';const answer=await platform.dialog.message({type:'warning',title:tr?'Sohbeti sil':'Delete conversation',message:tr?'Bu sohbet silinsin mi?':'Delete this conversation?',detail:`“${String(title||'').slice(0,200)}”\n\n`+(tr?'Sohbet ve kayıtlı mesajları kalıcı olarak silinecek. Bu işlem geri alınamaz.':'The conversation and its saved messages will be permanently deleted. This cannot be undone.'),buttons:tr?['Vazgeç','Sil']:['Cancel','Delete'],defaultId:0,cancelId:0,noLink:true});if(answer.response!==1)return {deleted:false};await request('delete',{id});skillStore.forget(id);photoStore.forget(id);activityStore.forget(id);reasoningStore.forget(id);runSettings.remove(id);documents.forget(id);visionStore.forget(id);variantStore.forget(id);projectStore.forget(id);assistants.forget(id);await imageGen?.forget(id);const names=manualNames();if(names[id]){delete names[id];saveManualNames(names);}return {deleted:true};});
  handle('attach-text',async(language)=>{const tr=language==='tr';const result=await openDialog({title:tr?'Metin veya kod dosyası ekle':'Attach text or code files',properties:['openFile','multiSelections'],filters:[{name:tr?'UTF-8 metin ve kod':'UTF-8 text & code',extensions:['txt','md','json','js','ts','tsx','jsx','py','cs','cpp','c','h','html','css','yaml','yml','toml','xml','csv','log','rs','go','java','sql','sh','ps1']}]});if(result.canceled)return [];if(result.filePaths.length>5)throw Error(tr?'En fazla 5 dosya ekleyebilirsin.':'Attach up to 5 files.');const files=[];let chars=0;for(const file of result.filePaths){const stat=await fs.promises.stat(file);if(!stat.isFile()||stat.size>1048576)throw Error(tr?'Her dosya en fazla 1 MB olmalı.':'Each file must be at most 1 MB.');const buffer=await fs.promises.readFile(file);if(buffer.includes(0))throw Error(tr?'Yalnızca metin ve kod dosyaları destekleniyor.':'Only text and code files are supported.');const text=new TextDecoder('utf-8',{fatal:true}).decode(buffer);chars+=text.length;if(chars>45000)throw Error(tr?'Dosyaların toplamı 45.000 karakteri aşamaz.':'Files must total at most 45,000 characters.');files.push({name:path.basename(file),text,bytes:stat.size});}return files;});
  
- handle('photos',async(action,args={})=>{if(JSON.stringify(args).length>10000)throw Error('Invalid photo request.');if(action==='info')return args.retain===true?photoStore.retain({id:args.id,name:args.name}):photoStore.publicPhoto({id:args.id,name:args.name});if(action==='release'){if(!Array.isArray(args.ids)||args.ids.length>4)throw Error('Invalid photo IDs.');photoStore.release(args.ids);return true;}if(action==='choose'){if(skillFlight)throw Error('Wait until the response finishes.');const tr=args.language==='tr';const choice=await openDialog({title:tr?'Fotoğraf ekle':'Add photos',properties:['openFile','multiSelections'],filters:[{name:tr?'Fotoğraflar':'Photos',extensions:['png','jpg','jpeg','webp']}]});if(choice.canceled)return [];return photoStore.importFiles(choice.filePaths,args.language);}if(action==='paste'){if(skillFlight)throw Error('Wait until the response finishes.');const items=await platform.clipboard.read();try{for(const item of items){const type=item.type==='image'&&['image/png','image/jpeg','image/webp'].includes(item.mime)?item.mime:null;if(!type)continue;const size=(await fs.promises.stat(item.path)).size;if(size>12582912)throw Error('Each photo must be at most 12 MB.');return await photoStore.importBuffer(await fs.promises.readFile(item.path),'Screenshot.'+(type==='image/jpeg'?'jpg':type==='image/webp'?'webp':'png'),args.language);}return [];}finally{for(const item of items)if(item.path)fs.promises.rm(item.path,{force:true}).catch(()=>{});}}throw Error('Invalid photo action.');});
+ handle('photos',async(action,args={})=>{if(JSON.stringify(args).length>10000)throw Error('Invalid photo request.');if(action==='info')return args.retain===true?photoStore.retain({id:args.id,name:args.name}):photoStore.publicPhoto({id:args.id,name:args.name});if(action==='release'){if(!Array.isArray(args.ids)||args.ids.length>4)throw Error('Invalid photo IDs.');photoStore.release(args.ids);return true;}if(action==='choose'){if(skillFlight)throw Error('Wait until the response finishes.');const tr=args.language==='tr';const choice=await openDialog({title:tr?'Fotoğraf ekle':'Add photos',properties:['openFile','multiSelections'],filters:[{name:tr?'Fotoğraflar':'Photos',extensions:['png','jpg','jpeg','webp']}]});if(choice.canceled)return [];return photoStore.importFiles(choice.filePaths,args.language);}if(action==='paste'){if(skillFlight)throw Error('Wait until the response finishes.');const items=await platform.clipboard.read();const clipboardDir=path.join(data,'temp','clipboard');const underClipboard=p=>{const r=path.resolve(p);return r!==clipboardDir&&r.startsWith(clipboardDir+path.sep);};try{for(const item of items){const type=item.type==='image'&&['image/png','image/jpeg','image/webp'].includes(item.mime)?item.mime:null;if(!type)continue;const size=(await fs.promises.stat(item.path)).size;if(size>12582912)throw Error('Each photo must be at most 12 MB.');return await photoStore.importBuffer(await fs.promises.readFile(item.path),'Screenshot.'+(type==='image/jpeg'?'jpg':type==='image/webp'?'webp':'png'),args.language);}return [];}finally{ // only the shell's own clipboard temp files are removed; any other path a shell names is ignored
+  await Promise.all(items.filter(item=>typeof item.path==='string'&&underClipboard(item.path)).map(item=>fs.promises.rm(item.path,{force:true}).catch(()=>{})));}}throw Error('Invalid photo action.');});
  handle('skills',async(action,args={})=>{
   if(JSON.stringify(args).length>100000)throw Error('Skill request too large.');if(skillFlight&&!['list','export','preview','budget','import','import-url','reference-file'].includes(action))throw Error('Wait until the response finishes.');
   if(action==='list')return skillStore.list();
@@ -296,8 +306,8 @@ async function request(action,args={}){
  mcpClient=require('./mcp.cjs').createMcp({version:platform.app.version});
  artifacts=require('./artifacts.cjs').createArtifacts({platform});
  // The web session (persist:lumen-web), its request filter and views are created on first use, not at startup.
- const getBrowser=()=>browser||(browser=createBrowser({platform,emit:state=>send('browser-event',state),getSettings:()=>toolSettings.get().browser}));
- webTools=createWeb({render:(url,options)=>toolSettings.get().browser.render?getBrowser().render(url,options):Promise.reject(Object.assign(Error('JavaScript rendering is off.'),{code:'disabled'}))});
+ const getBrowser=()=>browser||(browser=createBrowser({platform,emit:state=>send('browser-event',state),getSettings:()=>toolSettings.plain().browser}));
+ webTools=createWeb({render:(url,options)=>toolSettings.plain().browser.render?getBrowser().render(url,options):Promise.reject(Object.assign(Error('JavaScript rendering is off.'),{code:'disabled'}))});
  const engine={
   // An idle image engine is stopped before the chat model needs the GPU.
   async complete(args){await imageGen?.release();return engine.completeNow(args);},
@@ -320,16 +330,16 @@ async function request(action,args={}){
  const validChat=chat=>chat&&typeof chat==='object'&&/^[a-fA-F0-9]{32}$/.test(chat.Id||'')&&Array.isArray(chat.Messages)&&chat.Messages.length<=2000&&typeof chat.Model==='string'&&chat.Model.length<=200;
  handle('tools',async(action,args={})=>{
   if(JSON.stringify(args).length>20000)throw Error('Invalid request.');
-  if(action==='get')return {...toolSettings.public(),hostReady,providers:webTools.providers};
-  if(action==='update'){const result=toolSettings.update(args);webTools.clear();browser?.applySettings();return {...result,hostReady,providers:webTools.providers};}
-  if(action==='set-key')return {...toolSettings.setKey(String(args.provider),String(args.key||'')),hostReady,providers:webTools.providers};
-  if(action==='clear-key')return {...toolSettings.clearKey(String(args.provider)),hostReady,providers:webTools.providers};
+  if(action==='get')return {...await toolSettings.public(),hostReady,providers:webTools.providers};
+  if(action==='update'){const result=await toolSettings.update(args);webTools.clear();await browser?.applySettings();return {...result,hostReady,providers:webTools.providers};}
+  if(action==='set-key')return {...await toolSettings.setKey(String(args.provider),String(args.key||'')),hostReady,providers:webTools.providers};
+  if(action==='clear-key')return {...await toolSettings.clearKey(String(args.provider)),hostReady,providers:webTools.providers};
   if(action==='clear-browser'){webTools.clear();await getBrowser().clearData();return true;}
   throw Error('Invalid tools action.');
  });
  handle('agent',async(action,args={})=>{
   if(JSON.stringify(args).length>4000000)throw Error('Invalid request.');
-  if(action==='route'){const config=toolSettings.get(),prompt=String(args.prompt||'').slice(0,90000);if(/^cloud:/.test(String(args.model||'')))return {route:'chat',reason:'cloud'};if(!hostReady)return {route:'chat',reason:'unavailable'};if(args.mode==='research')return config.search.enabled?{route:'agent'}:{route:'chat',reason:'web-off'};return {route:config.search.enabled&&config.agent.auto&&agent.needsTools(prompt)?'agent':'chat'};}
+  if(action==='route'){const config=toolSettings.plain(),prompt=String(args.prompt||'').slice(0,90000);if(/^cloud:/.test(String(args.model||'')))return {route:'chat',reason:'cloud'};if(!hostReady)return {route:'chat',reason:'unavailable'};if(args.mode==='research')return config.search.enabled?{route:'agent'}:{route:'chat',reason:'web-off'};return {route:config.search.enabled&&config.agent.auto&&agent.needsTools(prompt)?'agent':'chat'};}
   if(action==='run'){
    const {runId,chat,prompt,mode,contextSize}=args;
    if(typeof runId!=='string'||!/^[a-f0-9-]{36}$/.test(runId)||!validChat(chat)||typeof prompt!=='string'||!prompt.trim()||prompt.length>90000||!['auto','research','project','tools'].includes(mode)||!contextSizes.includes(contextSize)||!hostReady&&contextSize>16384)throw Error('Invalid research request.');
@@ -339,8 +349,8 @@ async function request(action,args={}){
    const p=prefs(),context=await contextFor(chat.Model,contextSize);loaded={model:chat.Model,context:context.value};
    if(mode==='project'){const binding=projectStore.get(chat.Id);if(!binding)throw Error('No project folder is attached to this conversation.');if(!fs.existsSync(binding.root))throw Error('The project folder was not found: '+binding.root);return agent.runProject({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',project:createProjectTools(binding),research:args.research===true,systemPrompt,...runOptions(chat)});}
    if(mode==='tools'){const tools=[...connections.activeTools(),...imageTools()];return agent.runTools({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',tools,
-    callTool:(serverId,name,toolArgs,signal)=>serverId==='lumen'?imageToolCall(toolArgs,signal):mcpClient.callTool(connections.server(serverId),name,toolArgs,{signal}),
-    allowAlways:(serverId,name)=>{if(serverId==='lumen'){imageGen.setSettings({toolAsk:false});return;}try{connections.updateServer(serverId,{tool:{name,ask:false}});}catch{}},systemPrompt,...runOptions(chat)});}
+    callTool:async(serverId,name,toolArgs,signal)=>serverId==='lumen'?imageToolCall(toolArgs,signal):mcpClient.callTool(await connections.server(serverId),name,toolArgs,{signal}),
+    allowAlways:(serverId,name)=>{if(serverId==='lumen'){imageGen.setSettings({toolAsk:false});return;}Promise.resolve(connections.updateServer(serverId,{tool:{name,ask:false}})).catch(()=>{});},systemPrompt,...runOptions(chat)});}
    return agent.run({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',mode,systemPrompt,...runOptions(chat)});
   }
   if(action==='approve')return agent.approve(String(args.runId||''),String(args.callId||''),String(args.decision||'deny'));
@@ -435,7 +445,7 @@ async function request(action,args={}){
  });
  // The tools an assistant asks for, with whether each exists and is turned on.
  function assistantTools(a){return (a.tools||[]).map(t=>{if(t.server==='lumen'){const s=imageGen.status();const ready=s.packages.some(p=>p.ready)&&s.engines.some(x=>x.installed)||Object.values(s.cloudModels||{}).some(l=>l.length);return {server:'lumen',serverName:'Lumen',name:t.name,title:'Create image',exists:ready,enabled:s.settings.tool};}
-  const s=connections.public().mcp.servers.find(x=>x.id===t.server),tool=s?.tools.find(x=>x.name===t.name);return {server:t.server,serverName:s?.name||'',name:t.name,title:tool?.title||'',exists:!!tool,enabled:!!(s?.enabled&&tool?.enabled)};});}
+  const s=connections.summary().mcp.servers.find(x=>x.id===t.server),tool=s?.tools.find(x=>x.name===t.name);return {server:t.server,serverName:s?.name||'',name:t.name,title:tool?.title||'',exists:!!tool,enabled:!!(s?.enabled&&tool?.enabled)};});}
  // Assistants: saved instructions, model, run settings and skills. "start" copies one into a conversation.
  handle('assistants',async(action,args={})=>{if(JSON.stringify(args).length>40000)throw Error('Invalid request.');
   if(action==='list')return assistants.list();
@@ -454,24 +464,24 @@ async function request(action,args={}){
   // approval unless the user chose "Always allow" for that tool.
   if(action==='enable-tools'){
    const a=assistants.get(String(args.id||''));if(!a)throw Error('Assistant not found.');
-   for(const t of a.tools||[]){if(t.server==='lumen'){imageGen.setSettings({tool:true});continue;}const s=connections.public().mcp.servers.find(x=>x.id===t.server);if(!s||!s.tools.some(x=>x.name===t.name))continue;connections.updateServer(t.server,{enabled:true});connections.updateServer(t.server,{tool:{name:t.name,enabled:true}});}
+   for(const t of a.tools||[]){if(t.server==='lumen'){imageGen.setSettings({tool:true});continue;}const s=connections.summary().mcp.servers.find(x=>x.id===t.server);if(!s||!s.tools.some(x=>x.name===t.name))continue;await connections.updateServer(t.server,{enabled:true});await connections.updateServer(t.server,{tool:{name:t.name,enabled:true}});}
    return {tools:assistantTools(a)};
   }
   throw Error('Invalid request');
  });
  // Connections: cloud providers, MCP servers and the local API (Settings → Connections / Cloud models).
- const connectionsView=()=>({...connections.public(),api:{...connections.public().api,...(apiServer?.status()||{})}});
+ const connectionsView=async()=>{const view=await connections.public();return {...view,api:{...view.api,...(apiServer?.status()||{})}};};
  handle('connections',async(action,args={})=>{if(JSON.stringify(args).length>40000)throw Error('Invalid request.');
   if(action==='get')return connectionsView();
-  if(action==='cloud'){connections.setCloud(args);return connectionsView();}
-  if(action==='provider'){connections.setCloudProvider(String(args.provider||''),args);return connectionsView();}
+  if(action==='cloud'){await connections.setCloud(args);return connectionsView();}
+  if(action==='provider'){await connections.setCloudProvider(String(args.provider||''),args);return connectionsView();}
   if(action==='provider-models'){const list=await cloud.listModels(String(args.provider||''));return {models:list};}
   if(action==='provider-test'){const target=String(args.provider||''),model=String(args.model||'');const r=await cloud.chat({provider:target,model,messages:[{role:'user',content:'Reply with the single word: ready'}],maxTokens:16,signal:AbortSignal.timeout(60000)});return {reply:String(r.content||'').slice(0,200)};}
-  if(action==='mcp-add'){const id=connections.addServer({name:args.name,url:args.url,token:args.token});try{const r=await mcpClient.listTools(connections.server(id));connections.updateServer(id,{tools:r.tools,serverName:r.serverName,checked:new Date().toISOString(),error:''});}catch(error){connections.updateServer(id,{error:error.message,checked:new Date().toISOString()});}return connectionsView();}
-  if(action==='mcp-refresh'){const id=String(args.id||'');try{const r=await mcpClient.listTools(connections.server(id));connections.updateServer(id,{tools:r.tools,serverName:r.serverName,checked:new Date().toISOString(),error:''});}catch(error){connections.updateServer(id,{error:error.message,checked:new Date().toISOString()});}return connectionsView();}
-  if(action==='mcp-update'){const id=String(args.id||'');connections.updateServer(id,{enabled:args.enabled,name:args.name,token:args.token,tool:args.tool});if(typeof args.token==='string')mcpClient.forget(id);return connectionsView();}
+  if(action==='mcp-add'){const id=await connections.addServer({name:args.name,url:args.url,token:args.token});try{const r=await mcpClient.listTools(await connections.server(id));await connections.updateServer(id,{tools:r.tools,serverName:r.serverName,checked:new Date().toISOString(),error:''});}catch(error){await connections.updateServer(id,{error:error.message,checked:new Date().toISOString()});}return connectionsView();}
+  if(action==='mcp-refresh'){const id=String(args.id||'');try{const r=await mcpClient.listTools(await connections.server(id));await connections.updateServer(id,{tools:r.tools,serverName:r.serverName,checked:new Date().toISOString(),error:''});}catch(error){await connections.updateServer(id,{error:error.message,checked:new Date().toISOString()});}return connectionsView();}
+  if(action==='mcp-update'){const id=String(args.id||'');await connections.updateServer(id,{enabled:args.enabled,name:args.name,token:args.token,tool:args.tool});if(typeof args.token==='string')mcpClient.forget(id);return connectionsView();}
   if(action==='mcp-remove'){const id=String(args.id||'');mcpClient.forget(id);connections.removeServer(id);return connectionsView();}
-  if(action==='api'){connections.setApi(args);await apiServer.start();return connectionsView();}
+  if(action==='api'){await connections.setApi(args);await apiServer.start();return connectionsView();}
   throw Error('Invalid request');
  });
  // The local API server reuses the engine: one request at a time, same models, same context rules.
@@ -658,7 +668,7 @@ async function request(action,args={}){
   const h=host;
   if(!h||now){try{h?.stdin.end();}catch{}releaseLock();return;}
   agent?.cancelAll();cloudFlight?.abort();imageGen?.cancel();imageGen?.stop().catch(()=>{});apiServer?.stop().catch(()=>{});try{artifacts?.close();}catch{}downloader?.cancelAll();try{Promise.resolve(browser?.close()).catch(()=>{});}catch{}
-  await new Promise(resolve=>{const timeout=setTimeout(()=>{h.kill();resolve();},8000);Promise.resolve().then(()=>request('cancel')).then(()=>request('unload')).catch(()=>{}).then(()=>{if(toolSettings?.get().browser.clearOnExit)return Promise.resolve(platform.browser.clearData()).catch(()=>{});}).finally(()=>{h.stdin.end();clearTimeout(timeout);resolve();});});
+  await new Promise(resolve=>{const timeout=setTimeout(()=>{h.kill();resolve();},8000);Promise.resolve().then(()=>request('cancel')).then(()=>request('unload')).catch(()=>{}).then(()=>{if(toolSettings?.plain().browser.clearOnExit)return Promise.resolve(platform.browser.clearData()).catch(()=>{});}).finally(()=>{h.stdin.end();clearTimeout(timeout);resolve();});});
   releaseLock();
  }
  async function call(channel,args){const fn=handlers[channel];if(!fn)throw Error(started?'Unknown channel.':'Lumen is still starting.');return fn(...(Array.isArray(args)?args:[]));}

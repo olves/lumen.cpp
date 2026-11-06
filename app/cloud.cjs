@@ -44,9 +44,9 @@ async function readEvents(body, onData, {signal, stallMs = 90000}) {
 }
 
 function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
-  function target(provider) {
+  async function target(provider) {
     const base = connections.baseOf(provider); if (!base) throw cloudError('setup', 'Set the provider address in Settings → Cloud models.');
-    const key = connections.cloudKey(provider);
+    const key = await connections.cloudKey(provider);
     if (!key && provider !== 'custom') throw cloudError('key', 'Add an API key for ' + connections.providerLabel(provider) + ' in Settings → Cloud models.');
     const headers = {'content-type': 'application/json', accept: 'text/event-stream, application/json', 'user-agent': 'lumen.cpp/' + version};
     if (key) headers.authorization = 'Bearer ' + key;
@@ -55,7 +55,7 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
   }
 
   async function listModels(provider, {signal} = {}) {
-    const {base, headers, label} = target(provider);
+    const {base, headers, label} = await target(provider);
     const response = await fetchImpl(base + '/models', {headers, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000)});
     if (!response.ok) throw await errorFrom(response, label);
     const json = await response.json();
@@ -66,7 +66,7 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
 
   // messages: [{role, content}] (text only). Returns {content, reasoning, usage, finish}.
   async function chat({provider, model, messages, maxTokens = 1024, temperature, sampling = {}, signal, onChunk, onReasoning}) {
-    const {base, headers, label} = target(provider);
+    const {base, headers, label} = await target(provider);
     const full = {model, messages, stream: true, stream_options: {include_usage: true}};
     // OpenAI's newer models only take max_completion_tokens; the other providers use max_tokens.
     if (provider === 'openai') full.max_completion_tokens = maxTokens; else full.max_tokens = maxTokens;
@@ -109,11 +109,11 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
   // through the OpenAI-compatible /images/generations (gpt-image-1, dall-e-3, Imagen on Gemini's compatible endpoint…).
   // Returns image buffers (PNG/JPEG/WebP as the provider sends them).
   async function generateImage({provider, model, prompt, shape = 'square', count = 1, signal}) {
-    const {base, headers, label} = target(provider);
+    const {base, headers, label} = await target(provider);
     const timeout = () => AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(300000)]);
     const out = [];
     if (provider === 'gemini' && /^gemini-/.test(model)) {
-      const key = connections.cloudKey(provider), native = base.replace(/\/openai$/, '');
+      const key = await connections.cloudKey(provider), native = base.replace(/\/openai$/, '');
       const aspect = {square: '1:1', landscape: '16:9', portrait: '9:16'}[shape] || '1:1';
       for (let i = 0; i < count; i++) {
         const response = await fetchImpl(native + '/models/' + encodeURIComponent(model) + ':generateContent', {method: 'POST', redirect: 'error', signal: timeout(),

@@ -36,7 +36,7 @@ function fakePlatform(overrides = {}) {
     dialog: { open: async () => ({ canceled: true, filePaths: [] }), save: async () => ({ canceled: true }), message: async () => ({ response: 0 }) },
     clipboard: { writeText: fn('clipboard.writeText'), writePng: fn('clipboard.writePng'), read: async () => [] },
     image: { decodeWebp: async () => { throw Error('no webp'); }, normalize: async () => null, thumbnail: async () => Buffer.alloc(0) },
-    secrets: { available: () => false, encrypt: () => { throw Error('unavailable'); }, decrypt: () => '' },
+    secrets: { available: async () => false, encrypt: async () => { throw Error('unavailable'); }, decrypt: async () => '' },
     openExternal: fn('openExternal'),
     assetBase: 'lumen://app/', appDir: runDir, updateMode: 'full',
     app: { version: '0.0.0-test', quit: fn('app.quit'), relaunchArgs: () => [] },
@@ -96,7 +96,7 @@ describe('core isolation', () => {
     await first.start();
     assert.equal(fs.readFileSync(path.join(dir, 'core.lock'), 'utf8').trim(), String(process.pid));
     const second = createCore({ platform: fakePlatform(), dataDir: dir, test: true });
-    await assert.rejects(second.start(), Error);
+    await assert.rejects(second.start(), /core.lock: Lumen is already running/);
     await first.stop();
     assert.equal(fs.existsSync(path.join(dir, 'core.lock')), false, 'stop releases the lock');
 
@@ -109,6 +109,85 @@ describe('core isolation', () => {
     assert.equal(fs.readFileSync(path.join(stale, 'core.lock'), 'utf8').trim(), String(process.pid));
     await third.stop();
     assert.deepEqual(electronLoads, []);
+  });
+
+  // A shell that can only answer secrets asynchronously (an RPC shell): keys must round-trip through connections and toolsettings.
+  const asyncSecrets = () => {
+    const wait = () => new Promise(r => setTimeout(r, 5));
+    return { available: async () => { await wait(); return true; }, encrypt: async text => { await wait(); return Buffer.from('enc:' + text).toString('base64'); },
+      decrypt: async value => { await wait(); const t = Buffer.from(value, 'base64').toString('utf8'); if (!t.startsWith('enc:')) throw Error('bad'); return t.slice(4); } };
+  };
+
+  test('async secrets round-trip through connections', async () => {
+    const { createConnections } = require(path.join(appDir, 'connections.cjs'));
+    const dir = freshDir('secrets-connections');
+    const c = createConnections(dir, asyncSecrets());
+    const view = await c.setCloudProvider('openai', { models: ['gpt-test'], key: 'sk-test-123' });
+    assert.equal(view.cloud.providers.openai.key, true);
+    assert.equal(view.encryption, true);
+    assert.equal(await c.cloudKey('openai'), 'sk-test-123');
+    const stored = JSON.parse(fs.readFileSync(path.join(dir, 'connections.json'), 'utf8'));
+    assert.equal(stored.cloud.keys.openai, Buffer.from('enc:sk-test-123').toString('base64'), 'the stored format is base64 of the encrypted text');
+    assert.doesNotMatch(JSON.stringify(c.summary()), /sk-test-123/);
+    const id = await c.addServer({ name: 'x', url: 'https://example.com/mcp', token: 'tok-1' });
+    assert.equal((await c.server(id)).token, 'tok-1');
+    await c.updateServer(id, { token: 'tok-2' });
+    assert.equal((await c.server(id)).token, 'tok-2');
+    assert.equal((await c.servers())[0].token, 'tok-2');
+    await c.setApi({ enabled: true });
+    const api = await c.api();
+    assert.match(api.token, /^lumen-/);
+    assert.equal((await c.public()).api.token, api.token);
+    // A secret store that is not available refuses to save.
+    const off = createConnections(freshDir('secrets-off'), { available: async () => false, encrypt: async () => { throw Error('x'); }, decrypt: async () => '' });
+    await assert.rejects(off.setCloudProvider('openai', { key: 'sk-x' }), /Secure storage is not available/);
+  });
+
+  test('async secrets round-trip through toolsettings and the core', async () => {
+    const { createToolSettings } = require(path.join(appDir, 'toolsettings.cjs'));
+    const dir = freshDir('secrets-tools');
+    const t = createToolSettings(dir, asyncSecrets());
+    const pub = await t.setKey('brave', 'brave-key-1');
+    assert.equal(pub.search.keys.brave, true);
+    assert.equal(pub.encryption, true);
+    await t.update({ search: { provider: 'brave' } });
+    assert.equal((await t.get()).search.key, 'brave-key-1');
+    assert.equal(t.plain().search.key, undefined, 'the plain view has no key');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'tools-settings.json'), 'utf8')).keys.brave, Buffer.from('enc:brave-key-1').toString('base64'));
+    assert.equal((await t.clearKey('brave')).search.keys.brave, false);
+
+    const { createCore } = require(path.join(appDir, 'core.cjs'));
+    const core = createCore({ platform: fakePlatform({ secrets: asyncSecrets() }), dataDir: freshDir('secrets-core'), test: true });
+    await core.start();
+    try {
+      const set = await core.call('tools', ['set-key', { provider: 'tavily', key: 'tvly-abc' }]);
+      assert.equal(set.search.keys.tavily, true);
+      const view = await core.call('connections', ['provider', { provider: 'openai', models: ['gpt-test'], key: 'sk-core' }]);
+      assert.equal(view.cloud.providers.openai.key, true);
+      assert.equal((await core.call('connections', ['get'])).encryption, true);
+    } finally { await core.stop(); }
+  });
+
+  test('clipboard paste deletes only temp files under temp/clipboard', async () => {
+    const { createCore } = require(path.join(appDir, 'core.cjs'));
+    const dir = freshDir('paste');
+    const clip = path.join(dir, 'temp', 'clipboard'); fs.mkdirSync(clip, { recursive: true });
+    const png = pngHeader(8, 8);
+    const mine = path.join(clip, 'first'), second = path.join(clip, 'second');
+    const outside = path.join(freshDir('paste-outside'), 'keep.png'), traversal = path.join(clip, '..', '..', 'keep2.png');
+    for (const f of [mine, second, outside, traversal]) fs.writeFileSync(f, png);
+    const image = { decodeWebp: async () => { throw Error('unused'); }, normalize: async () => ({ png, width: 8, height: 8, original: { width: 8, height: 8 } }), thumbnail: async () => png };
+    const items = [{ type: 'text', text: 'hello' }, { type: 'image', mime: 'image/png', path: mine }, { type: 'image', mime: 'image/png', path: second }, { type: 'image', mime: 'image/png', path: outside }, { type: 'image', mime: 'image/png', path: traversal }];
+    const core = createCore({ platform: fakePlatform({ image, clipboard: { writeText() {}, writePng() {}, read: async () => items } }), dataDir: dir, test: true });
+    await core.start();
+    try {
+      const photos = await core.call('photos', ['paste', { language: 'en' }]);
+      assert.equal(photos.length, 1);
+      assert.equal(fs.existsSync(mine), false);
+      assert.equal(fs.existsSync(second), false);
+      assert.equal(fs.existsSync(outside), true, 'a path outside temp/clipboard is never deleted');
+      assert.equal(fs.existsSync(traversal), true, 'a path that climbs out of temp/clipboard is never deleted');
+    } finally { await core.stop(); }
   });
 
   test('asset urls use platform base', async () => {

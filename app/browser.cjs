@@ -12,26 +12,28 @@ const searchEngines={duckduckgo:['https://duckduckgo.com/?q=','https://duckduckg
 
 function createBrowser({platform,emit,getSettings=()=>({})}){
  const b=platform.browser;
- b.configure(getSettings());
+ // Calls whose result is not awaited (a shell may answer with a rejected promise): never an unhandled rejection.
+ const q=v=>Promise.resolve(v).catch(()=>{});
+ q(b.configure(getSettings()));
  let open=false,bounds=null,lastError=null,findResult=null,viewJavascript=null,userZoom=false;
  async function state(){const i=open?await b.info():null;return {zoom:i?Math.round(i.zoom*100):getSettings().zoom||100,find:findResult,open,url:i?i.url:'',title:i?i.title:'',loading:!!i&&i.loading,canGoBack:!!i&&i.canGoBack,canGoForward:!!i&&i.canGoForward,error:lastError};}
  const update=async()=>{place();emit(await state());};
  function place(){
   if(!open)return;
   const show=!!bounds&&!lastError;
-  if(show)b.show(bounds);else b.hide();
+  if(show)q(b.show(bounds));else q(b.hide());
  }
  function ensure(){
   if(open)return;
   const settings=getSettings();viewJavascript=settings.javascript!==false;
-  b.create({javascript:viewJavascript});open=true;userZoom=false;
+  q(b.create({javascript:viewJavascript}));open=true;userZoom=false;
  }
  // Pop-ups never open new windows: they either replace the panel page or are blocked, as chosen in Settings.
- b.onPopup(url=>{if(!open||getSettings().popups==='block')return;lastError=null;b.navigate(url);});
+ b.onPopup(url=>{if(!open||getSettings().popups==='block')return;lastError=null;q(b.navigate(url));});
  b.onNavigate(async e=>{
   if(!open)return;
   // A user zoom is kept across page loads; otherwise each page gets the zoom from Settings.
-  if(e.type==='finish'){const zoom=(getSettings().zoom||100)/100;const i=await b.info();if(i&&Math.abs(i.zoom-zoom)>0.001&&!userZoom)b.setZoom(zoom);return;}
+  if(e.type==='finish'){const zoom=(getSettings().zoom||100)/100;const i=await b.info();if(i&&Math.abs(i.zoom-zoom)>0.001&&!userZoom)q(b.setZoom(zoom));return;}
   if(e.type==='start')lastError=null;
   else if(e.type==='fail')lastError={code:e.code,blocked:e.code===-20,description:e.description,url:e.url};
   else if(e.type==='gone')lastError={code:-1,description:'The page stopped responding.',url:e.url};
@@ -42,7 +44,7 @@ function createBrowser({platform,emit,getSettings=()=>({})}){
   if(!open)return;
   if(e.type==='found'){findResult={matches:e.matches,active:e.active};emit(await state());return;}
   if(e.type!=='shortcut')return;const shortcut=e.name;
-  if(shortcut.startsWith('zoom'))zoom(shortcut==='zoom-in'?1:shortcut==='zoom-out'?-1:0);else if(shortcut==='back')b.back();else if(shortcut==='forward')b.forward();else if(shortcut==='reload')b.reload();else emit({...await state(),shortcut});
+  if(shortcut.startsWith('zoom'))zoom(shortcut==='zoom-in'?1:shortcut==='zoom-out'?-1:0);else if(shortcut==='back')q(b.back());else if(shortcut==='forward')q(b.forward());else if(shortcut==='reload')q(b.reload());else emit({...await state(),shortcut});
  });
  async function close(silent=false){findResult=null;if(!open)return state();await b.close();open=false;userZoom=false;lastError=null;if(!silent)emit(await state());return state();}
  // Address bar: a URL opens directly; anything else (spaces, no dot) is searched with the chosen engine.
@@ -98,8 +100,8 @@ function createBrowser({platform,emit,getSettings=()=>({})}){
   async stopFind(){if(open)await b.stopFind('keepSelection');findResult=null;emit(await state());return true;},
   zoom:step=>zoom(Number(step)||0),
   // Settings that need a new page process (JavaScript) recreate the panel at the same address; others apply live.
-  async applySettings(){const settings=getSettings();b.configure(settings);if(!open)return;if((settings.javascript!==false)!==viewJavascript){const url=(await b.info())?.url||'';await close(true);if(/^https?:/.test(url))this.open(url);else emit(await state());place();return;}if(!userZoom)await b.setZoom((settings.zoom||100)/100);emit(await state());},
-  async open(url){const target=normalize(url);ensure();lastError=null;b.navigate(target);await update();return state();},
+  async applySettings(){const settings=getSettings();q(b.configure(settings));if(!open)return;if((settings.javascript!==false)!==viewJavascript){const url=(await b.info())?.url||'';await close(true);if(/^https?:/.test(url))this.open(url);else emit(await state());place();return;}if(!userZoom)await b.setZoom((settings.zoom||100)/100);emit(await state());},
+  async open(url){const target=normalize(url);ensure();lastError=null;q(b.navigate(target));await update();return state();},
   async back(){if(open)await b.back();return state();},
   async forward(){if(open)await b.forward();return state();},
   async reload(){if(open){lastError=null;await b.reload();}return state();},

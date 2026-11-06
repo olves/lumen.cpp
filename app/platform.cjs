@@ -1,8 +1,7 @@
 'use strict';
 // The services a shell (Electron today, Tauri later) gives Lumen's core (core.cjs). The core never requires electron;
 // everything that needs a window, a webview or an OS service goes through this object. Each shell implements it with the same
-// inputs and outputs as Electron's equivalent. Callers await every method (a shell may answer synchronously or with a promise),
-// except secrets.*: toolsettings.cjs and connections.cjs use them synchronously today.
+// inputs and outputs as Electron's equivalent. Callers await every method (a shell may answer synchronously or with a promise), secrets.* included.
 //
 //  send(channel, payload)                         event to the main window's renderer (engine-event, agent-event, ...)
 //  windowAction('minimize'|'maximize'|'close')
@@ -13,7 +12,7 @@
 //  image.normalize(buffer, maxSide, quality) -> {png, width, height, original:{width, height}} | null (cannot decode)
 //                                                  scaled down to fit maxSide only when larger; quality 'best'|'good'
 //  image.thumbnail(pngBuffer, maxSide, fit='longest'|'width') -> pngBuffer   never scales up; quality 'good'
-//  secrets.available() -> bool   secrets.encrypt(text) -> base64   secrets.decrypt(base64) -> text
+//  secrets.available() -> bool   secrets.encrypt(text) -> base64   secrets.decrypt(base64) -> text   (all three may return a promise)
 //  openExternal(url)
 //  assetBase    root of UI asset URLs ('lumen://app/' in Electron)
 //  appDir       folder of the running executable (updates.cjs)

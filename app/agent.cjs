@@ -105,8 +105,9 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
 
  async function run(options){
   const {runId,chat,prompt,model,contextSize,language,mode,systemPrompt,thinking=false,responseTokens=512,temperature=0.4,sampling}=options;
+  const config=await settings.get(); // read before the check so that checking and registering the run stay in one synchronous step
   if(runs.size)throw Error('Another research run is active.');
-  const config=settings.get();const limits={maxSubtasks:config.agent.enabled?clamp(config.agent.maxSubtasks,LIMITS.maxSubtasks):1,maxToolCalls:clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls),taskSeconds:clamp(config.agent.taskSeconds,LIMITS.taskSeconds)};
+  const limits={maxSubtasks:config.agent.enabled?clamp(config.agent.maxSubtasks,LIMITS.maxSubtasks):1,maxToolCalls:clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls),taskSeconds:clamp(config.agent.taskSeconds,LIMITS.taskSeconds)};
   const webOn=config.search.enabled;
   const controller=new AbortController();const signal=controller.signal;runs.set(runId,controller);
   const sources=sourceRegistry(),allowedUrls=new Set(urlsIn(prompt).filter(u=>{try{web.checkUrl(u);return true;}catch{return false;}}));
@@ -234,8 +235,9 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
  };
  async function runProject(options){
   const {runId,chat,prompt,model,contextSize,language,project,research=false,systemPrompt,thinking=false,responseTokens=512,temperature=0.4,sampling}=options;
+  const config=await settings.get();
   if(runs.size)throw Error('Another run is active.');
-  const config=settings.get(),webOn=research&&config.search.enabled,maxCalls=Math.max(4,Math.min(12,clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls)*2));
+  const webOn=research&&config.search.enabled,maxCalls=Math.max(4,Math.min(12,clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls)*2));
   const controller=new AbortController(),signal=controller.signal;runs.set(runId,controller);
   const send=event=>emit({runId,...event});const call=(args,extra={})=>engine.complete({model,contextSize,signal:extra.signal||signal,...args});
   const info=await project.info();const task={id:'P1',title:info.name,goal:short(prompt,240),status:'running',ops:[],result:'',error:''};
@@ -321,9 +323,10 @@ Rules: paths are relative to the project root. Read the files that matter (use s
  function approve(runId,callId,decision){const a=approvals.get(String(callId||''));if(!a||a.runId!==runId)return false;a.finish(['allow','always','deny'].includes(decision)?decision:'deny');return true;}
  async function runTools(options){
   const {runId,chat,prompt,model,contextSize,language,tools,callTool,allowAlways,systemPrompt,thinking=false,responseTokens=512,temperature=0.4,sampling}=options;
-  if(runs.size)throw Error('Another run is active.');
   if(!tools.length)throw Error(language==='tr'?'Açık araç yok. Ayarlar → Bağlantılar’dan bir araç aç.':'No tools are turned on. Turn one on in Settings → Connections.');
-  const config=settings.get(),maxCalls=Math.max(2,Math.min(8,clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls)));
+  const config=await settings.get();
+  if(runs.size)throw Error('Another run is active.');
+  const maxCalls=Math.max(2,Math.min(8,clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls)));
   const controller=new AbortController(),signal=controller.signal;runs.set(runId,controller);
   const send=event=>emit({runId,...event});const call=(args,extra={})=>engine.complete({model,contextSize,signal:extra.signal||signal,...args});
   // Model-facing names: the tool name, made unique when two servers offer the same one.

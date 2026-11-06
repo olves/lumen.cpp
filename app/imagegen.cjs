@@ -227,7 +227,7 @@ function createImageGen({dataDir, image, downloader, cloud, connections, emit = 
         buffers = await localGenerate(p, opts, onProgress, any); label = p.name + ' · ' + p.variant; engine = 'local';
       } else if (model.startsWith('cloud:')) {
         const m = /^cloud:([a-z]+)\/(.+)$/.exec(model); if (!m) throw imgError('invalid', 'Unknown image model.');
-        if (!connections.public().cloud.enabled) throw imgError('setup', 'Cloud models are turned off. Turn them on in Settings → Cloud models.');
+        if (!connections.summary().cloud.enabled) throw imgError('setup', 'Cloud models are turned off. Turn them on in Settings → Cloud models.');
         onProgress({phase: 'cloud', provider: connections.providerLabel(m[1])});
         buffers = await cloud.generateImage({provider: m[1], model: m[2], prompt: opts.prompt, shape: opts.shape, count, signal: any});
         label = m[2] + ' · ' + connections.providerLabel(m[1]); engine = 'cloud';

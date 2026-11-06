@@ -23,15 +23,18 @@ function createToolSettings(data,secrets){
    browser:{render:b.render!==false,panel:b.panel!==false,searchEngine:engines.includes(b.searchEngine)?b.searchEngine:'duckduckgo',homePage:home(b.homePage),javascript:b.javascript!==false,zoom:zooms.includes(Number(b.zoom))?Number(b.zoom):100,privacySignals:b.privacySignals!==false,popups:b.popups==='block'?'block':'panel',panelWidth:['narrow','medium','wide'].includes(b.panelWidth)?b.panelWidth:'medium',clearOnExit:b.clearOnExit===true}
   };
  }
- function decrypt(provider){const value=read().keys[provider];if(!value||!secrets.available())return '';try{return secrets.decrypt(value);}catch{return '';}}
+ async function available(){try{return !!(await secrets.available());}catch{return false;}}
+ async function decrypt(provider){const value=read().keys[provider];if(!value||!await available())return '';try{return await secrets.decrypt(value);}catch{return '';}}
  return {
   // Main-process view, including the decrypted key for the selected provider.
-  get(){const c=read();return {agent:{...c.agent},search:{...c.search,key:decrypt(c.search.provider)},browser:{...c.browser}};},
+  async get(){const c=read();return {agent:{...c.agent},search:{...c.search,key:await decrypt(c.search.provider)},browser:{...c.browser}};},
+  // The same settings without the decrypted key; synchronous (the browser panel reads these on every call).
+  plain(){const c=read();return {agent:{...c.agent},search:{...c.search},browser:{...c.browser}};},
   // Renderer view: no secrets.
-  public(){const c=read();return {agent:{...c.agent},search:{...c.search,keys:Object.fromEntries(providers.map(p=>[p,!!c.keys[p]]))},browser:{...c.browser},encryption:secrets.available()};},
-  update(patch){const c=read();const chosen=typeof patch?.search?.provider==='string'?{providerChosen:true}:{};const next=sanitize({agent:{...c.agent,...(patch?.agent||{})},search:{...c.search,...(patch?.search||{}),...chosen},browser:{...c.browser,...(patch?.browser||{})}});cache={...next,keys:c.keys};write();return this.public();},
-  setKey(provider,key){if(!providers.includes(provider))throw Error('Unknown provider.');if(typeof key!=='string'||!key.trim()||key.length>512||/\s/.test(key.trim()))throw Error('Enter a valid API key.');if(!secrets.available())throw Error('Secure storage is not available on this system, so the key was not saved.');const c=read();c.keys[provider]=secrets.encrypt(key.trim());write();return this.public();},
-  clearKey(provider){const c=read();delete c.keys[provider];write();return this.public();}
+  async public(){const c=read();return {agent:{...c.agent},search:{...c.search,keys:Object.fromEntries(providers.map(p=>[p,!!c.keys[p]]))},browser:{...c.browser},encryption:await available()};},
+  async update(patch){const c=read();const chosen=typeof patch?.search?.provider==='string'?{providerChosen:true}:{};const next=sanitize({agent:{...c.agent,...(patch?.agent||{})},search:{...c.search,...(patch?.search||{}),...chosen},browser:{...c.browser,...(patch?.browser||{})}});cache={...next,keys:c.keys};write();return this.public();},
+  async setKey(provider,key){if(!providers.includes(provider))throw Error('Unknown provider.');if(typeof key!=='string'||!key.trim()||key.length>512||/\s/.test(key.trim()))throw Error('Enter a valid API key.');if(!await available())throw Error('Secure storage is not available on this system, so the key was not saved.');const c=read();c.keys[provider]=await secrets.encrypt(key.trim());write();return this.public();},
+  async clearKey(provider){const c=read();delete c.keys[provider];write();return this.public();}
  };
 }
 module.exports={createToolSettings,defaults};

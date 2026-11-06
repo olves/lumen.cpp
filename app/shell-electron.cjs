@@ -23,7 +23,7 @@ const platform={
   writePng:async file=>{await clipboard.write([new (require('electron').ClipboardItem)({'image/png':new Blob([await fs.promises.readFile(file)],{type:'image/png'})})]);},
   // Images are handed over as temp files under <data>/temp/clipboard; the core removes them.
   read:async()=>{const out=[];const items=await clipboard.read();for(const item of items){const type=item.types.find(type=>['image/png','image/jpeg','image/webp'].includes(type));
-   if(type){const blob=await item.getType(type);const dir=path.join(data,'temp','clipboard');fs.mkdirSync(dir,{recursive:true});const file=path.join(dir,crypto.randomBytes(12).toString('hex'));await fs.promises.writeFile(file,Buffer.from(await blob.arrayBuffer()));out.push({type:'image',mime:type,path:file});continue;}
+   if(type){const blob=await item.getType(type);const dir=path.join(data,'temp','clipboard');fs.mkdirSync(dir,{recursive:true});const file=path.join(dir,crypto.randomBytes(12).toString('hex'));await fs.promises.writeFile(file,Buffer.from(await blob.arrayBuffer()));out.push({type:'image',mime:type,path:file});break;}
    if(item.types.includes('text/plain')){try{out.push({type:'text',text:await (await item.getType('text/plain')).text()});}catch{}}}return out;}
  },
  image:{
@@ -32,7 +32,7 @@ const platform={
   thumbnail:async(buffer,maxSide,fit='longest')=>{const image=normalizedImages.get(buffer)||nativeImage.createFromBuffer(buffer);const size=image.getSize();if(fit==='width')return image.resize({width:Math.min(maxSide,size.width),quality:'good'}).toPNG();const scale=Math.min(1,maxSide/Math.max(size.width,size.height));return image.resize({width:Math.max(1,Math.round(size.width*scale)),height:Math.max(1,Math.round(size.height*scale)),quality:'good'}).toPNG();},
  },
  // safeStorage (DPAPI): the stored format stays base64 of encryptString's output.
- secrets:{available:()=>safeStorage.isEncryptionAvailable(),encrypt:text=>safeStorage.encryptString(text).toString('base64'),decrypt:value=>safeStorage.decryptString(Buffer.from(value,'base64'))},
+ secrets:{available:async()=>safeStorage.isEncryptionAvailable(),encrypt:async text=>safeStorage.encryptString(text).toString('base64'),decrypt:async value=>safeStorage.decryptString(Buffer.from(value,'base64'))},
  openExternal:url=>shell.openExternal(url),
  assetBase:'lumen://app/',
  appDir:path.dirname(process.execPath),

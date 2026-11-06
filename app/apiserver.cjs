@@ -78,7 +78,7 @@ function createApiServer({getConfig, models, complete, contextFor, cancel = () =
   }
 
   async function handle(req, res) {
-    const config = getConfig();
+    const config = await getConfig();
     // Only this computer's own addresses, so a web page cannot reach the server through DNS rebinding.
     const host = String(req.headers.host || '').toLowerCase();
     if (!new RegExp('^(127\\.0\\.0\\.1|localhost|\\[::1\\]):' + port + '$').test(host)) return fail(res, 403, 'Unknown host.');
@@ -94,9 +94,9 @@ function createApiServer({getConfig, models, complete, contextFor, cancel = () =
     return fail(res, 404, 'Not found. Supported: GET /v1/models, POST /v1/chat/completions.');
   }
 
-  function start() {
-    const config = getConfig(); if (!config.enabled) return stop();
-    if (server && port === config.port) return Promise.resolve(status());
+  async function start() {
+    const config = await getConfig(); if (!config.enabled) return stop();
+    if (server && port === config.port) return status();
     return stop().then(() => new Promise((resolve) => {
       const s = http.createServer((req, res) => {
         handle(req, res).catch(error => {

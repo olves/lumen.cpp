@@ -72,7 +72,7 @@ function createPlugins({dataDir, skills, skillStore, assistants, connections, mc
   function save() { const t = file + '.tmp'; fs.writeFileSync(t, JSON.stringify({version: 1, plugins: cache}, null, 1)); fs.renameSync(t, file); }
   function view(p) { return {...p, skills: p.skills.map(id => skillStore.list().find(s => s.id === id)).filter(Boolean).map(s => ({id: s.id, name: s.name})),
     assistants: p.assistants.map(id => assistants.get(id)).filter(Boolean).map(a => ({id: a.id, name: a.name, tools: a.tools || []})),
-    servers: p.servers.map(id => connections.public().mcp.servers.find(s => s.id === id)).filter(Boolean).map(s => ({id: s.id, name: s.name, url: s.url, tools: s.tools.length, on: s.tools.filter(t => t.enabled).length}))}; }
+    servers: p.servers.map(id => connections.summary().mcp.servers.find(s => s.id === id)).filter(Boolean).map(s => ({id: s.id, name: s.name, url: s.url, tools: s.tools.length, on: s.tools.filter(t => t.enabled).length}))}; }
 
   return {
     list: () => load().map(view),
@@ -94,8 +94,8 @@ function createPlugins({dataDir, skills, skillStore, assistants, connections, mc
       // Servers: reuse a connection with the same address (keeps the user's tool choices), otherwise add one with tools off.
       const serverIds = [], byKey = new Map();
       for (const s of d.servers) {
-        let id = connections.public().mcp.servers.find(x => x.url === s.url)?.id;
-        if (!id) { id = connections.addServer({name: s.name, url: s.url}); try { const r = await mcp.listTools(connections.server(id)); connections.updateServer(id, {tools: r.tools, serverName: r.serverName, checked: new Date().toISOString(), error: ''}); } catch (error) { connections.updateServer(id, {error: error.message, checked: new Date().toISOString()}); } }
+        let id = connections.summary().mcp.servers.find(x => x.url === s.url)?.id;
+        if (!id) { id = await connections.addServer({name: s.name, url: s.url}); try { const r = await mcp.listTools(await connections.server(id)); await connections.updateServer(id, {tools: r.tools, serverName: r.serverName, checked: new Date().toISOString(), error: ''}); } catch (error) { await connections.updateServer(id, {error: error.message, checked: new Date().toISOString()}); } }
         serverIds.push(id); byKey.set(s.key, id);
       }
       if (old) for (const id of old.servers) if (!serverIds.includes(id) && !load().some(p => p.id !== d.id && p.servers.includes(id))) { mcp.forget(id); connections.removeServer(id); }

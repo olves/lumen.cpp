@@ -33,9 +33,10 @@ function short(text, n) { text = String(text || '').replace(/\s+/g, ' ').trim();
 function createConnections(data, secrets) {
   const file = path.join(data, 'connections.json');
   let cache = null;
-  const canEncrypt = () => { try { return secrets.available(); } catch { return false; } };
-  const encrypt = text => { if (!canEncrypt()) throw Error('Secure storage is not available on this system, so the secret was not saved.'); return secrets.encrypt(text); };
-  const decrypt = value => { if (!value || !canEncrypt()) return ''; try { return secrets.decrypt(value); } catch { return ''; } };
+  // platform.secrets is async (a shell may have to ask another process); every call is awaited.
+  const canEncrypt = async () => { try { return !!(await secrets.available()); } catch { return false; } };
+  const encrypt = async text => { if (!await canEncrypt()) throw Error('Secure storage is not available on this system, so the secret was not saved.'); return secrets.encrypt(text); };
+  const decrypt = async value => { if (!value || !await canEncrypt()) return ''; try { return await secrets.decrypt(value); } catch { return ''; } };
 
   function sanitize(v = {}) {
     const c = v.cloud || {}, m = v.mcp || {}, a = v.api || {};
@@ -78,15 +79,19 @@ function createConnections(data, secrets) {
   return {
     PROVIDERS, cloudName, parseCloud, providerLabel, baseOf,
     // Renderer view: whether secrets exist, never their values (except the local API token, see above).
-    public() {
+    async public() {
+      const v = this.summary();
+      return {encryption: await canEncrypt(), ...v, api: {...v.api, token: await decrypt(read().api.token)}};
+    },
+    // The same view without anything that needs the secret store (no encryption flag, no API token); synchronous.
+    summary() {
       const c = read();
       return {
-        encryption: canEncrypt(),
         cloud: {enabled: c.cloud.enabled, consented: c.cloud.consented, providers: Object.fromEntries(Object.entries(PROVIDERS).map(([id, p]) => [id, {label: id === 'custom' ? (c.cloud.providers.custom?.label || 'Custom') : p.label, site: p.site, keyHint: p.keyHint,
           key: !!c.cloud.keys[id], models: c.cloud.providers[id]?.models || [], ...(id === 'custom' ? {base: c.cloud.providers.custom?.base || ''} : {})}]))},
         mcp: {servers: c.mcp.servers.map(s => ({id: s.id, name: s.name, url: s.url, enabled: s.enabled, token: !!s.token, checked: s.checked, serverName: s.serverName, error: s.error,
           tools: s.tools.map(t => ({name: t.name, title: t.title, description: t.description, readOnly: t.readOnly, enabled: t.enabled, ask: t.ask}))}))},
-        api: {enabled: c.api.enabled, port: c.api.port, token: decrypt(c.api.token)},
+        api: {enabled: c.api.enabled, port: c.api.port},
       };
     },
     // ----- cloud -----
@@ -100,13 +105,13 @@ function createConnections(data, secrets) {
       return out;
     },
     cloudKey(id) { return decrypt(read().cloud.keys[id]); },
-    setCloud(patch) {
+    async setCloud(patch) {
       const c = read();
       if (typeof patch.enabled === 'boolean') c.cloud.enabled = patch.enabled;
       if (patch.consented === true) c.cloud.consented = true;
       cache = sanitize(c); write(); return this.public();
     },
-    setCloudProvider(id, patch) {
+    async setCloudProvider(id, patch) {
       if (!PROVIDERS[id]) throw Error('Unknown provider.');
       const c = read(); const current = c.cloud.providers[id] || {models: []};
       const next = {...current};
@@ -120,25 +125,26 @@ function createConnections(data, secrets) {
       if (typeof patch.key === 'string') {
         const key = patch.key.trim();
         if (!key) delete c.cloud.keys[id];
-        else { if (key.length > 1024 || /\s/.test(key)) throw Error('Enter a valid API key.'); c.cloud.keys[id] = encrypt(key); }
+        else { if (key.length > 1024 || /\s/.test(key)) throw Error('Enter a valid API key.'); c.cloud.keys[id] = await encrypt(key); }
       }
       cache = sanitize(c); write(); return this.public();
     },
     // ----- MCP -----
-    servers() { return read().mcp.servers.map(s => ({...s, token: decrypt(s.token)})); },
-    server(id) { const s = server(id); return {...s, token: decrypt(s.token)}; },
-    addServer({name, url, token}) {
+    servers() { return Promise.all(read().mcp.servers.map(async s => ({...s, token: await decrypt(s.token)}))); },
+    async server(id) { const s = server(id); return {...s, token: await decrypt(s.token)}; },
+    async addServer({name, url, token}) {
       const c = read(); if (c.mcp.servers.length >= 12) throw Error('At most 12 servers.');
       const clean = endpoint(url, 'server');
       if (c.mcp.servers.some(s => s.url === clean)) throw Error('That server is already added.');
-      const entry = {id: crypto.randomBytes(6).toString('hex'), name: short(name || new URL(clean).hostname, 60), url: clean, enabled: true, token: token && String(token).trim() ? encrypt(String(token).trim().slice(0, 4096)) : '', tools: [], checked: '', serverName: '', error: ''};
+      const entry = {id: crypto.randomBytes(6).toString('hex'), name: short(name || new URL(clean).hostname, 60), url: clean, enabled: true, token: token && String(token).trim() ? await encrypt(String(token).trim().slice(0, 4096)) : '', tools: [], checked: '', serverName: '', error: ''};
       c.mcp.servers.push(entry); cache = sanitize(c); write(); return entry.id;
     },
-    updateServer(id, patch) {
+    // Async only because of the token; without one, every change is applied before the first await.
+    async updateServer(id, patch) {
       const c = read(); const s = c.mcp.servers.find(x => x.id === id); if (!s) throw Error('Unknown server.');
       if (typeof patch.enabled === 'boolean') s.enabled = patch.enabled;
       if (typeof patch.name === 'string' && patch.name.trim()) s.name = short(patch.name, 60);
-      if (typeof patch.token === 'string') s.token = patch.token.trim() ? encrypt(patch.token.trim().slice(0, 4096)) : '';
+      if (typeof patch.token === 'string') s.token = patch.token.trim() ? await encrypt(patch.token.trim().slice(0, 4096)) : '';
       if (Array.isArray(patch.tools)) { // discovered tools: keep the user's choices for tools that still exist
         const before = new Map(s.tools.map(t => [t.name, t]));
         s.tools = patch.tools.map(t => ({...t, enabled: before.get(t.name)?.enabled === true, ask: before.get(t.name)?.ask !== false}));
@@ -153,7 +159,7 @@ function createConnections(data, secrets) {
       if (patch.error !== undefined) s.error = String(patch.error || '');
       cache = sanitize(c); write(); return this.public();
     },
-    removeServer(id) { const c = read(); c.mcp.servers = c.mcp.servers.filter(s => s.id !== id); write(); return this.public(); },
+    removeServer(id) { const c = read(); c.mcp.servers = c.mcp.servers.filter(s => s.id !== id); write(); return this.summary(); },
     // Tools the model may use: enabled tools of enabled servers.
     activeTools() {
       const out = [];
@@ -161,12 +167,12 @@ function createConnections(data, secrets) {
       return out;
     },
     // ----- local API -----
-    api() { const a = read().api; return {enabled: a.enabled, port: a.port, token: decrypt(a.token)}; },
-    setApi(patch) {
+    async api() { const a = read().api; return {enabled: a.enabled, port: a.port, token: await decrypt(a.token)}; },
+    async setApi(patch) {
       const c = read();
       if (typeof patch.enabled === 'boolean') c.api.enabled = patch.enabled;
       if (patch.port !== undefined) { const p = Number(patch.port); if (!Number.isInteger(p) || p < 1024 || p > 65535) throw Error('Use a port between 1024 and 65535.'); c.api.port = p; }
-      if (patch.newToken === true || (c.api.enabled && !decrypt(c.api.token))) c.api.token = encrypt('lumen-' + crypto.randomBytes(24).toString('base64url'));
+      if (patch.newToken === true || (c.api.enabled && !await decrypt(c.api.token))) c.api.token = await encrypt('lumen-' + crypto.randomBytes(24).toString('base64url'));
       cache = sanitize(c); write(); return this.public();
     },
   };
