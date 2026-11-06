@@ -74,7 +74,7 @@ describe(`smoke (${shell})`, () => {
     await cdp.click('#send');
     await cdp.waitFor(`(document.querySelector('${assistant}:last-of-type .message-body')?.textContent||'').length>=1`, 60000);
     await cdp.waitFor('state.busy === false', 120000);
-    await cdp.type('#prompt', 'Write a very long story about a dragon, at least 2000 words.');
+    await cdp.type('#prompt', 'Count from 1 to 1000, one number per line, with no other text.');
     await cdp.click('#send');
     await cdp.waitFor("document.querySelectorAll('.message.assistant').length>=2", 60000);
     await new Promise(r => setTimeout(r, 1000));
