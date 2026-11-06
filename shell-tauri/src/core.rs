@@ -15,6 +15,8 @@ use tokio::sync::{oneshot, watch};
 pub const LINE_LIMIT: usize = 64 * 1024 * 1024;
 pub const READY_TIMEOUT: Duration = Duration::from_secs(20);
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// After the restarted core has been ready this long, the one-restart budget is available again.
+pub const RESTART_RESET: Duration = Duration::from_secs(60);
 pub const ASSET_BASE: &str = "http://lumen.localhost/";
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -171,6 +173,12 @@ pub struct Core {
 
 pub const GONE: &str = "Lumen's core stopped unexpectedly.";
 pub const NOT_RUNNING: &str = "Lumen's core is not running.";
+pub const TOO_LARGE: &str = "The request is too large.";
+
+/// Whether an encoded line (without its '\n') stays within core-host's 64 MiB line limit.
+pub fn fits(line: &str) -> bool {
+    line.len() <= LINE_LIMIT
+}
 
 impl Core {
     pub fn new(cfg: Config, notify: Box<dyn Fn(Notice) + Send + Sync>) -> Arc<Core> {
@@ -196,6 +204,8 @@ impl Core {
             .arg("--app")
             .arg(&cfg.app_root)
             .args(["--asset-base", ASSET_BASE, "--update-mode", "check-only"]);
+        // Test mode reaches the core only from a ui-check build (spec 6.5); production builds have no such code.
+        #[cfg(feature = "ui-check")]
         if cfg.ui_check {
             cmd.arg("--ui-check");
         }
@@ -247,7 +257,7 @@ impl Core {
         Ok(())
     }
 
-    fn read_loop(&self, stdout: impl Read, generation: u64) {
+    fn read_loop(self: &Arc<Self>, stdout: impl Read, generation: u64) {
         let mut reader = BufReader::with_capacity(1 << 16, stdout);
         let mut line: Vec<u8> = Vec::new();
         let mut dropping = false;
@@ -292,11 +302,26 @@ impl Core {
         }
     }
 
-    fn dispatch(&self, frame: Frame, generation: u64) {
+    fn dispatch(self: &Arc<Self>, frame: Frame, generation: u64) {
         match frame {
             Frame::Ready { channels } => {
-                self.inner.lock().unwrap().channels = channels.into_iter().collect();
+                let restarted = {
+                    let mut i = self.inner.lock().unwrap();
+                    i.channels = channels.into_iter().collect();
+                    i.restarts > 0
+                };
                 self.ready.send_replace(generation);
+                // A restarted core that stays up for a minute ends the crash burst: the next crash may restart it again.
+                if restarted {
+                    let me = self.clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(RESTART_RESET).await;
+                        let mut i = me.inner.lock().unwrap();
+                        if i.generation == generation && *me.exited.borrow() < generation {
+                            i.restarts = 0;
+                        }
+                    });
+                }
             }
             Frame::Result { id, ok, value, error } => {
                 if let Some(tx) = self.inner.lock().unwrap().calls.remove(&id) {
@@ -349,9 +374,12 @@ impl Core {
     }
 
     fn write(&self, frame: &Frame) -> Result<(), String> {
+        self.write_line(encode(frame))
+    }
+
+    fn write_line(&self, mut line: String) -> Result<(), String> {
         let mut guard = self.stdin.lock().unwrap();
         let stdin = guard.as_mut().ok_or_else(|| NOT_RUNNING.to_string())?;
-        let mut line = encode(frame);
         line.push('\n');
         stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush()).map_err(|_| GONE.to_string())
     }
@@ -378,16 +406,21 @@ impl Core {
         let id = self.next_id("c");
         let (tx, rx) = oneshot::channel();
         {
-            let mut i = self.inner.lock().unwrap();
+            let i = self.inner.lock().unwrap();
             if i.stopping {
                 return Err("Lumen is shutting down.".into());
             }
             if !i.channels.contains(&channel) {
                 return Err("Unknown channel.".into());
             }
-            i.calls.insert(id.clone(), tx);
         }
-        if let Err(e) = self.write(&Frame::Call { id: id.clone(), channel, args }) {
+        // core-host drops an over-long line with a protocol-error that carries no id, so the call would never settle.
+        let line = encode(&Frame::Call { id: id.clone(), channel, args });
+        if !fits(&line) {
+            return Err(TOO_LARGE.into());
+        }
+        self.inner.lock().unwrap().calls.insert(id.clone(), tx);
+        if let Err(e) = self.write_line(line) {
             self.inner.lock().unwrap().calls.remove(&id);
             return Err(e);
         }
@@ -495,5 +528,14 @@ mod tests {
         let line = encode(&f);
         assert!(!line.contains('\n'));
         assert_eq!(decode(&line), Some(f));
+    }
+
+    #[test]
+    fn lines_over_the_core_host_limit_do_not_fit() {
+        // core-host accepts a line of exactly 64 MiB (newline excluded) and drops a longer one without its id.
+        assert!(fits(&"x".repeat(LINE_LIMIT)));
+        assert!(!fits(&"x".repeat(LINE_LIMIT + 1)));
+        let big = encode(&Frame::Call { id: "c1".into(), channel: "photos".into(), args: vec![json!("ş".repeat(LINE_LIMIT / 2))] });
+        assert!(!fits(&big), "UTF-8 bytes are counted, not characters");
     }
 }

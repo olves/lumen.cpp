@@ -2,9 +2,14 @@
 // renderer crashes logged (the Electron window's rules, shell-electron.cjs).
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub const MAIN: &str = "main";
+/// The window is shown when the first page load finishes, or after this long at the latest.
+const SHOW_FALLBACK: Duration = Duration::from_secs(10);
 const BRIDGE: &str = include_str!("../../app/bridge-tauri.js");
 // wry's defaults, which additional_browser_args replaces.
 const DEFAULT_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
@@ -49,17 +54,32 @@ pub fn create_main(app: &AppHandle, o: &Options) -> tauri::Result<WebviewWindow>
     if o.ui_check {
         // Tests must not take the user's focus: off screen, shown without activation.
         builder = builder.position(-4000.0, 0.0).focused(false).visible(true);
-    } else {
-        let shown = std::sync::atomic::AtomicBool::new(false);
+    }
+    let shown = Arc::new(AtomicBool::new(false));
+    if !o.ui_check {
+        let on_load = shown.clone();
         builder = builder.visible(false).on_page_load(move |window, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Finished && !shown.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished && !on_load.swap(true, Ordering::SeqCst) {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
         });
     }
     let window = builder.build()?;
-    harden(&window, o.data.join("renderer.log"));
+    let log = o.data.join("renderer.log");
+    harden(&window, log.clone());
+    if !o.ui_check {
+        // If the page never reports Finished (a stuck load), the window still appears.
+        let late = window.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(SHOW_FALLBACK).await;
+            if !shown.swap(true, Ordering::SeqCst) {
+                append(&log, &format!("{{\"type\":\"show-fallback\",\"after_ms\":{},\"at\":{}}}", SHOW_FALLBACK.as_millis(), now_ms()));
+                let _ = late.show();
+                let _ = late.set_focus();
+            }
+        });
+    }
     Ok(window)
 }
 

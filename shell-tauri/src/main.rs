@@ -30,7 +30,12 @@ fn port_in(text: &str) -> Option<u16> {
 
 /// `test_dir`: LUMEN_TEST_DIR, `browser_args`: WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, `local`: %LOCALAPPDATA%.
 fn parse_args(argv: &[String], test_dir: Option<String>, browser_args: Option<String>, local: &Path) -> Args {
+    // Test mode (spec 6.5) needs both the `ui-check` build feature and the flag; a production build ignores the flag entirely
+    // (no core test overrides, single instance kept, window on screen).
+    #[cfg(feature = "ui-check")]
     let ui_check = argv.iter().any(|a| a == "--ui-check");
+    #[cfg(not(feature = "ui-check"))]
+    let ui_check = false;
     let data = argv.iter().find_map(|a| a.strip_prefix("--test-data=")).map(PathBuf::from).or(test_dir.map(PathBuf::from)).unwrap_or_else(|| local.join("lumen.cpp"));
     // The debugging port exists only in builds made with the `ui-check` feature, and only with --ui-check.
     #[cfg(feature = "ui-check")]
@@ -41,6 +46,12 @@ fn parse_args(argv: &[String], test_dir: Option<String>, browser_args: Option<St
         None
     };
     Args { data, ui_check, debug_port }
+}
+
+/// Every WEBVIEW2_* variable (case-insensitive): WebView2 reads them on its own (browser arguments, user data folder, browser
+/// executable, release channel...). They are cleared at startup in every build; the test harness passes nothing through them.
+fn webview2_vars(names: impl Iterator<Item = String>) -> Vec<String> {
+    names.filter(|n| n.to_ascii_uppercase().starts_with("WEBVIEW2_")).collect()
 }
 
 pub struct Shell {
@@ -137,8 +148,11 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let local = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default());
     let args = parse_args(&argv, std::env::var("LUMEN_TEST_DIR").ok(), std::env::var(BROWSER_ARGS_ENV).ok(), &local);
-    // WebView2 would honour this variable on its own (a debugging port among others): it never reaches the webview.
-    std::env::remove_var(BROWSER_ARGS_ENV);
+    // WebView2 would honour these variables on its own (a debugging port among others): none reaches the webview. The port of
+    // a ui-check build was read above.
+    for name in webview2_vars(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok())) {
+        std::env::remove_var(name);
+    }
 
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
     let mut builder = tauri::Builder::default();
@@ -252,6 +266,19 @@ mod tests {
             assert_eq!(with.debug_port, None);
             assert_eq!(from_env.debug_port, None);
         }
+    }
+
+    #[test]
+    fn test_mode_needs_the_feature_and_the_flag() {
+        let local = Path::new("L");
+        assert_eq!(parse_args(&argv(&["--ui-check"]), None, None, local).ui_check, cfg!(feature = "ui-check"));
+        assert!(!parse_args(&argv(&[]), None, None, local).ui_check);
+    }
+
+    #[test]
+    fn all_webview2_variables_are_cleared() {
+        let names = ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "webview2_user_data_folder", "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", "PATH", "LUMEN_TEST_DIR", "XWEBVIEW2_"];
+        assert_eq!(webview2_vars(names.iter().map(|s| s.to_string())), vec!["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "webview2_user_data_folder", "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"]);
     }
 
     #[test]
