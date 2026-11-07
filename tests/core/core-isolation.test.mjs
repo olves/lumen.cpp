@@ -221,6 +221,21 @@ describe('core isolation', () => {
 
   // A PID that Windows has given to another program after a crash is not "Lumen is already running". Real processes and the real
   // lookup (tasklist, PowerShell for the start time) on this conflict path.
+  test('core.lock: the start time check is one-directional (slow start still held, later-created process stale)', () => {
+    const { takeLock, parseLock } = require(path.join(appDir, 'corelock.cjs'));
+    const lock = path.join(freshDir('lock-dir'), 'core.lock');
+    const os = 1_700_000_000_000; // OS creation time of the live process
+    const opts = { pid: 424242, alive: () => true, inspect: () => ({ image: 'node.exe', start: os }), self: { image: 'node.exe', start: 1 } };
+    const withRecorded = recorded => { fs.writeFileSync(lock, `777\nimage=node.exe\nstart=${recorded}\n`); return () => takeLock(lock, opts); };
+    assert.throws(withRecorded(os + 6000), /already running/, 'recorded 6 s after OS creation (cold start): held');
+    assert.throws(withRecorded(os + 60000), /already running/, 'recorded far after creation: held');
+    assert.throws(withRecorded(os - 1000), /already running/, 'process created 1 s after the recorded start: within tolerance, held');
+    assert.equal(withRecorded(os - 2000)(), true, 'process created 2 s after the recorded start (PID reused): stale');
+    assert.equal(parseLock(fs.readFileSync(lock, 'utf8')).pid, 424242);
+    fs.writeFileSync(lock, '777');
+    assert.throws(() => takeLock(lock, opts), /already running/, 'legacy PID-only file: held');
+  });
+
   test('core.lock: a reused PID is stale, a live Lumen holds it; files of older versions still work', async () => {
     const { takeLock, parseLock, parseTasklist } = require(path.join(appDir, 'corelock.cjs'));
     const lock = path.join(freshDir('lock-reuse'), 'core.lock');

@@ -114,6 +114,8 @@ fn lock_holder(data: &Path) -> Option<u32> {
 fn fail_visibly(app: &AppHandle, data: &Path, title: &str, message: String) {
     window::append(&data.join("desktop-startup-error.log"), &message);
     let ui_check = app.state::<Shell>().ui_check;
+    // The box decides when the app ends: startup()'s own timeout exit (startup_failed) is skipped from here on.
+    app.state::<Shell>().exiting.store(true, Ordering::SeqCst);
     let app = app.clone();
     let title = title.to_string();
     std::thread::spawn(move || {
@@ -148,6 +150,10 @@ fn begin_exit(app: &AppHandle) {
 
 fn startup_failed(app: &AppHandle, data: &Path, message: &str) {
     window::append(&data.join("desktop-startup-error.log"), message);
+    // A message box (fail_visibly) or a normal exit already owns the shutdown: do not end the app under it.
+    if app.state::<Shell>().exiting.swap(true, Ordering::SeqCst) {
+        return;
+    }
     app.state::<Shell>().core.kill();
     app.exit(1);
 }

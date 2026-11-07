@@ -19,8 +19,10 @@ const path = require('node:path');
 const {execFileSync} = require('node:child_process');
 
 const IMAGES = ['node.exe', 'lumen.cpp.exe', 'lumen.exe'];
-// The start time written by a process (its own estimate) and Windows' creation time differ by the process's startup time.
-const START_TOLERANCE_MS = 5000;
+// The start time a process writes is its own estimate (Date.now() - uptime), so it is always LATER than Windows' creation time by
+// the startup delay (a cold start can take many seconds). A reused PID belongs to a process created AFTER the holder, so only
+// that direction proves staleness: the live process was created more than this long after the recorded start.
+const START_TOLERANCE_MS = 1500;
 
 function defaultAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
 
@@ -82,7 +84,7 @@ function holds(holder, alive, inspect) {
   if (!info) return true;
   if (info.image === '') return false; // gone since the alive check
   if (info.image && !isOurs(info.image, holder.image)) return false;
-  if (holder.start > 0 && Number(info.start) > 0 && Math.abs(Number(info.start) - holder.start) > START_TOLERANCE_MS) return false;
+  if (holder.start > 0 && Number(info.start) > 0 && Number(info.start) - holder.start > START_TOLERANCE_MS) return false;
   return true;
 }
 
