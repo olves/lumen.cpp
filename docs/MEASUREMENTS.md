@@ -422,3 +422,27 @@ The isolated UI check (work/explore-opening-check-2) passed with no renderer err
 Reproduced photo and skill actions disappearing before their click handler using Electron mouse input (programmatic HTMLElement.click had missed the issue). Replaced the focusout microtask's transient activeElement check with the event's relatedTarget: internal focus changes and temporary null focus no longer dismiss the menus; focus moving outside the composer still dismisses them. No new listeners, timers, dependencies or polling were added.
 
 The isolated mouse regression passed Desk/Studio in Light/Dark: 12 photo action clicks reached the native picker handler (dialog response canceled by a test fixture), skill pickers stayed visible, internal/null focus was preserved, outside focus/click dismissed menus, and Turkish localization passed with no captured renderer errors. The earlier photo decoding/OCR/persistence checks remain separate. Updated the existing Beta directory in place.
+
+## Electron vs Tauri preview shell (2026-11-07)
+
+Same machine, same session, back to back: Electron first, then the Tauri preview build, 5 runs each, medians. Tool: `node tests/harness/measure.mjs --shell <electron|tauri>`. Raw results: `work/measure/electron-task11.json`, `work/measure/tauri-task11.json`, production folder size `work/measure/tauri-prod-size.json`. The definitions are written into the JSON files and are the same for both shells:
+
+- **startupMs:** spawn -> `document.readyState` complete on the app page (CDP). The window may be visible a little earlier or later than this.
+- **idleRssMB:** sum of working sets of the shell's process tree 30 s after spawn, **excluding** `lumen-host.exe` and `llama-server.exe` (and what they start). No model is loaded. For Tauri the tree contains `lumen.exe`, the bundled `node.exe` (the shared core) and every `msedgewebview2.exe` process; for Electron the main, renderer, GPU and utility processes. Working sets count shared pages in every process that maps them, the same way for both.
+- **folderMB:** shell folder size minus the llama.cpp engine archives (`backend/engines`, Electron: `resources/app/backend/engines`) and any `.gguf`/`.partial` files. Both folders contain the same `app/` and `backend/` files otherwise (the dev copies sync the repository `app/`, test hook included).
+
+| | Electron 44.5.1 | Tauri 2.12.4 preview | Difference |
+| --- | --- | --- | --- |
+| Startup to `readyState complete` (median of 5) | 377 ms (185-419) | 437 ms (421-486) | +60 ms (+16%): **kazanç yok**, Tauri is slower |
+| Idle working set, shell tree (median of 5) | 371.2 MB (370.5-373.3) | 452.6 MB (448.4-456.7) | +81 MB (+22%): **kazanç yok**, Tauri uses more |
+| Folder size, no engines | 372.6 MB | 97.2 MB (production build) | -275 MB (-74%): smaller |
+
+How to read it:
+
+- **Which build.** Startup and RAM come from the **ui-check** Tauri build, because only that build opens WebView2's debugging port that the harness needs (it is the build the UI tests use; its extra code path is a few KB: `lumen.exe` 8,999,424 bytes against 8,982,528 bytes without the feature). The **folder size** was measured on a **production build** (`scripts/build-tauri.ps1` without `-Features`) and is identical to the ui-check build to 0.1 MB (97.2 MB both). Electron is its own dev copy (`work/electron-dev`), which is the product's runtime plus the synced test hook.
+- **Memory is not smaller.** One diagnostic run (not part of the medians, `lumen-host` and `conhost` included only in this breakdown): Tauri = `lumen.exe` 25 MB + `node.exe` 49 MB + 6 `msedgewebview2.exe` 358 MB; Electron = 4 `lumen.cpp.exe` processes 361 MB. WebView2 costs about the same as Electron's Chromium, and the Tauri design adds a separate Node process for the core on top of it. There is no memory gain from this change and none should be claimed.
+- **Startup is not faster.** The Tauri path starts `node.exe`, loads the core and waits for its `ready` message before the page can bootstrap; that costs more than Electron's in-process core. Run-to-run spread is large for both (Electron had one 185 ms run), so a 60 ms difference is small but consistent in all five runs (every Tauri run was slower than the Electron median).
+- **The size gain is real but partly a boundary effect.** The Tauri folder does not contain a browser: it uses the WebView2 runtime that Windows already has (Evergreen, shared with Edge and other apps, several hundred MB on disk, **not counted** here and not shipped by Lumen). The folder is still the thing a user downloads (about 97 MB against 373 MB, before compression), and `node.exe` is 85 MB of it (spec 11 expected this to eat part of the gain; it did not eat most of it). A machine without the WebView2 runtime would need it installed separately.
+- **Not measured:** battery/CPU while idle, startup with a window visible to a person (first paint), memory while a model is loaded (the engine processes are the same in both shells and excluded by definition), long-running growth, and WebView2 versions other than the one on this machine.
+
+Conclusion for this task: the Tauri preview shell **reduces the download size** and **does not reduce memory or startup time** on this machine. Electron stays the shipped shell.

@@ -67,7 +67,9 @@ More detail: [docs/USER-GUIDE.md](docs/USER-GUIDE.md). Measurements and test not
 app/                 Electron app: main process (*.cjs), renderer (*.js, *.css, index.html), vendored libraries
 app/backend/         LumenCore.cs + LumenHost.cs (local engine process), LumenUpdater.cs, ImageOcr.cs (Windows OCR helper)
 docs/                User guide, measurements, licenses
-scripts/             build-portable.ps1 and the pinned Electron download manifest
+scripts/             build-portable.ps1, build-tauri.ps1 and the pinned Electron and Node download manifests
+shell-tauri/         Tauri 2 shell (Rust): preview/development build, see below
+tests/               harness (CDP driver, measurement), core tests (plain Node) and UI scenario tests for both shells
 ```
 
 The UI is plain HTML, CSS and JavaScript with no build step. Renderer scripts share one global scope and load in the order listed in `app/index.html`.
@@ -87,6 +89,30 @@ Making a release (maintainers): set `app/package.json` to the new version (for e
 ```
 
 It produces the portable ZIP, the Inno Setup installer (`scripts/lumen.iss`), and the signed `lumen-update.json` with its `.sig`. Upload all four files to a new pre-release. The signing key stays outside the repository (`%USERPROFILE%\.lumen-release`).
+
+## Development: Tauri preview
+
+The same `app/` UI and core also run inside a Tauri 2 shell (Rust, WebView2) instead of Electron. This is a **preview and development build only**: it is not part of any release, it has no installer, and its updates section only checks for new versions (it never replaces files). Electron stays the shipped shell.
+
+```powershell
+.\scripts\build-portable.ps1                      # once: the Electron dev copy that also supplies lumen-host.exe and the engines
+.\scripts\build-tauri.ps1 -Features ui-check      # test build into ..\work\tauri-build (needed by the UI tests)
+.\scripts\build-tauri.ps1                         # production build (no debugging code path), e.g. for size checks
+```
+
+Needs Rust (MSVC target) and the Visual Studio C++ Build Tools. `build-tauri.ps1` downloads Node.js 22 (`scripts/node-manifest.json`, SHA-256 pinned), which runs the shared core next to the shell. Crates are pinned in `shell-tauri/Cargo.toml`.
+
+Tests need Node 22 and no npm packages. Test data goes to `..\work\` next to the repository; the real `%LOCALAPPDATA%\lumen.cpp` is only read.
+
+```powershell
+node --test "tests/core/*.test.mjs"                  # core modules and harness helpers, no UI
+cd shell-tauri; cargo test; cargo test --features ui-check
+$env:LUMEN_SHELL='electron'; node --test --test-concurrency=1 "tests/ui/*.test.mjs"   # UI scenarios through the Chrome DevTools Protocol
+$env:LUMEN_SHELL='tauri';    node --test --test-concurrency=1 "tests/ui/*.test.mjs"   # the same scenarios on the Tauri shell
+node tests/harness/measure.mjs --shell tauri --out ..\work\measure\tauri.json   # startup, idle memory, folder size
+```
+
+The UI scenarios use a chat model that is already installed (read-only hard link; nothing is downloaded) and local mock servers for downloads, MCP, cloud providers and the image engine. Results of both shells and the Electron/Tauri comparison are in [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md).
 
 ## License
 

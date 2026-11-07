@@ -46,7 +46,7 @@ export const DEFINITIONS = {
   folderMB: 'shell folder size minus engines and models',
 };
 
-function folderSizeMB(dir, excludes = []) {
+export function folderSizeMB(dir, excludes = []) {
   const skip = new Set(excludes.map(x => path.join(dir, x).toLowerCase()));
   let total = 0;
   const walk = d => {
