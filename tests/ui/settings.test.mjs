@@ -1,4 +1,4 @@
-// Settings: language (EN/TR) through the real controls, appearance (Desk/Studio, light/dark, accent theme, text size, motion), response
+// Settings: language (EN/TR) through the real controls, appearance (theme, light/dark, accent, text size, motion), response
 // settings, validation of bad values, tool settings (search provider, browser home page) and the encrypted search API key. Everything is
 // checked three ways: the page reacts, the preference file holds the value, and it is still applied after a restart.
 // Real: the app and its stores. Mock: none (the search key is a made-up string and nothing is sent anywhere).
@@ -45,20 +45,26 @@ describe(`settings (${shell})`, () => {
     assert.notEqual(await ev("document.querySelector('#general-panel h1').textContent"), 'General');
   });
 
-  test('appearance: Studio, light, ocean accent, 15 px, motion off', async () => {
+  test('appearance: Pro theme, light, ocean accent, 15 px, motion off', async () => {
     await open('appearance');
-    await segment('interface-design', 'studio');
-    await app.cdp.waitFor("state.prefs.layout === 'studio'", 5000);
+    await segment('interface-design', 'pro');
+    await app.cdp.waitFor("state.prefs.appearance.theme === 'pro'", 5000);
     await segment('display-mode', 'light');
-    await app.cdp.waitFor("state.prefs.layout === 'studio' && state.prefs.colorMode === 'light'", 5000);
+    await app.cdp.waitFor("state.prefs.appearance.theme === 'pro' && state.prefs.appearance.mode === 'light' && state.prefs.colorMode === 'light'", 5000);
     await app.cdp.click('#theme-swatches [data-theme="ocean"]'); // the accent themes are swatches (radio buttons)
     await segment('text-size', '15');
     await app.cdp.waitFor('state.prefs.textSize === 15', 5000);
     await ev("(() => { const m = document.querySelector('#motion'); if (m.checked) m.click(); return 0; })()");
-    await app.cdp.waitFor("document.body.dataset.layout === 'studio' && document.body.dataset.mode === 'light' && document.body.dataset.theme === 'ocean'", 5000);
+    await app.cdp.waitFor("document.body.dataset.theme === 'pro' && document.body.dataset.mode === 'light' && document.documentElement.dataset.mode === 'light' && state.prefs.theme === 'ocean'", 5000);
     await app.cdp.waitFor("state.prefs.motion === false", 5000);
     const p = readPrefs();
-    assert.deepEqual([p.layout, p.colorMode, p.theme, p.textSize, p.motion, p.designChosen], ['studio', 'light', 'ocean', 15, false, true]);
+    assert.deepEqual([p.appearance.theme, p.appearance.mode, p.colorMode, p.theme, p.textSize, p.motion, p.designChosen], ['pro', 'light', 'light', 'ocean', 15, false, true]);
+    assert.equal(p.layout, 'desk', 'the old layout field is kept as it was');
+    assert.equal(p.appearance.overrides.common['--font-size'], '15px', 'text size is an appearance override (Pro default is 13 px)');
+    assert.match(p.appearance.overrides.light['--accent'] || '', /^#[0-9a-f]{6}$/, 'the ocean accent is an appearance override');
+    assert.match(p.appearance.overrides.dark['--accent'] || '', /^#[0-9a-f]{6}$/);
+    assert.equal(await ev("getComputedStyle(document.documentElement).getPropertyValue('--font-size').trim()"), '15px');
+    assert.equal(await ev("getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()"), p.appearance.overrides.light['--accent']);
     assert.equal(await ev("getComputedStyle(document.documentElement).colorScheme.includes('light') || document.body.dataset.mode"), true);
   });
 
@@ -88,9 +94,10 @@ describe(`settings (${shell})`, () => {
   test('everything is applied again after a restart', async () => {
     await app.stop();
     await start();
-    assert.equal(await ev('document.body.dataset.layout'), 'studio');
+    assert.equal(await ev('document.body.dataset.theme'), 'pro');
     assert.equal(await ev('document.body.dataset.mode'), 'light');
-    assert.equal(await ev('document.body.dataset.theme'), 'ocean');
+    assert.equal(await ev('state.prefs.theme'), 'ocean');
+    assert.equal(await ev("getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()"), readPrefs().appearance.overrides.light['--accent']);
     assert.equal(await ev('document.documentElement.lang'), 'tr');
     assert.equal(await ev('state.prefs.responseTokens'), 2048);
     assert.equal(await ev("!document.getElementById('design-welcome') || getComputedStyle(document.getElementById('design-welcome')).display === 'none' || document.getElementById('design-welcome').getBoundingClientRect().height === 0"), true, 'the design choice is not asked again');

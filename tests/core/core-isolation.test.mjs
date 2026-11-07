@@ -342,7 +342,8 @@ describe('core isolation', () => {
       const index = await core.asset('/');
       assert.equal(index.status, 200);
       assert.equal(index.mime, 'text/html; charset=utf-8');
-      assert.match(String(index.body), /<body class="no-motion" data-layout="studio" data-mode="light" data-theme="ocean">/);
+      assert.match(String(index.body), /<body class="no-motion" data-theme="pro" data-mode="light">/);
+      for (const file of ['/appearance.js', '/ui/tokens.css', '/ui/base.css', '/ui/c-shell.css', '/ui/c-chat.css']) assert.equal((await core.asset(file)).status, 200, file);
       const css = await core.asset('/style.css');
       assert.equal(css.filePath, path.join(appDir, 'style.css'));
       assert.deepEqual(css.headers, { 'content-type': 'text/css; charset=utf-8' });

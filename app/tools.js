@@ -299,6 +299,6 @@ function syncSegmented(){
  }
 }
 const segmentedLocalize=localize;localize=function(){segmentedLocalize();if(state.ready)syncSegmented();};
-const segmentedApply=applyInterface;applyInterface=function(){segmentedApply();syncSegmented();};
+const segmentedApply=applyAppearance;applyAppearance=function(...args){const result=segmentedApply(...args);syncSegmented();return result;};
 const segmentedPaintTools=paintToolSettings;paintToolSettings=function(){segmentedPaintTools();syncSegmented();};
 window.addEventListener('lumen-ready',()=>syncSegmented(),{once:true});if(state.ready)syncSegmented();

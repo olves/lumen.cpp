@@ -1,16 +1,29 @@
 'use strict';
-Object.assign(translations,{interfaceDesign:['Interface design','Arayüz tasarımı'],interfaceHint:['Two layouts, the same local workspace.','İki tasarım, aynı yerel çalışma alanı.'],displayMode:['Display mode','Görünüm modu'],displayModeHint:['Light or dark, in either design.','Her iki tasarımda da açık veya koyu.'],darkMode:['Dark','Koyu'],lightMode:['Light','Açık'],makeYourselfAtHome:['MAKE YOURSELF AT HOME','KENDİ ALANINI SEÇ'],chooseDesign:['Choose your workspace.','Çalışma alanını seç.'],chooseDesignHint:['Pick a design that feels right. We’ll remember it next time.','Sana uygun tasarımı seç. Bir sonraki açılışta seçimini hatırlayacağız.'],deskDescription:['Compact navigation. A focused workspace.','Kompakt gezinme. Odaklanmış bir çalışma alanı.'],studioDescription:['Room to think. A softer, open canvas.','Düşünmeye yer aç. Ferah bir çalışma alanı.'],changeDesignLater:['You can change both in Settings → Appearance.','İkisini de Ayarlar → Görünüm’den değiştirebilirsin.'],openWorkspace:['Open workspace →','Çalışma alanını aç →']});
-let designDraft=null,modeDraft='dark',designSaving=false,designInitialized=false;
-function applyInterface(){document.body.dataset.layout=state.prefs.layout==='studio'?'studio':'desk';document.body.dataset.mode=state.prefs.colorMode==='light'?'light':'dark';document.documentElement.style.colorScheme=state.prefs.colorMode==='light'?'light':'dark';$('interface-design').value=document.body.dataset.layout;$('display-mode').value=document.body.dataset.mode;}
-const previousRefreshWorkspace=refreshWorkspace;refreshWorkspace=function(){previousRefreshWorkspace();applyInterface();};
-async function saveInterface(){if(designSaving)return;const previous=state.prefs;try{state.prefs=await api.preferences({...state.prefs,layout:$('interface-design').value,colorMode:$('display-mode').value});applyInterface();if(motionAllowed())$('chat-page').animate([{opacity:.65},{opacity:1}],{duration:180,easing:'ease-out'});}catch(e){state.prefs=previous;applyInterface();toast(e.message);}}
-$('interface-design').onchange=saveInterface;$('display-mode').onchange=saveInterface;
-function renderDesignChoice(){const mode=modeDraft;document.body.dataset.mode=mode;document.documentElement.style.colorScheme=mode;$('design-language').textContent=state.prefs.language==='tr'?'English':'Türkçe';document.querySelectorAll('[data-design]').forEach(card=>{card.setAttribute('aria-checked',String(card.dataset.design===designDraft));card.querySelector('img').src='previews/'+card.dataset.design+'-'+mode+'.png';});document.querySelectorAll('[data-mode-choice]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.modeChoice===mode)));$('design-continue').disabled=!designDraft||designSaving;}
-document.querySelectorAll('[data-design]').forEach(card=>card.onclick=()=>{if(designSaving)return;designDraft=card.dataset.design;renderDesignChoice();});
-document.querySelector('.design-cards').addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(event.key)||designSaving)return;event.preventDefault();const next=event.key==='Home'?'desk':event.key==='End'?'studio':designDraft==='desk'?'studio':'desk';designDraft=next;renderDesignChoice();document.querySelector('[data-design="'+next+'"]').focus();});
-document.querySelectorAll('[data-mode-choice]').forEach(button=>button.onclick=()=>{if(designSaving)return;modeDraft=button.dataset.modeChoice;renderDesignChoice();});
-$('design-welcome').addEventListener('cancel',event=>event.preventDefault());$('design-close').onclick=()=>api.window('close');
-$('design-language').onclick=async()=>{if(designSaving)return;try{state.prefs=await api.preferences({...state.prefs,language:state.prefs.language==='tr'?'en':'tr'});localize();renderDesignChoice();}catch(e){$('design-error').hidden=false;$('design-error').textContent=e.message;}};
-$('design-continue').onclick=async()=>{if(!designDraft||designSaving)return;designSaving=true;renderDesignChoice();$('design-error').hidden=true;try{state.prefs=await api.preferences({...state.prefs,layout:designDraft,colorMode:modeDraft,designChosen:true});applyInterface();$('design-welcome').close();if($('welcome').hidden){playOpening();$('prompt').focus();}else $('setup-gpu').disabled?$('setup-cpu').focus():$('setup-gpu').focus();}catch(e){$('design-error').hidden=false;$('design-error').textContent=e.message;}finally{designSaving=false;renderDesignChoice();applyInterface();}};
-function initializeDesign(){if(!state.ready||designInitialized)return;designInitialized=true;document.querySelectorAll('[data-i18n]').forEach(node=>node.textContent=t(node.dataset.i18n));applyInterface();if(state.prefs.designChosen!==true){designDraft=null;modeDraft=state.prefs.colorMode==='light'?'light':'dark';renderDesignChoice();$('design-welcome').showModal();if(motionAllowed())$('design-welcome').animate([{opacity:0},{opacity:1}],{duration:240,easing:'ease-out'});document.querySelector('[data-design="desk"]').focus();}}
-window.addEventListener('lumen-ready',()=>queueMicrotask(initializeDesign),{once:true});if(state.ready)queueMicrotask(initializeDesign);
+// One design for the whole app. prefs.appearance ({theme, mode, overrides, statusBar}; see appearance.js) is resolved into tokens
+// that are set on :root one by one (CSSOM, so the page's CSP stays strict); <html> and <body> carry data-theme and data-mode.
+// Until Settings → Appearance is rebuilt, the existing controls write prefs.appearance: Theme (the old design select),
+// Display mode, text size and the accent swatches (themes.js). Old preference fields are kept as they were.
+Object.assign(translations,{interfaceDesign:['Theme','Tema'],interfaceHint:['Colors, fonts and spacing for the whole app.','Uygulamanın tamamı için renkler, yazı tipleri ve aralıklar.'],
+ themeNative:['Native','Yerli Windows'],themeReading:['Reading','Okuma'],themePro:['Pro','Profesyonel'],
+ displayMode:['Display mode','Görünüm modu'],displayModeHint:['Light or dark, with any theme.','Her temada açık veya koyu.'],darkMode:['Dark','Koyu'],lightMode:['Light','Açık']});
+const appearanceModel=globalThis.LumenAppearance;
+function currentAppearance(){return appearanceModel.sanitizeAppearance(state.prefs.appearance);}
+// Applies an appearance (default: the saved one). A preview can pass an unsaved one; the next refresh puts the saved one back.
+function applyAppearance(appearance=currentAppearance()){
+ const root=document.documentElement,tokens=appearanceModel.resolveTokens(appearance);
+ for(const [name,value] of Object.entries(tokens))root.style.setProperty(name,value);
+ for(const node of [root,document.body]){node.dataset.theme=appearance.theme;node.dataset.mode=appearance.mode;}
+ delete document.body.dataset.layout;root.style.colorScheme=appearance.mode;
+ $('interface-design').value=appearance.theme;$('display-mode').value=appearance.mode;
+ return tokens;
+}
+const refreshWorkspaceBeforeAppearance=refreshWorkspace;refreshWorkspace=function(){refreshWorkspaceBeforeAppearance();applyAppearance();};
+// Saves a change to the appearance (merged by the core) together with any old fields that mirror it.
+let appearanceSaving=Promise.resolve();
+function saveAppearance(patch,legacy={}){
+ appearanceSaving=appearanceSaving.then(async()=>{const previous=state.prefs;try{state.prefs=await api.preferences({...state.prefs,...legacy,appearance:{...currentAppearance(),...patch}});applyAppearance();if(motionAllowed())$('chat-page').animate([{opacity:.75},{opacity:1}],{duration:120,easing:'ease-out'});}catch(e){state.prefs=previous;applyAppearance();toast(e.message);}});
+ return appearanceSaving;
+}
+$('interface-design').onchange=()=>saveAppearance({theme:$('interface-design').value});
+$('display-mode').onchange=()=>{const mode=$('display-mode').value;saveAppearance({mode},{colorMode:mode});};
+window.addEventListener('lumen-ready',()=>applyAppearance(),{once:true});if(state.ready)applyAppearance();

@@ -1,0 +1,91 @@
+/* Chat: page, empty state, messages, code blocks, composer and the line under it. Tokens only.
+   Message text uses --font-reading, code --font-mono, everything else --font-ui. Filled accent: the send button only. */
+.chat-page{display:flex;flex-direction:column}
+.chat-scroll{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}
+
+.empty{width:min(720px,calc(100% - 48px));margin:clamp(48px,28vh,240px) auto 24px;text-align:center}
+.empty-line{margin:0;font-size:var(--font-size);color:var(--text-muted)}
+
+.messages{width:min(720px,calc(100% - 48px));margin:0 auto;padding:20px 0 12px}
+.message{padding:10px 0;content-visibility:auto;contain-intrinsic-size:auto 160px}
+.message-meta{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:var(--font-size-small);color:var(--text-muted)}
+.message-meta .avatar{display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center}
+.message-meta .avatar img{display:block;width:16px;height:16px;border-radius:4px}
+.message-actions{margin-left:auto;display:flex;gap:2px;opacity:0;transition:opacity var(--duration) ease}
+.message:hover .message-actions,.message:focus-within .message-actions,.message.has-versions .message-actions{opacity:1}
+.message-actions button{padding:2px 7px;font-size:var(--font-size-small);color:var(--text-muted);border-radius:var(--radius)}
+.message-actions button:hover{background:var(--hover);color:var(--text)}
+
+.message-body{font-family:var(--font-reading);font-size:var(--font-size);line-height:1.65;color:var(--text);overflow-wrap:anywhere}
+.message-body p{margin:0 0 .8em}
+.message-body p:last-child{margin-bottom:0}
+.message-body h2,.message-body h3{margin:1.2em 0 .5em;font-family:var(--font-ui);font-size:calc(var(--font-size) + 1px);font-weight:600;color:var(--text)}
+.message-body ul,.message-body ol{margin:.6em 0;padding-left:1.4em}
+.message-body li+li{margin-top:.2em}
+.message-body :not(pre)>code{font:.88em var(--font-mono);padding:1px 5px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:calc(var(--radius) - 2px)}
+
+/* User turn: a quiet bubble on the right, UI font. */
+.message.user{display:flex;flex-direction:column;align-items:flex-end;padding:8px 0}
+.message.user .message-meta{order:2;margin:4px 0 0;min-height:0}
+.message.user .message-meta>.avatar,.message.user .message-meta>span:not(.avatar){display:none}
+.message.user .message-body{max-width:80%;padding:8px 13px;font-family:var(--font-ui);white-space:pre-wrap;background:var(--surface-3);border-radius:calc(var(--radius) + 4px)}
+
+.message.search-hit{animation:search-hit 1.2s ease}
+body.no-motion .message.search-hit{animation:none;outline:1px solid var(--focus)}
+@media (prefers-reduced-motion:reduce){.message.search-hit{animation:none;outline:1px solid var(--focus)}}
+
+/* Code blocks */
+.code-block,.md .code-block{position:relative;margin:.8em 0;overflow:hidden;background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius)}
+.code-heading,.md .code-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px 4px 12px;font-family:var(--font-ui);font-size:var(--font-size-small);color:var(--text-muted);background:var(--surface-2);border-bottom:1px solid var(--border)}
+.code-heading button{padding:2px 8px;font-size:var(--font-size-small);color:var(--text-muted);border-radius:calc(var(--radius) - 2px)}
+.code-heading button:hover{background:var(--surface-3);color:var(--text)}
+.code-block pre{margin:0;padding:10px 12px;overflow-x:auto;background:transparent}
+.code-block pre code,.md .code-block pre code{font:calc(var(--font-size) - 1.5px)/1.55 var(--font-mono);color:var(--text);background:transparent}
+.md .hljs-comment,.md .hljs-quote{color:var(--text-muted);font-style:italic}
+.md .hljs-keyword,.md .hljs-selector-tag,.md .hljs-literal,.md .hljs-built_in,.md .hljs-type{color:color-mix(in srgb,var(--accent) 75%,var(--text))}
+.md .hljs-string,.md .hljs-regexp,.md .hljs-addition,.md .hljs-attribute,.md .hljs-template-variable{color:color-mix(in srgb,var(--accent) 40%,var(--text))}
+.md .hljs-number,.md .hljs-symbol,.md .hljs-bullet,.md .hljs-variable,.md .hljs-meta{color:color-mix(in srgb,var(--danger) 55%,var(--text))}
+.md .hljs-title,.md .hljs-section,.md .hljs-name,.md .hljs-attr,.md .hljs-property{color:var(--text);font-weight:600}
+.md .hljs-deletion{color:var(--danger)}
+.md .hljs-emphasis{font-style:italic}
+.md .hljs-strong{font-weight:600}
+
+/* Composer */
+.composer-region{width:min(720px,calc(100% - 48px));margin:0 auto;padding:8px 0 12px;flex:none}
+.composer{position:relative;padding:11px 13px 9px;background:var(--surface-2);border:1px solid var(--border);border-radius:calc(var(--radius) * 2);transition:border-color var(--duration) ease,box-shadow var(--duration) ease}
+.composer:focus-within{border-color:var(--focus);box-shadow:0 0 0 1px var(--focus)}
+.composer textarea{display:block;width:100%;min-height:48px;max-height:230px;padding:0 2px 6px;resize:none;border:0;outline:none!important;background:none;font-family:var(--font-ui);font-size:var(--font-size);line-height:1.6;color:var(--text)}
+.composer textarea:focus-visible{box-shadow:none}
+.composer textarea::placeholder{color:var(--text-muted);opacity:1}
+.composer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:4px}
+.composer-tools,.composer-right{display:flex;align-items:center;gap:8px;min-width:0}
+.composer-right{margin-left:auto;max-width:72%}
+.composer-add{width:28px;height:28px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-muted);background:transparent;border-radius:var(--radius)}
+.composer-add:hover,.composer-add[aria-expanded=true]{background:var(--surface-3);color:var(--text)}
+.composer-add svg{width:16px;height:16px}
+.composer-local{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:var(--font-size-small);color:var(--text-muted)}
+.composer-local svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
+.composer-local.cloud{color:var(--text)}
+.composer .model-control{position:static;min-width:0;max-width:none}
+#model-trigger{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;padding:3px 8px;font-size:var(--font-size-small);color:var(--text);background:var(--surface-3);border:1px solid transparent;border-radius:var(--radius)}
+#model-trigger:hover,#model-trigger[aria-expanded=true]{border-color:var(--border)}
+#selected-model-name{max-width:300px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#selected-model-logo{display:inline-flex;flex:none}
+#selected-model-logo .model-logo{width:16px;height:16px;padding:0;border:0;border-radius:4px}
+#selected-model-logo img{width:16px;height:16px;border-radius:4px}
+#selected-model-logo svg{width:14px;height:14px}
+.send,.composer .send{width:30px;height:30px;flex:none;display:flex;align-items:center;justify-content:center;margin-left:0;color:var(--accent-text);background:var(--accent);border-radius:var(--radius)}
+.send:hover,.composer .send:hover{background:color-mix(in srgb,var(--accent) 88%,var(--text))}
+.send svg{width:16px;height:16px}
+.send.stopping,.composer .send.stopping{color:var(--text);background:var(--surface-3)}
+
+/* The line under the composer: hint on the left, context (numbers in mono) on the right. */
+.composer-foot{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:var(--font-size-small);color:var(--text-muted)}
+.context-wrap{position:relative}
+.context-toggle{display:flex;align-items:center;gap:6px;padding:3px 0 3px 4px;white-space:nowrap;font-family:var(--font-mono);font-size:var(--font-size-small);color:var(--text-muted)}
+.context-toggle:hover{color:var(--text)}
+.mini-meter{width:40px;height:4px;display:flex;overflow:hidden;background:var(--surface-3);border-radius:2px}
+.mini-meter>span{height:100%;width:0;max-width:100%;background:var(--accent)}
+
+@media (max-width:1000px){.composer-local{display:none}#selected-model-name{max-width:200px}.composer-right{max-width:85%}}
+@media (max-height:700px){.empty{margin-top:40px}.composer textarea{min-height:40px}}

@@ -1,5 +1,5 @@
 /* Research activity, sources, browser panel, tool settings and the download dock. Semantic tokens come from design.css. */
-.shell{position:relative}
+
 /* Composer */
 .tool-chip .tool-chip-note{color:var(--soft-ink);font-size:9.5px;white-space:nowrap}
 .web-consent{border:1px solid var(--selection-line);background:var(--panel-soft);border-radius:10px;padding:12px 14px;margin:0 0 12px;color:var(--ink)}
@@ -52,7 +52,7 @@ body[data-mode=light] .activity-task[data-status=done] .task-status-dot{backgrou
 .citation:hover{border-color:var(--selection-line)}
 /* Browser panel: the page itself is a native view placed over .browser-viewport */
 .browser-panel{flex:0 0 clamp(360px,44%,760px);min-width:0;display:flex;flex-direction:column;background:var(--bg);border-left:1px solid var(--border)}
-body[data-layout=studio] .browser-panel{border:1px solid var(--border);border-radius:12px;overflow:hidden}
+
 .settings-mode .browser-panel{display:none!important}
 .browser-toolbar{height:46px;flex:none;display:flex;align-items:center;gap:3px;padding:0 8px;border-bottom:1px solid var(--border)}
 .browser-toolbar .icon-button svg{width:15px;height:15px}
@@ -66,7 +66,7 @@ body[data-layout=studio] .browser-panel{border:1px solid var(--border);border-ra
 .browser-viewport{flex:1;min-height:0;position:relative;background:var(--panel-soft)}
 .browser-message{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:32px;text-align:center;color:var(--ink)}
 .browser-message strong{font-size:14px;font-weight:550}.browser-message p{font-size:11px;line-height:1.65;color:var(--secondary-ink);max-width:380px;margin:0 0 8px;overflow-wrap:anywhere}
-@media(max-width:1000px){.browser-panel{position:absolute;inset:0 0 0 auto;width:100%;z-index:12;border-left:0}body[data-layout=studio] .browser-panel{inset:0 8px 8px 8px;width:auto}}
+@media(max-width:1000px){.browser-panel{position:absolute;inset:0 0 0 auto;width:100%;z-index:12;border-left:0}}
 /* Settings */
 .tools-status{font-size:11px;line-height:1.6;color:var(--secondary-ink);padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--panel-soft);margin:0 0 6px}
 .tools-status.warning{color:var(--accent-ink);border-color:var(--selection-line)}

@@ -188,7 +188,7 @@ function migrate(prefs){
  return {...prefs,appearance:sanitize({theme,mode,overrides:o,statusBar:false})};
 }
 
-const api={THEME_IDS,MODES,THEMES,TOKEN_NAMES,COLOR_TOKENS,FONT_TOKENS,PAIRS,DEFAULT_APPEARANCE,contrast,resolveTokens,validateOverride,setOverride,clearOverride,resetOverrides,mergeAppearance,sanitizeAppearance:sanitize,migrateAppearance:migrate};
+const api={THEME_IDS,MODES,THEMES,TOKEN_NAMES,COLOR_TOKENS,FONT_TOKENS,PAIRS,DEFAULT_APPEARANCE,contrast,resolveTokens,validateOverride,setOverride,clearOverride,resetOverrides,mergeAppearance,sanitizeAppearance:sanitize,migrateAppearance:migrate,fitAccent,ACCENT_PRESETS:OLD_PRESET_ACCENT};
 if(typeof module!=='undefined'&&module.exports)module.exports=api;
 else{Object.assign(root,api);root.LumenAppearance=api;}
 })(typeof globalThis!=='undefined'?globalThis:this);

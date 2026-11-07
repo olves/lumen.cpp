@@ -1,4 +1,4 @@
-// Visual matrix: Desk/Studio x Light/Dark x English/Turkish over the chat (with a conversation that stresses the layout: a wide
+// Visual matrix: theme (native/reading/pro) x Light/Dark x English/Turkish over the chat (with a conversation that stresses the layout: a wide
 // table, a long code line, a long unbroken URL) and every Settings section, then 800x600. Per cell: the right layout/mode/language
 // is applied, the page does not overflow the window sideways, text is translated, and there are no console errors. Screenshots go to
 // <run>/shots for a human to look at (they are not compared automatically).
@@ -34,7 +34,7 @@ function seed() {
 }
 // One setting at a time: each change is saved asynchronously from the current preferences, so two changes made within the same few
 // milliseconds (which a person cannot do) could overwrite each other. Waits until the page shows the new value.
-const PREF = { language: 'language', 'interface-design': 'layout', 'display-mode': 'colorMode' };
+const PREF = { language: 'language', 'interface-design': 'appearance.theme', 'display-mode': 'appearance.mode' };
 const setSelect = async (id, value) => {
   await ev(`(() => { const s = document.getElementById(${JSON.stringify(id)}); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change')); return 0; })()`);
   await app.cdp.waitFor(`state.prefs.${PREF[id]} === ${JSON.stringify(value)}`, 5000);
@@ -53,11 +53,12 @@ const OVERFLOW = `(() => {
   return { scroll: document.documentElement.scrollWidth, body: document.body.scrollWidth, w: W, bad };
 })()`;
 
-async function checkCell(label, layout, mode, lang) {
+async function checkCell(label, theme, mode, lang) {
   const o = await ev(OVERFLOW);
   assert.ok(o.scroll <= o.w && o.body <= o.w, `${label}: horizontal overflow ${JSON.stringify(o)}`);
   assert.deepEqual(o.bad, [], `${label}: elements outside the window`);
-  assert.equal(await ev('document.body.dataset.layout'), layout, label);
+  assert.equal(await ev('document.body.dataset.theme'), theme, label);
+  assert.equal(await ev('document.documentElement.dataset.theme'), theme, label);
   assert.equal(await ev('document.body.dataset.mode'), mode, label);
   assert.equal(await ev('document.documentElement.lang'), lang, label);
 }
@@ -82,7 +83,7 @@ describe(`layout matrix (${shell})`, () => {
   });
 
   for (const lang of ['en', 'tr'])
-    for (const layout of ['desk', 'studio'])
+    for (const layout of ['native', 'reading', 'pro'])
       for (const mode of ['dark', 'light']) {
         const label = `${layout}/${mode}/${lang}`;
         test(`${label}: chat and every settings section`, { timeout: 120000 }, async () => {
@@ -90,7 +91,7 @@ describe(`layout matrix (${shell})`, () => {
           await app.cdp.waitFor(`state.prefs.language === '${lang}'`, 5000);
           await setSelect('interface-design', layout);
           await setSelect('display-mode', mode);
-          await app.cdp.waitFor(`document.body.dataset.layout === '${layout}' && document.body.dataset.mode === '${mode}'`, 5000);
+          await app.cdp.waitFor(`document.body.dataset.theme === '${layout}' && document.body.dataset.mode === '${mode}'`, 5000);
           // Chat
           await ev("setPage('chat'); 0");
           await app.cdp.waitFor("document.querySelectorAll('.message.assistant').length === 1", 5000);
@@ -117,14 +118,14 @@ describe(`layout matrix (${shell})`, () => {
     assert.notEqual(globalThis.__navText.en, globalThis.__navText.tr, JSON.stringify(globalThis.__navText));
   });
 
-  test('800x600: chat and settings (Desk and Studio, dark and light, both languages)', { timeout: 180000 }, async () => {
+  test('800x600: chat and settings (three themes, dark and light, both languages)', { timeout: 180000 }, async () => {
     // Electron's DevTools endpoint has no Browser.setWindowBounds, so the 800x600 viewport is emulated.
     await app.cdp.send('Emulation.setDeviceMetricsOverride', { width: 800, height: 600, deviceScaleFactor: 1, mobile: false });
     await app.cdp.waitFor('window.innerWidth === 800', 5000);
-    for (const lang of ['en', 'tr']) for (const layout of ['desk', 'studio']) for (const mode of ['dark', 'light']) {
+    for (const lang of ['en', 'tr']) for (const layout of ['native', 'reading', 'pro']) for (const mode of ['dark', 'light']) {
       const label = `800x600 ${layout}/${mode}/${lang}`;
       await setSelect('language', lang); await setSelect('interface-design', layout); await setSelect('display-mode', mode);
-      await app.cdp.waitFor(`document.body.dataset.layout === '${layout}' && document.body.dataset.mode === '${mode}' && state.prefs.language === '${lang}'`, 5000);
+      await app.cdp.waitFor(`document.body.dataset.theme === '${layout}' && document.body.dataset.mode === '${mode}' && state.prefs.language === '${lang}'`, 5000);
       await ev("setPage('chat'); 0");
       await checkCell(label + ' chat', layout, mode, lang);
       await app.cdp.screenshot(path.join(shots, `${label.replace(/[ /]/g, '-')}-chat.png`));

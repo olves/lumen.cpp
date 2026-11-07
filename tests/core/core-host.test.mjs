@@ -439,7 +439,8 @@ describe('core host', () => {
     assert.equal(index.status, 200);
     assert.match(index.headers['content-type'], /^text\/html/);
     assert.equal(typeof index.body, 'string');
-    assert.match(index.body, /<body data-layout="studio" data-mode="light"/, 'index.html carries the saved design');
+    assert.match(index.body, /<body data-theme="pro" data-mode="light">/, 'index.html carries the saved appearance (studio migrates to pro)');
+    assert.match(index.body, /<html lang="en" data-theme="pro" data-mode="light">/);
     assert.equal(index.filePath, undefined);
     const css = await shell.asset('/style.css');
     assert.equal(css.status, 200);

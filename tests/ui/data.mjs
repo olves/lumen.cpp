@@ -31,7 +31,7 @@ function installedName(model) {
 
 export function prepareData(dataDir, model) {
   fs.mkdirSync(path.join(dataDir, 'models'), { recursive: true });
-  // A fresh profile would show the one-time Desk/Studio design choice, which covers the UI.
+  // Old-style preferences (desk, dark): the core migrates them to prefs.appearance (native theme).
   const prefs = path.join(dataDir, 'desktop-preferences.json');
   if (!fs.existsSync(prefs)) fs.writeFileSync(prefs, JSON.stringify({ layout: 'desk', colorMode: 'dark', designChosen: true }));
   // ...and the one-time GPU engine screen; the bundled CPU engine is enough for tests.

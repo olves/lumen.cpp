@@ -1,0 +1,15 @@
+/* Base: page, type, focus, selection, scrollbars, motion. Tokens only. */
+:root{font-family:var(--font-ui);font-size:var(--font-size-ui)}
+body{background:var(--surface-0);color:var(--text);font-family:var(--font-ui);font-size:var(--font-size-ui);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font-family:inherit}
+code,kbd,pre,samp{font-family:var(--font-mono)}
+::selection{background:color-mix(in srgb,var(--accent) 30%,transparent);color:var(--text)}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--surface-3);border:2px solid transparent;background-clip:padding-box;border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:var(--border);background-clip:padding-box;border:2px solid transparent}
+
+/* Motion: short transitions only, none with reduced motion or with Motion off in Settings. */
+body.no-motion *,body.no-motion *::before,body.no-motion *::after{transition:none!important;animation:none!important}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
