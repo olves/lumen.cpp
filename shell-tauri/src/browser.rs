@@ -372,7 +372,11 @@ struct View {
 struct RenderJob {
     id: String,
     url: Option<String>,
+    generation: u64,
 }
+
+/// A request of the core: id, method, args and the core generation that sent it.
+type Request = (String, String, Vec<Value>, u64);
 
 pub struct Browser {
     app: AppHandle,
@@ -386,9 +390,11 @@ pub struct Browser {
     seq: AtomicU64,
     render_generation: AtomicU64,
     renders: mpsc::UnboundedSender<RenderJob>,
-    queue: mpsc::UnboundedSender<(String, String, Vec<Value>)>,
+    queue: mpsc::UnboundedSender<Request>,
     cancelled: Mutex<HashSet<String>>,
     current: Mutex<Option<(String, Arc<Notify>)>>,
+    /// Raised by reset() (the core died): a webview being built for the old core is destroyed instead of kept.
+    epoch: AtomicU64,
 }
 
 static BROWSER: OnceLock<Arc<Browser>> = OnceLock::new();
@@ -397,22 +403,32 @@ const NAVIGATE: usize = 0;
 const POPUP: usize = 1;
 const STATE: usize = 2;
 
-/// A browser request of the core, called in the order the requests were read. The answer goes back with core.answer(id).
-pub fn dispatch(app: &AppHandle, id: String, method: String, args: Vec<Value>) {
+/// A browser request of core `generation`, called in the order the requests were read. The answer goes back with
+/// core.answer(id, generation); requests of a core that has died are not run (their answers would be dropped anyway).
+pub fn dispatch(app: &AppHandle, id: String, method: String, args: Vec<Value>, generation: u64) {
     let browser = BROWSER.get_or_init(|| start(app));
     if method == "browser.cancel" {
         let answer = validate(&method, &args).map(|_| {
             browser.cancel(args[0].as_str().unwrap_or_default());
             Value::Null
         });
-        return browser.answer(id, answer);
+        return browser.answer(id, generation, answer);
     }
-    let _ = browser.queue.send((id, method, args));
+    let _ = browser.queue.send((id, method, args, generation));
+}
+
+/// The core died (it is about to be restarted, or the app ends): its proxy, session and callbacks are gone with it. The panel
+/// and the renderer are closed, the proxy settings and forwarding flags cleared, a running render stopped and queued work of
+/// the old core dropped, so the new core's browser.configure and browser.create start clean.
+pub fn reset() {
+    if let Some(b) = BROWSER.get() {
+        b.reset();
+    }
 }
 
 fn start(app: &AppHandle) -> Arc<Browser> {
     let shell = app.state::<crate::Shell>();
-    let (queue, mut requests) = mpsc::unbounded_channel::<(String, String, Vec<Value>)>();
+    let (queue, mut requests) = mpsc::unbounded_channel::<Request>();
     let (renders, mut jobs) = mpsc::unbounded_channel::<RenderJob>();
     let browser = Arc::new(Browser {
         app: app.clone(),
@@ -429,32 +445,37 @@ fn start(app: &AppHandle) -> Arc<Browser> {
         queue,
         cancelled: Mutex::new(HashSet::new()),
         current: Mutex::new(None),
+        epoch: AtomicU64::new(0),
     });
     let b = browser.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some((id, method, args)) = requests.recv().await {
+        while let Some((id, method, args, generation)) = requests.recv().await {
+            if !b.current_core(generation) {
+                b.answer(id, generation, Err(crate::core::GONE.into()));
+                continue;
+            }
             if let Err(e) = validate(&method, &args) {
-                b.answer(id, Err(e));
+                b.answer(id, generation, Err(e));
                 continue;
             }
             match method.as_str() {
                 "browser.render" => {
-                    let _ = b.renders.send(RenderJob { id, url: Some(args[0].as_str().unwrap_or_default().to_string()) });
+                    let _ = b.renders.send(RenderJob { id, url: Some(args[0].as_str().unwrap_or_default().to_string()), generation });
                 }
                 "browser.clearData" => {
-                    let _ = b.renders.send(RenderJob { id, url: None });
+                    let _ = b.renders.send(RenderJob { id, url: None, generation });
                 }
                 // These wait for pages: beside the queue, like Electron's promises.
                 "browser.waitIdle" | "browser.evalIsolated" => {
                     let b = b.clone();
                     tauri::async_runtime::spawn(async move {
                         let answer = b.run(&method, &args).await;
-                        b.answer(id, answer);
+                        b.answer(id, generation, answer);
                     });
                 }
                 _ => {
                     let answer = b.run(&method, &args).await;
-                    b.answer(id, answer);
+                    b.answer(id, generation, answer);
                 }
             }
         }
@@ -463,19 +484,50 @@ fn start(app: &AppHandle) -> Arc<Browser> {
     tauri::async_runtime::spawn(async move {
         while let Some(job) = jobs.recv().await {
             let answer = match &job.url {
+                _ if !b.current_core(job.generation) => Err(crate::core::GONE.to_string()),
                 None => b.clear_data().await.map(|_| Value::Null),
                 Some(_) if b.cancelled.lock().map(|mut c| c.remove(&job.id)).unwrap_or(false) => Err("Cancelled".to_string()),
                 Some(url) => b.render_page(&job.id, url).await,
             };
-            b.answer(job.id, answer);
+            b.answer(job.id, job.generation, answer);
         }
     });
     browser
 }
 
 impl Browser {
-    fn answer(&self, id: String, answer: Result<Value, String>) {
-        self.app.state::<crate::Shell>().core.answer(id, answer);
+    fn answer(&self, id: String, generation: u64, answer: Result<Value, String>) {
+        self.app.state::<crate::Shell>().core.answer(id, generation, answer);
+    }
+
+    fn current_core(&self, generation: u64) -> bool {
+        self.app.state::<crate::Shell>().core.is_current(generation)
+    }
+
+    fn reset(&self) {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut s) = self.session.lock() {
+            *s = None;
+        }
+        self.privacy.store(true, Ordering::SeqCst);
+        for f in &self.forward {
+            f.store(false, Ordering::SeqCst);
+        }
+        // The renderer's idle timer must not close a renderer made later for the new core.
+        self.render_generation.fetch_add(1, Ordering::SeqCst);
+        if let Ok(current) = self.current.lock() {
+            if let Some((_, stop)) = current.as_ref() {
+                stop.notify_one();
+            }
+        }
+        if let Ok(mut c) = self.cancelled.lock() {
+            c.clear();
+        }
+        for view in [self.panel.lock().ok().and_then(|mut p| p.take()), self.render.lock().ok().and_then(|mut r| r.take())].into_iter().flatten() {
+            view.page.find_active.store(false, Ordering::SeqCst);
+            view.page.settle_load(Err("The browser was reset.".into()));
+            view.handle.destroy();
+        }
     }
 
     fn emit(&self, which: usize, payload: Value) {
@@ -688,6 +740,7 @@ impl Browser {
     /// Creates the panel (a hidden child of the main window, placed by browser.show) or the hidden renderer window. Nothing remote
     /// loads before every handler is registered; if they cannot all be registered the webview is destroyed (fail closed).
     async fn build(self: &Arc<Self>, kind: Kind, javascript: bool) -> Result<View, String> {
+        let epoch = self.epoch.load(Ordering::SeqCst);
         let session = self.session()?;
         let label = format!("{}-{}", if kind == Kind::Panel { "browser" } else { "render" }, self.seq.fetch_add(1, Ordering::SeqCst) + 1);
         let page = Page::new(kind);
@@ -753,7 +806,8 @@ impl Browser {
         let headers = match guarded {
             Ok(()) => self.headers(&view).await,
             Err(e) => Err(e),
-        };
+        }
+        .and_then(|_| if self.epoch.load(Ordering::SeqCst) == epoch { Ok(()) } else { Err("The browser was reset.".to_string()) });
         if let Err(e) = headers {
             handle.destroy();
             return Err(e);

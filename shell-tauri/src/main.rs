@@ -33,8 +33,10 @@ fn port_in(text: &str) -> Option<u16> {
     text.split_whitespace().find_map(|a| a.strip_prefix("--remote-debugging-port=")).and_then(|p| p.parse().ok()).filter(|p| *p != 0)
 }
 
-/// `test_dir`: LUMEN_TEST_DIR, `browser_args`: WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, `local`: %LOCALAPPDATA%, `roaming`: %APPDATA%.
-fn parse_args(argv: &[String], test_dir: Option<String>, browser_args: Option<String>, local: &Path, roaming: &Path) -> Args {
+/// `test_dir`: LUMEN_TEST_DIR, `browser_args`: WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS, `local`: %LOCALAPPDATA%, `roaming`: %APPDATA%,
+/// `cwd`: the working directory a relative --test-data / LUMEN_TEST_DIR is resolved against, once, here: the shell and the core
+/// (which runs in the app folder) then use the same absolute folder.
+fn parse_args(argv: &[String], test_dir: Option<String>, browser_args: Option<String>, local: &Path, roaming: &Path, cwd: &Path) -> Args {
     // Test mode (spec 6.5) needs both the `ui-check` build feature and the flag; a production build ignores the flag entirely
     // (no core test overrides, single instance kept, window on screen).
     #[cfg(feature = "ui-check")]
@@ -42,6 +44,7 @@ fn parse_args(argv: &[String], test_dir: Option<String>, browser_args: Option<St
     #[cfg(not(feature = "ui-check"))]
     let ui_check = false;
     let data = argv.iter().find_map(|a| a.strip_prefix("--test-data=")).map(PathBuf::from).or(test_dir.map(PathBuf::from)).unwrap_or_else(|| local.join("lumen.cpp"));
+    let data = if data.is_absolute() { data } else { cwd.join(data) };
     // The debugging port exists only in builds made with the `ui-check` feature, and only with --ui-check.
     #[cfg(feature = "ui-check")]
     let debug_port = if ui_check { argv.iter().find_map(|a| port_in(a)).or_else(|| browser_args.as_deref().and_then(port_in)) } else { None };
@@ -92,6 +95,36 @@ fn fatal_message(tr: bool, timed_out: bool, restarting: bool) -> String {
     format!("{what}{next}")
 }
 
+fn locked_message(tr: bool, pid: Option<u32>) -> String {
+    let pid = pid.map(|p| if tr { format!(" (işlem {p})") } else { format!(" (process {p})") }).unwrap_or_default();
+    if tr {
+        format!("Lumen bu veri klasörüyle zaten çalışıyor{pid}. Açık olan Lumen penceresini kullanın ya da onu kapatıp yeniden deneyin.")
+    } else {
+        format!("Lumen is already running with this data folder{pid}. Use the open Lumen window, or close it and try again.")
+    }
+}
+
+/// The PID on the first line of <data>/core.lock (the Lumen that holds the folder).
+fn lock_holder(data: &Path) -> Option<u32> {
+    std::fs::read_to_string(data.join("core.lock")).ok()?.lines().next()?.trim().parse().ok()
+}
+
+/// Startup cannot go on: the reason goes to desktop-startup-error.log and, outside test runs (a modal box would block the
+/// harness), into a native message box, then the app exits.
+fn fail_visibly(app: &AppHandle, data: &Path, title: &str, message: String) {
+    window::append(&data.join("desktop-startup-error.log"), &message);
+    let ui_check = app.state::<Shell>().ui_check;
+    let app = app.clone();
+    let title = title.to_string();
+    std::thread::spawn(move || {
+        if !ui_check {
+            let _ = rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title(&title).set_description(&message).set_buttons(rfd::MessageButtons::Ok).show();
+        }
+        app.state::<Shell>().core.kill();
+        app.exit(1);
+    });
+}
+
 fn emit(app: &AppHandle, channel: &str, payload: Value) {
     let _ = app.emit_to(window::MAIN, "lumen-event", json!({"channel": channel, "payload": payload}));
 }
@@ -132,8 +165,18 @@ async fn startup(app: AppHandle, args: Args) {
         _ => tauri::window::Color(0x1c, 0x1c, 0x1b, 0xff),
     };
     let options = window::Options { data: args.data.clone(), ui_check: args.ui_check, background, debug_port: args.debug_port };
-    if let Err(e) = window::create_main(&app, &options) {
-        startup_failed(&app, &args.data, &format!("The window could not be created: {e}"));
+    let guarded = match window::create_main(&app, &options) {
+        Ok((_, guarded)) => guarded,
+        Err(e) => return startup_failed(&app, &args.data, &format!("The window could not be created: {e}")),
+    };
+    // Without the permission and new-window guards the window is not kept (fail closed, like the preview window).
+    if let Err(e) = guarded.await {
+        if let Some(w) = app.get_webview_window(window::MAIN) {
+            let _ = w.destroy();
+        }
+        let tr = language_is_tr(&args.data);
+        let text = if tr { format!("Lumen penceresi güvenli biçimde açılamadı ({e}). Lumen'i yeniden başlatın.") } else { format!("Lumen's window could not be secured ({e}). Restart Lumen.") };
+        fail_visibly(&app, &args.data, "lumen.cpp", text);
     }
 }
 
@@ -162,7 +205,8 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let local = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default());
     let roaming = PathBuf::from(std::env::var("APPDATA").unwrap_or_default());
-    let args = parse_args(&argv, std::env::var("LUMEN_TEST_DIR").ok(), std::env::var(BROWSER_ARGS_ENV).ok(), &local, &roaming);
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let args = parse_args(&argv, std::env::var("LUMEN_TEST_DIR").ok(), std::env::var(BROWSER_ARGS_ENV).ok(), &local, &roaming, &cwd);
     // WebView2 would honour these variables on its own (a debugging port among others): none reaches the webview. The port of
     // a ui-check build was read above.
     for name in webview2_vars(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok())) {
@@ -212,20 +256,27 @@ fn main() {
             let notify = Box::new(move |notice: core::Notice| match notice {
                 core::Notice::Event { channel, payload } => emit(&notify_app, &channel, payload),
                 // Browser requests run in the order they arrive (browser.rs keeps its own queue).
-                core::Notice::Platform { id, method, args } if method.starts_with("browser.") => browser::dispatch(&notify_app, id, method, args),
-                core::Notice::Platform { id, method, args } => {
+                core::Notice::Platform { id, method, args, generation } if method.starts_with("browser.") => browser::dispatch(&notify_app, id, method, args, generation),
+                core::Notice::Platform { id, method, args, generation } => {
                     let app = notify_app.clone();
                     tauri::async_runtime::spawn(async move {
                         let (answer, quit) = platform::handle(&app, &method, &args).await;
-                        app.state::<Shell>().core.answer(id, answer);
+                        // Dropped if the core that asked has died meanwhile (Core::answer).
+                        app.state::<Shell>().core.answer(id, generation, answer);
                         if quit {
                             begin_exit(&app);
                         }
                     });
                 }
                 core::Notice::Fatal { timed_out, restarting } => {
+                    // The browser webviews used the dead core's proxy: closed now, before the new core configures its own.
+                    browser::reset();
                     let message = fatal_message(language_is_tr(&notify_data), timed_out, restarting);
                     emit(&notify_app, "engine-event", json!({"type": "fatal", "data": {"message": message}}));
+                }
+                core::Notice::Locked => {
+                    let tr = language_is_tr(&notify_data);
+                    fail_visibly(&notify_app, &notify_data, if tr { "lumen.cpp zaten açık" } else { "lumen.cpp is already open" }, locked_message(tr, lock_holder(&notify_data)));
                 }
             });
             let core = core::Core::new(
@@ -275,18 +326,18 @@ mod tests {
     #[test]
     fn data_folder() {
         let local = Path::new("L");
-        assert_eq!(parse_args(&argv(&[]), None, None, local, Path::new("R")).data, PathBuf::from("L").join("lumen.cpp"));
-        assert_eq!(parse_args(&argv(&["--test-data=C:\\t\\d"]), None, None, local, Path::new("R")).data, PathBuf::from("C:\\t\\d"));
-        assert_eq!(parse_args(&argv(&[]), Some("E".into()), None, local, Path::new("R")).data, PathBuf::from("E"));
+        assert_eq!(parse_args(&argv(&[]), None, None, local, Path::new("R"), Path::new("C:\\w")).data, Path::new(r"C:\w").join("L").join("lumen.cpp"));
+        assert_eq!(parse_args(&argv(&["--test-data=C:\\t\\d"]), None, None, local, Path::new("R"), Path::new("C:\\w")).data, PathBuf::from("C:\\t\\d"));
+        assert_eq!(parse_args(&argv(&[]), Some("E".into()), None, local, Path::new("R"), Path::new("C:\\w")).data, PathBuf::from(r"C:\w\E"));
     }
 
     #[test]
     fn electron_user_data_folder() {
         let (local, roaming) = (Path::new("L"), Path::new("R"));
-        assert_eq!(parse_args(&argv(&[]), None, None, local, roaming).electron_data, PathBuf::from("R").join("lumen.cpp"));
+        assert_eq!(parse_args(&argv(&[]), None, None, local, roaming, Path::new("C:\\w")).electron_data, PathBuf::from("R").join("lumen.cpp"));
         // A production build ignores the test flags: the secrets key stays the user's.
-        let test = parse_args(&argv(&["--ui-check", r"--test-data=C:\t\d", r"--user-data-dir=C:\t\d-profile"]), None, None, local, roaming);
-        let default = parse_args(&argv(&["--ui-check", r"--test-data=C:\t\d"]), None, None, local, roaming);
+        let test = parse_args(&argv(&["--ui-check", r"--test-data=C:\t\d", r"--user-data-dir=C:\t\d-profile"]), None, None, local, roaming, Path::new("C:\\w"));
+        let default = parse_args(&argv(&["--ui-check", r"--test-data=C:\t\d"]), None, None, local, roaming, Path::new("C:\\w"));
         if cfg!(feature = "ui-check") {
             assert_eq!(test.electron_data, PathBuf::from(r"C:\t\d-profile"));
             assert_eq!(default.electron_data, PathBuf::from(r"C:\t\d").join("electron-userdata"));
@@ -299,9 +350,9 @@ mod tests {
     #[test]
     fn debugging_port_needs_the_feature_and_ui_check() {
         let local = Path::new("L");
-        let with = parse_args(&argv(&["--ui-check", "--remote-debugging-port=9333"]), None, None, local, Path::new("R"));
-        let from_env = parse_args(&argv(&["--ui-check"]), None, Some("--foo --remote-debugging-port=9444".into()), local, Path::new("R"));
-        let without = parse_args(&argv(&["--remote-debugging-port=9333"]), None, Some("--remote-debugging-port=9444".into()), local, Path::new("R"));
+        let with = parse_args(&argv(&["--ui-check", "--remote-debugging-port=9333"]), None, None, local, Path::new("R"), Path::new("C:\\w"));
+        let from_env = parse_args(&argv(&["--ui-check"]), None, Some("--foo --remote-debugging-port=9444".into()), local, Path::new("R"), Path::new("C:\\w"));
+        let without = parse_args(&argv(&["--remote-debugging-port=9333"]), None, Some("--remote-debugging-port=9444".into()), local, Path::new("R"), Path::new("C:\\w"));
         assert_eq!(without.debug_port, None);
         if cfg!(feature = "ui-check") {
             assert_eq!(with.debug_port, Some(9333));
@@ -315,14 +366,29 @@ mod tests {
     #[test]
     fn test_mode_needs_the_feature_and_the_flag() {
         let local = Path::new("L");
-        assert_eq!(parse_args(&argv(&["--ui-check"]), None, None, local, Path::new("R")).ui_check, cfg!(feature = "ui-check"));
-        assert!(!parse_args(&argv(&[]), None, None, local, Path::new("R")).ui_check);
+        assert_eq!(parse_args(&argv(&["--ui-check"]), None, None, local, Path::new("R"), Path::new("C:\\w")).ui_check, cfg!(feature = "ui-check"));
+        assert!(!parse_args(&argv(&[]), None, None, local, Path::new("R"), Path::new("C:\\w")).ui_check);
     }
 
     #[test]
     fn all_webview2_variables_are_cleared() {
         let names = ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "webview2_user_data_folder", "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", "PATH", "LUMEN_TEST_DIR", "XWEBVIEW2_"];
         assert_eq!(webview2_vars(names.iter().map(|s| s.to_string())), vec!["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "webview2_user_data_folder", "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"]);
+    }
+
+    #[test]
+    fn a_relative_test_folder_is_made_absolute_once() {
+        let cwd = Path::new(r"C:\work\run");
+        let (local, roaming) = (Path::new("L"), Path::new("R"));
+        assert_eq!(parse_args(&argv(&["--test-data=rel\\data"]), None, None, local, roaming, cwd).data, PathBuf::from(r"C:\work\run\rel\data"));
+        assert_eq!(parse_args(&argv(&[]), Some("env-dir".into()), None, local, roaming, cwd).data, PathBuf::from(r"C:\work\run\env-dir"));
+        assert_eq!(parse_args(&argv(&[r"--test-data=D:\abs"]), None, None, local, roaming, cwd).data, PathBuf::from(r"D:\abs"));
+    }
+
+    #[test]
+    fn locked_texts_in_both_languages() {
+        assert_eq!(locked_message(false, Some(42)), "Lumen is already running with this data folder (process 42). Use the open Lumen window, or close it and try again.");
+        assert!(locked_message(true, None).starts_with("Lumen bu veri klasörüyle zaten çalışıyor. "));
     }
 
     #[test]

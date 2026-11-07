@@ -38,7 +38,10 @@ fn browser_args(_debug_port: Option<u16>) -> String {
     args
 }
 
-pub fn create_main(app: &AppHandle, o: &Options) -> tauri::Result<WebviewWindow> {
+/// The window and the result of its WebView2 hardening (see harden()); the caller closes the app if that fails.
+pub type Guarded = std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>;
+
+pub fn create_main(app: &AppHandle, o: &Options) -> tauri::Result<(WebviewWindow, Guarded)> {
     let url = WebviewUrl::CustomProtocol("lumen://localhost/".parse().expect("valid url"));
     let mut builder = WebviewWindowBuilder::new(app, MAIN, url)
         .title("lumen.cpp")
@@ -67,7 +70,7 @@ pub fn create_main(app: &AppHandle, o: &Options) -> tauri::Result<WebviewWindow>
     }
     let window = builder.build()?;
     let log = o.data.join("renderer.log");
-    harden(&window, log.clone());
+    let guarded = harden(&window, log.clone());
     if !o.ui_check {
         // If the page never reports Finished (a stuck load), the window still appears.
         let late = window.clone();
@@ -80,16 +83,36 @@ pub fn create_main(app: &AppHandle, o: &Options) -> tauri::Result<WebviewWindow>
             }
         });
     }
-    Ok(window)
+    Ok((window, guarded))
+}
+
+/// Test builds only (--ui-check, LUMEN_MAIN_FAIL_HARDEN=1): the main window's hardening fails, as if WebView2 refused the
+/// permission handler. A seam for the fail-closed test; production builds have no such path.
+#[cfg(feature = "ui-check")]
+fn forced_failure() -> bool {
+    std::env::var("LUMEN_MAIN_FAIL_HARDEN").map(|v| v == "1").unwrap_or(false)
+}
+#[cfg(not(feature = "ui-check"))]
+fn forced_failure() -> bool {
+    false
 }
 
 /// WebView2 events Tauri does not cover: permission requests are denied, new windows are refused (Tauri's on_new_window
 /// already does it; this is the same rule at the WebView2 level), renderer process failures go to <data>/renderer.log.
-fn harden(window: &WebviewWindow, log: PathBuf) {
+/// The result says whether the permission and new-window guards are in place (a failure is also written to renderer.log);
+/// the crash log alone failing to register is only logged.
+fn harden(window: &WebviewWindow, log: PathBuf) -> Guarded {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let fail_log = log.clone();
+    let forced = forced_failure();
     let result = window.with_webview(move |webview| unsafe {
         use webview2_com::Microsoft::Web::WebView2::Win32::*;
         use webview2_com::{NewWindowRequestedEventHandler, PermissionRequestedEventHandler, ProcessFailedEventHandler};
-        let Ok(core) = webview.controller().CoreWebView2() else { return };
+        let core = match webview.controller().CoreWebView2() {
+            Ok(core) if !forced => core,
+            Ok(_) => return drop(tx.send(Err("hardening refused (test)".into()))),
+            Err(e) => return drop(tx.send(Err(e.message()))),
+        };
         let mut token = 0i64;
         let denied = PermissionRequestedEventHandler::create(Box::new(|_, args| {
             if let Some(args) = args {
@@ -97,14 +120,19 @@ fn harden(window: &WebviewWindow, log: PathBuf) {
             }
             Ok(())
         }));
-        let _ = core.add_PermissionRequested(&denied, &mut token);
+        if let Err(e) = core.add_PermissionRequested(&denied, &mut token) {
+            return drop(tx.send(Err(format!("PermissionRequested: {}", e.message()))));
+        }
         let refused = NewWindowRequestedEventHandler::create(Box::new(|_, args| {
             if let Some(args) = args {
                 args.SetHandled(true)?;
             }
             Ok(())
         }));
-        let _ = core.add_NewWindowRequested(&refused, &mut token);
+        if let Err(e) = core.add_NewWindowRequested(&refused, &mut token) {
+            return drop(tx.send(Err(format!("NewWindowRequested: {}", e.message()))));
+        }
+        let crash_log = log.clone();
         let failed = ProcessFailedEventHandler::create(Box::new(move |_, args| {
             let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND(-1);
             if let Some(args) = args {
@@ -113,11 +141,24 @@ fn harden(window: &WebviewWindow, log: PathBuf) {
             append(&log, &format!("{{\"type\":\"process-failed\",\"kind\":{},\"at\":{}}}", kind.0, now_ms()));
             Ok(())
         }));
-        let _ = core.add_ProcessFailed(&failed, &mut token);
+        if let Err(e) = core.add_ProcessFailed(&failed, &mut token) {
+            append(&crash_log, &format!("{{\"type\":\"harden-warning\",\"handler\":\"ProcessFailed\",\"error\":{},\"at\":{}}}", serde_json::Value::String(e.message()), now_ms()));
+        }
+        let _ = tx.send(Ok(()));
     });
-    if let Err(e) = result {
-        eprintln!("[window] webview hardening failed: {e}");
-    }
+    // If the webview cannot be reached, the closure (and its sender) is dropped: the receiver below reports the failure.
+    drop(result);
+    Box::pin(async move {
+        let outcome = match tokio::time::timeout(Duration::from_secs(10), rx).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(_)) => Err("the webview is unavailable".into()),
+            Err(_) => Err("no answer from the webview".into()),
+        };
+        if let Err(e) = &outcome {
+            append(&fail_log, &format!("{{\"type\":\"harden-failed\",\"window\":\"main\",\"error\":{},\"at\":{}}}", serde_json::Value::String(e.clone()), now_ms()));
+        }
+        outcome
+    })
 }
 
 fn now_ms() -> u128 {

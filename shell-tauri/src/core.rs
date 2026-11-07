@@ -7,14 +7,17 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{oneshot, watch};
 
 pub const LINE_LIMIT: usize = 64 * 1024 * 1024;
 pub const READY_TIMEOUT: Duration = Duration::from_secs(20);
+/// core-host caps the engine's shutdown at 4 s (STOP_CAP_MS) and releases core.lock before it exits, inside this grace period.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// core-host's exit code when another running Lumen holds the data folder (core.lock): reported, never restarted.
+pub const EXIT_LOCKED: i32 = 3;
 /// After the restarted core has been ready this long, the one-restart budget is available again.
 pub const RESTART_RESET: Duration = Duration::from_secs(60);
 pub const ASSET_BASE: &str = "http://lumen.localhost/";
@@ -87,9 +90,12 @@ pub fn decode(line: &str) -> Option<Frame> {
 /// What the core asks of the shell.
 pub enum Notice {
     Event { channel: String, payload: Value },
-    Platform { id: String, method: String, args: Vec<Value> },
-    /// The core died or did not start; `restarting` says whether one restart is under way.
+    /// `generation`: the core process that asked. The answer goes back with it (Core::answer), so it never reaches a later core.
+    Platform { id: String, method: String, args: Vec<Value>, generation: u64 },
+    /// The core died or did not start; `restarting` says whether one restart is under way. Sent before the restart begins.
     Fatal { timed_out: bool, restarting: bool },
+    /// The core did not start because another running Lumen holds the data folder (core-host exit code 3). No restart.
+    Locked,
 }
 
 #[derive(Debug)]
@@ -165,7 +171,7 @@ struct Inner {
 pub struct Core {
     cfg: Config,
     inner: Mutex<Inner>,
-    stdin: Mutex<Option<ChildStdin>>,
+    stdin: Mutex<Option<Box<dyn Write + Send>>>,
     ready: watch::Sender<u64>,  // generation that is ready, 0 = none
     exited: watch::Sender<u64>, // last generation that exited
     notify: Box<dyn Fn(Notice) + Send + Sync>,
@@ -174,6 +180,11 @@ pub struct Core {
 pub const GONE: &str = "Lumen's core stopped unexpectedly.";
 pub const NOT_RUNNING: &str = "Lumen's core is not running.";
 pub const TOO_LARGE: &str = "The request is too large.";
+
+/// Every NODE_* variable (case-insensitive): what node.exe would honour on its own. The shell sets none of them.
+pub fn node_vars(names: impl Iterator<Item = String>) -> Vec<String> {
+    names.filter(|n| n.to_ascii_uppercase().starts_with("NODE_")).collect()
+}
 
 /// Whether an encoded line (without its '\n') stays within core-host's 64 MiB line limit.
 pub fn fits(line: &str) -> bool {
@@ -209,6 +220,13 @@ impl Core {
         if cfg.ui_check {
             cmd.arg("--ui-check");
         }
+        // node.exe reads NODE_OPTIONS (--require, --inspect...), NODE_EXTRA_CA_CERTS, NODE_TLS_REJECT_UNAUTHORIZED, NODE_PATH and more
+        // from the environment: none of the user's (or another program's) settings reaches the core. Test runs keep them.
+        if !cfg.ui_check {
+            for name in node_vars(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok())) {
+                cmd.env_remove(name);
+            }
+        }
         cmd.current_dir(&cfg.app_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -230,14 +248,14 @@ impl Core {
             i.timed_out = false;
             i.generation
         };
-        *self.stdin.lock().unwrap() = child.stdin.take();
+        *self.stdin.lock().unwrap() = child.stdin.take().map(|s| Box::new(s) as Box<dyn Write + Send>);
         self.ready.send_replace(0);
 
         let me = self.clone();
         std::thread::spawn(move || {
             me.read_loop(stdout, generation);
-            let _ = child.wait();
-            me.on_exit(generation);
+            let code = child.wait().ok().and_then(|s| s.code());
+            me.on_exit(generation, code);
         });
         // `ready` must come within 20 s; otherwise the process is ended and treated like a crash.
         let me = self.clone();
@@ -334,13 +352,14 @@ impl Core {
                 }
             }
             Frame::Event { channel, payload } => (self.notify)(Notice::Event { channel, payload }),
-            Frame::Platform { id, method, args } => (self.notify)(Notice::Platform { id, method, args }),
+            Frame::Platform { id, method, args } => (self.notify)(Notice::Platform { id, method, args, generation }),
             Frame::ProtocolError { reason } => eprintln!("[core] protocol error: {reason}"),
             _ => {}
         }
     }
 
-    fn on_exit(self: &Arc<Self>, generation: u64) {
+    fn on_exit(self: &Arc<Self>, generation: u64, code: Option<i32>) {
+        let locked = code == Some(EXIT_LOCKED);
         let (restart, timed_out) = {
             let mut i = self.inner.lock().unwrap();
             if i.generation != generation {
@@ -354,7 +373,8 @@ impl Core {
                 let _ = tx.send(Err(GONE.into()));
             }
             i.assets.clear();
-            let restart = !i.stopping && i.restarts == 0;
+            // A held data folder stays held: restarting would only fail again.
+            let restart = !i.stopping && i.restarts == 0 && !locked;
             if restart {
                 i.restarts += 1;
             }
@@ -364,6 +384,9 @@ impl Core {
         self.ready.send_replace(0);
         self.exited.send_replace(generation);
         let Some(restart) = restart else { return };
+        if locked {
+            return (self.notify)(Notice::Locked);
+        }
         (self.notify)(Notice::Fatal { timed_out, restarting: restart });
         if restart {
             if let Err(e) = self.spawn() {
@@ -440,13 +463,33 @@ impl Core {
         rx.await.map_err(|_| GONE.to_string())
     }
 
-    /// Answer to a `platform` request.
-    pub fn answer(&self, id: String, result: Result<Value, String>) {
+    /// The core process running now (0 before the first start).
+    pub fn generation(&self) -> u64 {
+        self.inner.lock().unwrap().generation
+    }
+
+    /// Whether core `generation` is the one running now (started and not exited). False from the moment it exits, before the
+    /// restart begins, so work it queued is never run for it.
+    pub fn is_current(&self, generation: u64) -> bool {
+        self.inner.lock().unwrap().generation == generation && *self.exited.borrow() < generation
+    }
+
+    /// Answer to a `platform` request of core `generation`. An answer for a core that has since died is dropped: its request ids
+    /// mean nothing to the restarted core (a delete confirmation must never settle another request). Returns whether it was sent.
+    pub fn answer(&self, id: String, generation: u64, result: Result<Value, String>) -> bool {
         let frame = match result {
             Ok(value) => Frame::PlatformResult { id, ok: true, value: Some(value), error: None },
             Err(error) => Frame::PlatformResult { id, ok: false, value: None, error: Some(error) },
         };
-        let _ = self.write(&frame);
+        // The check and the write happen under the stdin lock: on_exit clears stdin before a new generation can begin.
+        let mut guard = self.stdin.lock().unwrap();
+        if self.inner.lock().unwrap().generation != generation {
+            return false;
+        }
+        let Some(stdin) = guard.as_mut() else { return false };
+        let mut line = encode(&frame);
+        line.push('\n');
+        stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush()).is_ok()
     }
 
     /// A callback event of the platform (browser.onNavigate / onPopup / onState); `payload` is an object.
@@ -533,6 +576,62 @@ mod tests {
         let line = encode(&f);
         assert!(!line.contains('\n'));
         assert_eq!(decode(&line), Some(f));
+    }
+
+    // A stdin that records what is written to it.
+    #[derive(Clone, Default)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+    impl Write for Sink {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn idle_core() -> Arc<Core> {
+        let cfg = Config { node: "node.exe".into(), script: "x".into(), data: "d".into(), app_root: "a".into(), ui_check: false, log: "l".into() };
+        Core::new(cfg, Box::new(|_| {}))
+    }
+
+    #[test]
+    fn answers_for_an_earlier_core_are_dropped() {
+        let core = idle_core();
+        let sink = Sink::default();
+        core.inner.lock().unwrap().generation = 2;
+        *core.stdin.lock().unwrap() = Some(Box::new(sink.clone()));
+        // A request of core 1 (e.g. a delete confirmation still open when it died) is answered after core 2 started.
+        assert!(!core.answer("p1".into(), 1, Ok(json!(1))));
+        assert!(sink.0.lock().unwrap().is_empty(), "nothing reaches the new core");
+        assert!(core.answer("p2".into(), 2, Ok(json!(0))));
+        let written = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(written, "{\"type\":\"platform-result\",\"id\":\"p2\",\"ok\":true,\"value\":0}\n");
+        assert_eq!(core.generation(), 2);
+        assert!(core.is_current(2) && !core.is_current(1));
+        // Once core 2 has exited (before any restart), its queued work is no longer current either.
+        core.exited.send_replace(2);
+        assert!(!core.is_current(2));
+        // No core running (between the exit and the restart): nothing to answer.
+        *core.stdin.lock().unwrap() = None;
+        assert!(!core.answer("p3".into(), 2, Err("x".into())));
+    }
+
+    #[test]
+    fn node_variables_are_found() {
+        let names = ["NODE_OPTIONS", "node_extra_ca_certs", "NODE_TLS_REJECT_UNAUTHORIZED", "NODE_PATH", "PATH", "LUMEN_TEST_DIR", "XNODE_"];
+        assert_eq!(node_vars(names.iter().map(|s| s.to_string())), vec!["NODE_OPTIONS", "node_extra_ca_certs", "NODE_TLS_REJECT_UNAUTHORIZED", "NODE_PATH"]);
+    }
+
+    #[test]
+    fn the_grace_period_outlasts_core_hosts_stop_cap() {
+        // core-host STOP_CAP_MS (4 s) plus the lock release and exit must fit in the shell's grace period.
+        let host = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../app/core-host.cjs")).unwrap();
+        let cap: u64 = host.split("const STOP_CAP_MS = ").nth(1).and_then(|r| r.split(';').next()).and_then(|n| n.trim().parse().ok()).expect("STOP_CAP_MS");
+        assert!(Duration::from_millis(cap + 500) <= SHUTDOWN_GRACE, "cap {cap} ms vs grace {SHUTDOWN_GRACE:?}");
+        assert!(host.contains("const EXIT_LOCKED = 3;"));
+        assert_eq!(EXIT_LOCKED, 3);
     }
 
     #[test]
