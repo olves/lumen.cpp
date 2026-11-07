@@ -12,14 +12,36 @@ function ipv4Private(ip){
  const p=ip.split('.').map(Number);if(p.length!==4||p.some(n=>!Number.isInteger(n)||n<0||n>255))return true;
  const [a,b]=p;return a===0||a===10||a===127||a>=224||(a===100&&b>=64&&b<=127)||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||(a===192&&b===0&&p[2]===0)||(a===192&&b===0&&p[2]===2)||(a===198&&(b===18||b===19))||(a===198&&b===51&&p[2]===100)||(a===203&&b===0&&p[2]===113);
 }
+// IPv6 text -> 16 bytes (handles :: and a trailing dotted IPv4); null when malformed. WHATWG URL rewrites [::ffff:127.0.0.1]
+// to ::ffff:7f00:1, so classification must work on bytes, not on the dotted text form.
+function ipv6Bytes(text){
+ let ip=String(text).toLowerCase().replace(/^\[|\]$/g,'').replace(/%.*$/,'');
+ const dotted=/(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
+ if(dotted){const q=dotted[1].split('.').map(Number);if(q.length!==4||q.some(n=>!(n>=0&&n<=255)))return null;ip=ip.slice(0,-dotted[1].length)+((q[0]<<8|q[1]).toString(16))+':'+((q[2]<<8|q[3]).toString(16));}
+ const halves=ip.split('::');if(halves.length>2)return null;
+ const parse=part=>part===''?[]:part.split(':');
+ const head=parse(halves[0]),tail=halves.length===2?parse(halves[1]):[];
+ const fill=halves.length===2?8-head.length-tail.length:0;
+ if(fill<0||(halves.length===1&&head.length!==8)||(halves.length===2&&fill<1))return null;
+ const words=[...head,...Array(fill).fill('0'),...tail];
+ if(words.length!==8||words.some(w=>!/^[0-9a-f]{1,4}$/.test(w)))return null;
+ const bytes=[];for(const w of words){const n=parseInt(w,16);bytes.push(n>>8,n&255);}
+ return bytes;
+}
 function privateAddress(address){
  if(net.isIPv4(address))return ipv4Private(address);
  if(!net.isIPv6(address))return true;
- const ip=address.toLowerCase().replace(/^\[|\]$/g,'');
- const mapped=/^(?:0*:)*:?ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip)||/^::(\d+\.\d+\.\d+\.\d+)$/.exec(ip);if(mapped)return ipv4Private(mapped[1]);
- if(ip==='::'||ip==='::1')return true;
- const first=parseInt(ip.split(':')[0]||'0',16);
- return (first&0xfe00)===0xfc00||(first&0xffc0)===0xfe80||(first&0xff00)===0xff00||ip.startsWith('64:ff9b:')||ip.startsWith('2001:db8:')||ip.startsWith('2002:');
+ const b=ipv6Bytes(address);if(!b)return true;
+ const embedded=()=>ipv4Private(b.slice(12).join('.'));
+ const zeros=n=>b.slice(0,n).every(x=>x===0);
+ if(zeros(10)&&b[10]===0xff&&b[11]===0xff)return embedded();           // ::ffff:0:0/96 mapped
+ if(zeros(12))return embedded();                                       // ::/96 compatible (also :: and ::1)
+ if(zeros(8)&&b[8]===0xff&&b[9]===0xff&&b[10]===0&&b[11]===0)return embedded(); // ::ffff:0:0:0/96 SIIT
+ const first=b[0]<<8|b[1],second=b[2]<<8|b[3];
+ if(first===0x64&&second===0xff9b)return true;                         // 64:ff9b::/32 NAT64 (whole range blocked)
+ if(first===0x2001&&second===0)return true;                           // 2001::/32 Teredo
+ if(first===0x2001&&second===0x0db8)return true;                      // documentation
+ return (first&0xfe00)===0xfc00||(first&0xffc0)===0xfe80||(first&0xff00)===0xff00||first===0x2002;
 }
 function blockedHostname(host){const h=host.toLowerCase().replace(/\.$/,'');return h==='localhost'||h.endsWith('.localhost')||h.endsWith('.local')||h.endsWith('.internal')||h.endsWith('.home.arpa')||h==='metadata.google.internal';}
 
