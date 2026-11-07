@@ -36,3 +36,5 @@ button.status-item:disabled{opacity:.55;cursor:default}
  .app-status[data-placement=composer]{gap:9px}
  .app-status[data-placement=composer] .status-model .status-value{max-width:120px}
 }
+/* .app-status clips overflow; keep the focus ring inside the item so it is never cut off. */
+.status-item:focus-visible{outline-offset:-2px}
