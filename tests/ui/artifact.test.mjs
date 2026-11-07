@@ -72,12 +72,12 @@ public class Wnd { public delegate bool P(IntPtr h, IntPtr l);
 }
 
 // ---------- the artifact target ----------
-let app, art = null;
+let app, art = null, activeDataDir = dataDir;
 const listTargets = async port => (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).filter(t => t.type === 'page' && ARTIFACT_URL.test(t.url));
 function artifactPort() {
   if (shell === 'electron') return app.port;
   // Chromium writes the port of --remote-debugging-port=0 into the profile folder.
-  const root = path.join(dataDir, 'webview', 'artifact');
+  const root = path.join(activeDataDir, 'webview', 'artifact');
   const find = dir => { for (const e of fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : []) { const p = path.join(dir, e.name); if (e.isFile() && e.name === 'DevToolsActivePort') return p; if (e.isDirectory()) { const r = find(p); if (r) return r; } } return null; };
   const file = find(root);
   assert.ok(file, 'DevToolsActivePort of the artifact profile under ' + root);
@@ -177,7 +177,15 @@ describe(`artifact preview (${shell})`, () => {
     assert.equal(targets[0].id, first.id, 'same target');
     assert.notEqual(targets[0].url, first.url, 'a new document under a new address');
     assert.equal(await art.evaluate("document.querySelector('svg')"), null, 'the previous page is gone');
-    await titled('Second · preview');
+    // The window title follows the document's <title> (Electron: the page title wins over the name set at open); a page without a
+    // <title> keeps "<name> · preview".
+    await titled('t');
+    await openPreview(html('<h1 id="third">Third</h1>').replace('<title>t</title>', '<title>Doc title ğ</title>'), 'html', 'Third');
+    await art.waitFor("document.getElementById('third')", 10000);
+    await titled('Doc title ğ');
+    await openPreview(html('<h1 id="fourth">Fourth</h1>').replace('<title>t</title>', ''), 'html', 'Fourth');
+    await art.waitFor("document.getElementById('fourth')", 10000);
+    await titled('Fourth · preview');
   });
 
   test('nothing leaves the page: no request reaches a local server', async () => {
@@ -234,6 +242,8 @@ const load = (tag, attr, url) => new Promise(r => { const e = document.createEle
   R.fetch = await timeout(fetch(base + '/nocsp-fetch').then(() => 'LOADED', () => 'blocked'));
   R.img = await timeout(load('img', 'src', base + '/nocsp.png'));
   R.script = await timeout(load('script', 'src', base + '/nocsp.js'));
+  R.worker = await timeout(new Promise(r => { try { const w = new Worker(URL.createObjectURL(new Blob(['fetch(' + JSON.stringify(base + '/worker-fetch') + ').then(() => postMessage("LOADED"), () => postMessage("blocked"))'], { type: 'text/javascript' }))); w.onmessage = e => r(e.data); w.onerror = () => r('error'); } catch (e) { r('error:' + e.message); } }));
+  R.shared = await timeout(new Promise(r => { try { const w = new SharedWorker(URL.createObjectURL(new Blob(['onconnect = e => { const p = e.ports[0]; fetch(' + JSON.stringify(base + '/shared-fetch') + ').then(() => p.postMessage("LOADED"), () => p.postMessage("blocked")); };'], { type: 'text/javascript' }))); w.port.onmessage = e => r(e.data); w.onerror = () => r('error'); } catch (e) { r('error:' + e.message); } }));
   R.favicon = await timeout(fetch('/favicon.ico').then(r => 'status ' + r.status, () => 'blocked'));
   R.done = true;
 })();`;
@@ -242,7 +252,8 @@ const load = (tag, attr, url) => new Promise(r => { const e = document.createEle
       const results = await art.evaluate('window.__R');
       fs.writeFileSync(path.join(runDir, 'nocsp-results.json'), JSON.stringify({ results, hits }, null, 2));
       assert.deepEqual(hits, [], 'the local server saw: ' + hits.join(', '));
-      for (const k of ['fetch', 'img', 'script']) assert.notEqual(results[k], 'LOADED', k);
+      for (const k of ['fetch', 'img', 'script', 'worker', 'shared']) assert.notEqual(results[k], 'LOADED', k);
+      for (const k of ['worker', 'shared']) assert.equal(results[k], 'blocked', `${k} ran and its fetch was refused`);
       assert.notEqual(results.favicon, 'status 200');
     } finally {
       await art.send('Page.setBypassCSP', { enabled: false });
@@ -262,6 +273,7 @@ const load = (tag, attr, url) => new Promise(r => { const e = document.createEle
       label: window.__TAURI_INTERNALS__?.metadata?.currentWebview?.label })`);
     fs.writeFileSync(path.join(runDir, 'tauri-surface.json'), JSON.stringify(surface, null, 2));
     assert.equal(surface.label, 'artifact');
+    assert.equal(surface.global, 'undefined', 'no window.__TAURI__ (withGlobalTauri is off)');
     const attempt = cmd => art.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd[0])}, ${JSON.stringify(cmd[1] || {})}).then(v => ({ok: true, v: JSON.stringify(v)}), e => ({ok: false, e: String(e && e.message || e)}))`);
     const outcomes = {};
     for (const cmd of [['lumen_call', { channel: 'preferences', args: [] }], ['lumen_call', { channel: 'artifact', args: ['close'] }], ['window_action', { action: 'minimize' }], ['window_action', { action: 'close' }],
@@ -316,5 +328,44 @@ const load = (tag, attr, url) => new Promise(r => { const e = document.createEle
     await attach();
     await art.waitFor("document.getElementById('again')?.textContent === 'again'", 10000);
     assert.equal(await app.cdp.evaluate("window.lumen.artifact('close')"), true);
+  });
+});
+
+// The very first document of a freshly created window (not a reused one) must already be guarded. In Tauri the shell serves it
+// without its CSP header here (LUMEN_ARTIFACT_NO_CSP=1, --ui-check builds only), so the WebView2 request filter works alone; a
+// document that records securitypolicyviolation events proves that the CSP did not do the blocking.
+describe(`artifact first document (${shell})`, () => {
+  const dir = path.join(runDir, 'first');
+  let first;
+  after(async () => { art?.close(); art = null; await first?.stop(); server.close(); server.closeAllConnections?.(); });
+  test('a new window blocks every request on its first document', async () => {
+    hits.length = 0;
+    if (!serverPort || !server.listening) { await new Promise(r => server.listen(0, '127.0.0.1', r)); serverPort = server.address().port; }
+    prepareData(path.join(dir, 'data'), null);
+    first = await launch({ shell, dataDir: path.join(dir, 'data'), env: { LUMEN_ARTIFACT_NO_CSP: '1' } });
+    app = first; activeDataDir = path.join(dir, 'data');
+    await first.cdp.waitFor('state.ready === true', 30000);
+    const base = `http://127.0.0.1:${serverPort}`;
+    const script = `
+const R = window.__R = { violations: 0 }, base = ${JSON.stringify(base)};
+document.addEventListener('securitypolicyviolation', () => R.violations++);
+const timeout = p => Promise.race([p, new Promise(r => setTimeout(() => r('timeout'), 3000))]);
+const load = (tag, attr, url) => new Promise(r => { const e = document.createElement(tag); e.onload = () => r('LOADED'); e.onerror = () => r('blocked'); e[attr] = url; document.head.appendChild(e); });
+(async () => {
+  R.fetch = await timeout(fetch(base + '/first-fetch').then(() => 'LOADED', () => 'blocked'));
+  R.img = await timeout(load('img', 'src', base + '/first.png'));
+  R.script = await timeout(load('script', 'src', base + '/first.js'));
+  R.done = true;
+})();`;
+    const r = await first.cdp.evaluate(`window.lumen.artifact('open', ${JSON.stringify({ code: html('<h1 id="first">first</h1>', script), kind: 'html', title: 'First' })})`);
+    assert.deepEqual(r, { open: true });
+    await artifactTargets();
+    await attach();
+    await art.waitFor('window.__R && window.__R.done === true', 20000);
+    const results = await art.evaluate('window.__R');
+    fs.writeFileSync(path.join(runDir, 'first-results.json'), JSON.stringify({ results, hits }, null, 2));
+    assert.deepEqual(hits, [], 'the local server saw: ' + hits.join(', '));
+    for (const k of ['fetch', 'img', 'script']) assert.equal(results[k], 'blocked', k);
+    if (shell === 'tauri') assert.equal(results.violations, 0, 'no CSP in this run: the request filter did the blocking');
   });
 });

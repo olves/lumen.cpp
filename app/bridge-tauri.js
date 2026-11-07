@@ -4,7 +4,7 @@
 //   window(action)  -> Tauri command window_action (fire and forget, like ipcRenderer.send)
 //   onChannel/onEvent -> the Tauri event 'lumen-event' {channel, payload}; onChannel keeps preload.cjs' allowlist
 // It also gives the frameless window the drag behaviour Electron takes from CSS (-webkit-app-region): mousedown on a drag region
-// starts dragging the window, a double click maximizes or restores it. No npm package: Tauri's globals only (app.withGlobalTauri).
+// starts dragging the window, a double click maximizes or restores it. No npm package and no window.__TAURI__ (withGlobalTauri is off): only __TAURI_INTERNALS__, as Tauri's own JS API uses it.
 (() => {
   'use strict';
   if (window !== window.top || 'lumen' in window) return;
@@ -23,17 +23,19 @@
   const subscribers = new Map(); // channel -> Set of callbacks
   let listening = false;
   function listen() {
-    const events = window.__TAURI__ && window.__TAURI__.event;
-    if (listening || !events) return;
+    const tauri = internals();
+    if (listening || !tauri || typeof tauri.transformCallback !== 'function') return;
     listening = true;
-    events.listen('lumen-event', event => {
+    // What @tauri-apps/api/event listen() does: the plugin:event|listen command with a registered callback.
+    const handler = tauri.transformCallback(event => {
       const { channel, payload } = event.payload || {};
       const set = subscribers.get(channel);
       if (!set) return;
       for (const callback of [...set]) {
         try { callback(payload); } catch (error) { setTimeout(() => { throw error; }); }
       }
-    }).catch(error => { listening = false; console.error('lumen-event listener failed', error); });
+    });
+    invoke('plugin:event|listen', { event: 'lumen-event', target: { kind: 'Any' }, handler }).catch(error => { listening = false; console.error('lumen-event listener failed', error); });
   }
   function subscribe(channel, callback) {
     if (!subscribers.has(channel)) subscribers.set(channel, new Set());
@@ -108,7 +110,7 @@
   document.addEventListener('mousedown', event => {
     if (event.button !== 0 || !draggable(event.target)) return;
     if (event.detail === 2) { invoke('window_action', { action: 'maximize' }).catch(() => {}); return; }
-    const win = window.__TAURI__ && window.__TAURI__.window;
-    if (win) win.getCurrentWindow().startDragging().catch(() => {});
+    const current = internals() && internals().metadata && internals().metadata.currentWindow;
+    if (current) invoke('plugin:window|start_dragging', { label: current.label }).catch(() => {});
   });
 })();

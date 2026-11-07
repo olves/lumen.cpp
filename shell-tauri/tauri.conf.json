@@ -6,7 +6,7 @@
   "identifier": "com.olves.lumen",
   "build": {},
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [],
     "security": {
       "csp": null,

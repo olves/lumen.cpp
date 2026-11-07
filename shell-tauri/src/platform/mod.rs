@@ -15,9 +15,14 @@ pub const NOT_IMPLEMENTED: &str = "not implemented in Tauri shell yet";
 
 /// `n` random bytes as hex (file names under <data>/temp).
 pub fn random_hex(n: usize) -> String {
+    try_random_hex(n).unwrap_or_else(|_| "0".repeat(n * 2))
+}
+
+/// Like random_hex, but a failing random source is an error (security tokens must never be zeros).
+pub fn try_random_hex(n: usize) -> Result<String, String> {
     let mut bytes = vec![0u8; n];
-    let _ = getrandom::fill(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    getrandom::fill(&mut bytes).map_err(|e| format!("No random bytes available: {e}"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// `path` resolved, if it lies inside `base` (both canonicalized; compared case-insensitively with a separator after the base,
@@ -126,7 +131,8 @@ pub fn route(method: &str, args: &[Value]) -> Outcome {
         // artifact.open(html, kind, {title, dark}); the core has built the whole document.
         "artifact.open" => service(text(0).and_then(|html| {
             let kind = arg_str(args, 1).filter(|k| matches!(*k, "html" | "svg")).ok_or("Only HTML and SVG can be previewed.")?.to_string();
-            if html.trim().is_empty() || html.len() > 4_000_000 {
+            // Characters, like the core's limit on the code (2,000,000), plus room for the document it is wrapped in.
+            if html.trim().is_empty() || html.chars().count() > 2_004_096 {
                 return Err("Nothing to preview.".to_string());
             }
             let options = args.get(2).filter(|v| v.is_object());
@@ -264,5 +270,9 @@ mod tests {
         for a in [json!([]), json!(["<p>x</p>"]), json!(["<p>x</p>", "pdf"]), json!(["  ", "html"]), json!([5, "html"])] {
             assert!(matches!(routed("artifact.open", a.clone()), Outcome::Answer(Err(_))), "{a}");
         }
+        // The limit counts characters, not bytes: 1,999,000 two-byte characters pass, 2,100,000 do not.
+        assert!(matches!(routed("artifact.open", json!(["é".repeat(1_999_000), "html"])), Outcome::Service(_)));
+        assert!(matches!(routed("artifact.open", json!(["é".repeat(2_100_000), "html"])), Outcome::Answer(Err(_))));
+        assert_eq!(try_random_hex(16).unwrap().len(), 32);
     }
 }

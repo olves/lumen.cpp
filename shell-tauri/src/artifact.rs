@@ -19,6 +19,20 @@ struct Page {
 }
 /// Only the latest document is kept (as in Electron).
 static PAGE: Mutex<Option<Page>> = Mutex::new(None);
+/// open() waits for the document to finish loading.
+static LOAD: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
+const LOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+/// Test builds only (--ui-check, LUMEN_ARTIFACT_NO_CSP=1): the document is served without its CSP header, so that a test can see
+/// the request filter work on its own. Never set in a production build.
+#[cfg(feature = "ui-check")]
+static NO_CSP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn csp_header() -> Option<&'static str> {
+    #[cfg(feature = "ui-check")]
+    if NO_CSP.load(std::sync::atomic::Ordering::SeqCst) {
+        return None;
+    }
+    Some(CSP)
+}
 
 fn current_token() -> Option<String> {
     PAGE.lock().ok().and_then(|p| p.as_ref().map(|p| p.token.clone()))
@@ -58,13 +72,13 @@ pub fn serve(allowed: bool, path: &str) -> Response<Vec<u8>> {
     }
     let guard = PAGE.lock().ok();
     match guard.as_deref().and_then(|p| p.as_ref()) {
-        Some(page) if path == format!("/{}/", page.token) => Response::builder()
-            .status(200)
-            .header("content-type", "text/html; charset=utf-8")
-            .header("content-security-policy", CSP)
-            .header("cache-control", "no-store")
-            .body(page.html.clone())
-            .unwrap(),
+        Some(page) if path == format!("/{}/", page.token) => {
+            let mut response = Response::builder().status(200).header("content-type", "text/html; charset=utf-8").header("cache-control", "no-store");
+            if let Some(csp) = csp_header() {
+                response = response.header("content-security-policy", csp);
+            }
+            response.body(page.html.clone()).unwrap()
+        }
         _ => plain(404),
     }
 }
@@ -85,50 +99,78 @@ fn window_title(title: Option<&str>, kind: &str) -> String {
 /// Opens the preview, or reuses the open window for a new document.
 pub fn open(app: &AppHandle, html: String, kind: &str, title: Option<&str>, dark: bool) -> Result<Value, String> {
     let shell = app.state::<crate::Shell>();
-    let token = crate::platform::random_hex(16);
-    *PAGE.lock().map_err(|_| "The preview is unavailable.".to_string())? = Some(Page { token: token.clone(), html: html.into_bytes() });
+    // No zero token when the system random source fails.
+    let token = crate::platform::try_random_hex(16)?;
     let (name, bg) = (window_title(title, kind), background(kind, dark));
-    let url: tauri::Url = format!("lumen-artifact://localhost/{token}/").parse().map_err(|_| "Invalid preview address.".to_string())?;
+    let page = Page { token: token.clone(), html: html.into_bytes() };
+    let http: tauri::Url = format!("http://{HOST}/{token}/").parse().map_err(|_| "Invalid preview address.".to_string())?;
+    #[cfg(feature = "ui-check")]
+    NO_CSP.store(shell.ui_check && std::env::var("LUMEN_ARTIFACT_NO_CSP").as_deref() == Ok("1"), std::sync::atomic::Ordering::SeqCst);
+    // open() returns when the document has loaded (Electron: loadURL resolves).
+    let (tx, rx) = std::sync::mpsc::channel();
+    *LOAD.lock().map_err(|_| "The preview is unavailable.".to_string())? = Some(tx);
     if let Some(window) = app.get_webview_window(LABEL) {
+        // Reused window: its handlers are in place.
+        *PAGE.lock().map_err(|_| "The preview is unavailable.".to_string())? = Some(page);
         window.set_title(&name).map_err(|e| e.to_string())?;
         let _ = window.set_background_color(Some(bg));
-        // navigate() does not map custom schemes to their Windows http form: the address is the one WebView2 sees.
-        let http: tauri::Url = format!("http://{HOST}/{token}/").parse().map_err(|_| "Invalid preview address.".to_string())?;
         window.navigate(http).map_err(|e| e.to_string())?;
         if !shell.ui_check {
             let _ = window.unminimize();
-            let _ = window.show();
             let _ = window.set_focus();
         }
-        return Ok(json!({"open": true}));
-    }
-    let mut builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::CustomProtocol(url))
-        .title(&name)
-        .inner_size(960.0, 720.0)
-        .min_inner_size(360.0, 280.0)
-        .background_color(bg)
-        .incognito(true)
-        .data_directory(shell.data.join("webview").join(LABEL))
-        .additional_browser_args(&browser_args(shell.ui_check))
-        .on_navigation(allows_navigation)
-        .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny);
-    if let Some(main) = app.get_webview_window(crate::window::MAIN) {
-        builder = builder.parent(&main).map_err(|e| e.to_string())?;
-    }
-    if shell.ui_check {
-        // Tests must not take the user's focus: off screen, shown without activation.
-        builder = builder.position(-4000.0, 0.0).focused(false).visible(true);
     } else {
-        // Shown when the page has loaded (Electron: ready-to-show).
-        builder = builder.visible(false).on_page_load(|window, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                let _ = window.show();
-            }
-        });
+        // A fresh window starts without a document (blank, nothing served: PAGE is empty). The document is set and loaded from
+        // inside harden(), after every WebView2 handler is registered, so not even the first document runs unguarded.
+        closed();
+        let ui_check = shell.ui_check;
+        let mut builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External("about:blank".parse().expect("valid url")))
+            .title(&name)
+            .inner_size(960.0, 720.0)
+            .min_inner_size(360.0, 280.0)
+            .background_color(bg)
+            .incognito(true)
+            .data_directory(shell.data.join("webview").join(LABEL))
+            .additional_browser_args(&browser_args(shell.ui_check))
+            .on_navigation(allows_navigation)
+            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny)
+            .on_page_load(move |window, payload| {
+                if payload.event() == tauri::webview::PageLoadEvent::Finished && allows_navigation(payload.url()) {
+                    if !ui_check {
+                        // Shown when the page has loaded (Electron: ready-to-show).
+                        let _ = window.show();
+                    }
+                    loaded();
+                }
+            });
+        if let Some(main) = app.get_webview_window(crate::window::MAIN) {
+            builder = builder.parent(&main).map_err(|e| e.to_string())?;
+        }
+        builder = if ui_check {
+            // Tests must not take the user's focus: off screen, shown without activation.
+            builder.position(-4000.0, 0.0).focused(false).visible(true)
+        } else {
+            builder.visible(false)
+        };
+        let window = builder.build().map_err(|e| e.to_string())?;
+        if let Err(e) = harden(&window, page, http) {
+            let _ = window.destroy();
+            return Err(e);
+        }
     }
-    let window = builder.build().map_err(|e| e.to_string())?;
-    harden(&window);
-    Ok(json!({"open": true}))
+    match rx.recv_timeout(LOAD_LIMIT) {
+        Ok(()) => Ok(json!({"open": true})),
+        Err(_) => Err("The preview did not load.".to_string()),
+    }
+}
+
+/// The document has loaded: open() may answer.
+fn loaded() {
+    if let Ok(mut load) = LOAD.lock() {
+        if let Some(tx) = load.take() {
+            let _ = tx.send(());
+        }
+    }
 }
 
 pub fn close(app: &AppHandle) -> Result<Value, String> {
@@ -138,19 +180,19 @@ pub fn close(app: &AppHandle) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-/// The window is gone: the document is dropped.
+/// The window is gone (or starts over): the document is dropped.
 pub fn closed() {
     if let Ok(mut page) = PAGE.lock() {
         *page = None;
     }
 }
 
-/// Same arguments as the main webview (WebView2 profiles with different arguments cannot share a folder; this one has its own).
-/// Test builds add a debugging port of their own (0 = a free one, written to <profile>/EBWebView/DevToolsActivePort), because a
-/// separate profile is a separate browser process.
+/// Same arguments as the main webview plus WebRTC kept from leaking addresses (this profile has a folder of its own). Test builds
+/// add a debugging port of their own (0 = a free one, written to <profile>/EBWebView/DevToolsActivePort), because a separate
+/// profile is a separate browser process.
 fn browser_args(_ui_check: bool) -> String {
     #[allow(unused_mut)]
-    let mut args = crate::window::DEFAULT_BROWSER_ARGS.to_string();
+    let mut args = format!("{} --force-webrtc-ip-handling-policy=disable_non_proxied_udp", crate::window::DEFAULT_BROWSER_ARGS);
     #[cfg(feature = "ui-check")]
     if _ui_check {
         args.push_str(" --remote-debugging-port=0");
@@ -158,68 +200,106 @@ fn browser_args(_ui_check: bool) -> String {
     args
 }
 
-/// WebView2 rules Tauri does not cover: every request but the current document is answered 403 before it leaves, permissions
-/// and downloads are refused, new windows are never opened, script dialogs and context menus are off.
-fn harden(window: &WebviewWindow) {
-    let result = window.with_webview(move |webview| unsafe {
-        use webview2_com::Microsoft::Web::WebView2::Win32::*;
-        use webview2_com::{take_pwstr, DownloadStartingEventHandler, NewWindowRequestedEventHandler, PermissionRequestedEventHandler, WebResourceRequestedEventHandler};
-        use windows::core::{Interface, HSTRING, PWSTR};
-        let Ok(core) = webview.controller().CoreWebView2() else { return };
-        let env = webview.environment();
-        let mut token = 0i64;
-        if let Ok(settings) = core.Settings() {
-            let _ = settings.SetAreDefaultScriptDialogsEnabled(false);
-            let _ = settings.SetAreDefaultContextMenusEnabled(false);
-            let _ = settings.SetIsStatusBarEnabled(false);
-            if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
-                let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+/// A document title other than the address WebView2 reports for a page without <title>.
+fn real_title(title: &str) -> Option<String> {
+    let t = title.trim();
+    if t.is_empty() || t.to_ascii_lowercase().starts_with(HOST) || t.to_ascii_lowercase().starts_with("http://") || t.to_ascii_lowercase().starts_with("lumen-artifact:") {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+/// WebView2 rules Tauri does not cover: every request but the current document is answered 403 before it leaves (documents,
+/// workers and frames alike), permissions and downloads are refused, new windows are never opened, script dialogs and context
+/// menus are off, and the window title follows the document's <title> (Electron's behaviour). When everything is registered the
+/// document is made current and loaded.
+fn harden(window: &WebviewWindow, page: Page, url: tauri::Url) -> Result<(), String> {
+    let titled = window.clone();
+    window
+        .with_webview(move |webview| unsafe {
+            use webview2_com::Microsoft::Web::WebView2::Win32::*;
+            use webview2_com::{take_pwstr, DocumentTitleChangedEventHandler, DownloadStartingEventHandler, NewWindowRequestedEventHandler, PermissionRequestedEventHandler, WebResourceRequestedEventHandler};
+            use windows::core::{Interface, HSTRING, PWSTR};
+            let Ok(core) = webview.controller().CoreWebView2() else { return };
+            let env = webview.environment();
+            let mut token = 0i64;
+            if let Ok(settings) = core.Settings() {
+                let _ = settings.SetAreDefaultScriptDialogsEnabled(false);
+                let _ = settings.SetAreDefaultContextMenusEnabled(false);
+                let _ = settings.SetIsStatusBarEnabled(false);
+                if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
+                    let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+                }
             }
-        }
-        let denied = PermissionRequestedEventHandler::create(Box::new(|_, args| {
-            if let Some(args) = args {
-                args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
-            }
-            Ok(())
-        }));
-        let _ = core.add_PermissionRequested(&denied, &mut token);
-        let refused = NewWindowRequestedEventHandler::create(Box::new(|_, args| {
-            if let Some(args) = args {
-                args.SetHandled(true)?;
-            }
-            Ok(())
-        }));
-        let _ = core.add_NewWindowRequested(&refused, &mut token);
-        if let Ok(core4) = core.cast::<ICoreWebView2_4>() {
-            let no_download = DownloadStartingEventHandler::create(Box::new(|_, args| {
+            let denied = PermissionRequestedEventHandler::create(Box::new(|_, args| {
                 if let Some(args) = args {
-                    args.SetCancel(true)?;
+                    args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+                }
+                Ok(())
+            }));
+            let _ = core.add_PermissionRequested(&denied, &mut token);
+            let refused = NewWindowRequestedEventHandler::create(Box::new(|_, args| {
+                if let Some(args) = args {
                     args.SetHandled(true)?;
                 }
                 Ok(())
             }));
-            let _ = core4.add_DownloadStarting(&no_download, &mut token);
-        }
-        let blocker = WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
-            let Some(args) = args else { return Ok(()) };
-            let request = args.Request()?;
-            let mut uri = PWSTR::null();
-            request.Uri(&mut uri)?;
-            let uri = take_pwstr(uri);
-            let allowed = current_token().map(|t| allows_request(&uri, &t)).unwrap_or(false);
-            if !allowed {
-                let response = env.CreateWebResourceResponse(None, 403, &HSTRING::from("Forbidden"), &HSTRING::new())?;
-                args.SetResponse(&response)?;
+            let _ = core.add_NewWindowRequested(&refused, &mut token);
+            if let Ok(core4) = core.cast::<ICoreWebView2_4>() {
+                let no_download = DownloadStartingEventHandler::create(Box::new(|_, args| {
+                    if let Some(args) = args {
+                        args.SetCancel(true)?;
+                        args.SetHandled(true)?;
+                    }
+                    Ok(())
+                }));
+                let _ = core4.add_DownloadStarting(&no_download, &mut token);
             }
-            Ok(())
-        }));
-        let _ = core.AddWebResourceRequestedFilter(&HSTRING::from("*"), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
-        let _ = core.add_WebResourceRequested(&blocker, &mut token);
-    });
-    if let Err(e) = result {
-        eprintln!("[artifact] webview hardening failed: {e}");
-    }
+            let follow_title = DocumentTitleChangedEventHandler::create(Box::new(move |sender, _| {
+                if let Some(sender) = sender {
+                    let mut title = PWSTR::null();
+                    sender.DocumentTitle(&mut title)?;
+                    if let Some(title) = real_title(&take_pwstr(title)) {
+                        let _ = titled.set_title(&title);
+                    }
+                }
+                Ok(())
+            }));
+            let _ = core.add_DocumentTitleChanged(&follow_title, &mut token);
+            let blocker = WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let request = args.Request()?;
+                let mut uri = PWSTR::null();
+                request.Uri(&mut uri)?;
+                let uri = take_pwstr(uri);
+                let allowed = current_token().map(|t| allows_request(&uri, &t)).unwrap_or(false);
+                if !allowed {
+                    let response = env.CreateWebResourceResponse(None, 403, &HSTRING::from("Forbidden"), &HSTRING::new())?;
+                    args.SetResponse(&response)?;
+                }
+                Ok(())
+            }));
+            // Workers and frames too (as wry does for its own protocols) when the runtime has the newer filter.
+            let filter = HSTRING::from("*");
+            let added = match core.cast::<ICoreWebView2_22>() {
+                Ok(core22) => core22.AddWebResourceRequestedFilterWithRequestSourceKinds(&filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL),
+                Err(_) => core.AddWebResourceRequestedFilter(&filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL),
+            };
+            let registered = added.is_ok() && core.add_WebResourceRequested(&blocker, &mut token).is_ok();
+            if !registered {
+                eprintln!("[artifact] the request filter could not be installed; the document is not loaded");
+                return;
+            }
+            // Only now does the document exist, and it loads.
+            if let Ok(mut current) = PAGE.lock() {
+                *current = Some(page);
+            }
+            let _ = core.Navigate(&HSTRING::from(url.as_str()));
+        })
+        .map_err(|e| format!("The preview could not be protected: {e}"))
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -292,6 +372,15 @@ mod tests {
         assert_eq!(window_title(Some("  "), "svg"), "SVG · preview");
         assert_eq!(window_title(Some(" Şubat raporu "), "html"), "Şubat raporu · preview");
         assert_eq!(window_title(Some(&"x".repeat(100)), "html"), format!("{} · preview", "x".repeat(80)));
+    }
+
+    #[test]
+    fn page_without_title_keeps_the_window_name() {
+        for none in ["", "  ", "lumen-artifact.localhost/0123456789abcdef0123456789abcdef/", "http://lumen-artifact.localhost/x/", "LUMEN-ARTIFACT.LOCALHOST/x"] {
+            assert_eq!(real_title(none), None, "{none:?}");
+        }
+        assert_eq!(real_title(" Rapor "), Some("Rapor".into()));
+        assert_eq!(real_title("t"), Some("t".into()));
     }
 
     #[test]

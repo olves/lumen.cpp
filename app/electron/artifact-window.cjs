@@ -43,7 +43,7 @@ function createArtifactWindow({BrowserWindow, session, getWindow, icon}) {
       wc.on('will-navigate', (event, url) => { if (url !== current) event.preventDefault(); });
       wc.on('will-redirect', event => event.preventDefault());
       wc.on('will-attach-webview', event => event.preventDefault());
-      view.on('page-title-updated', event => event.preventDefault()); // BrowserWindow's event: a page's <title> must not rename the window
+      wc.on('page-title-updated', event => event.preventDefault());
       view.once('ready-to-show', () => view.show());
       view.on('closed', () => { view = null; pages.clear(); current = null; });
     } else view.focus();
