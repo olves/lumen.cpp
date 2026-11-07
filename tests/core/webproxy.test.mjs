@@ -83,9 +83,9 @@ test('rejects DNS rebinding: connects to the validated IP and never resolves aga
  let calls=0;const dialed=[];
  const resolver=async()=>{calls++;return calls===1?[PUBLIC]:['127.0.0.1'];};
  const echo=net.createServer(s=>s.pipe(s));await new Promise(r=>echo.listen(0,'127.0.0.1',r));
- const testDial=(ip,port)=>{dialed.push(ip);return {host:'127.0.0.1',port:echo.address().port};};
+ const __testDial=(ip,port)=>{dialed.push(ip);return {host:'127.0.0.1',port:echo.address().port};};
  try{
-  await withProxy({resolver,testDial},async(proxy,{port,auth})=>{
+  await withProxy({resolver,__testDial},async(proxy,{port,auth})=>{
    const r=await raw(port,connectReq('rebind.test:443',auth),{until:/\r\n\r\n/});
    assert.match(r,/^HTTP\/1\.1 200 /);
    assert.equal(calls,1);assert.deepEqual(dialed,[PUBLIC]);
@@ -99,9 +99,9 @@ test('rejects DNS rebinding: connects to the validated IP and never resolves aga
 test('allows public via CONNECT and tunnels raw bytes end to end',async()=>{
  const echo=net.createServer(s=>s.on('data',d=>s.write(Buffer.concat([Buffer.from('echo:'),d]))));
  await new Promise(r=>echo.listen(0,'127.0.0.1',r));
- const testDial=(ip,port)=>{assert.equal(ip,PUBLIC);assert.equal(port,443);return {host:'127.0.0.1',port:echo.address().port};};
+ const __testDial=(ip,port)=>{assert.equal(ip,PUBLIC);assert.equal(port,443);return {host:'127.0.0.1',port:echo.address().port};};
  try{
-  await withProxy({resolver:publicDns({}),testDial},async(proxy,{port,auth})=>{
+  await withProxy({resolver:publicDns({}),__testDial},async(proxy,{port,auth})=>{
    await new Promise((resolve,reject)=>{
     const s=net.connect(port,'127.0.0.1');let buf='';let tunneled=false;
     s.setTimeout(3000,()=>{s.destroy();reject(new Error('timeout'));});
@@ -117,9 +117,9 @@ test('forwards absolute-form HTTP to a public host, preserving Host and dropping
  let seen;
  const origin=http.createServer((req,res)=>{seen={host:req.headers.host,url:req.url,pa:req.headers['proxy-authorization']};res.setHeader('content-type','text/plain');res.end('hi from origin');});
  await new Promise(r=>origin.listen(0,'127.0.0.1',r));
- const testDial=()=>({host:'127.0.0.1',port:origin.address().port});
+ const __testDial=()=>({host:'127.0.0.1',port:origin.address().port});
  try{
-  await withProxy({resolver:publicDns({}),testDial},async(proxy,{port,auth})=>{
+  await withProxy({resolver:publicDns({}),__testDial},async(proxy,{port,auth})=>{
    const r=await raw(port,getReq('http://example.test/path?q=1',auth));
    assert.match(r,/^HTTP\/1\.1 200 /);assert.match(r,/hi from origin$/);
    assert.deepEqual(seen,{host:'example.test',url:'/path?q=1',pa:undefined});
@@ -148,4 +148,54 @@ test('limits header size and survives abrupt client disconnects; stop closes the
  assert.match(await raw(port,getReq('http://127.0.0.1/',auth)),/^HTTP\/1\.1 403 /); // still serving
  await proxy.stop();
  await assert.rejects(raw(port,'x'));
+});
+
+const {privateAddress}=require('../../app/web.cjs');
+const V6_PRIVATE=['[::ffff:7f00:1]','[::ffff:127.0.0.1]','[::7f00:1]','[::ffff:a00:1]','[::ffff:c0a8:101]','[64:ff9b::7f00:1]','[2001:0:4136:e378:8000:63bf:3fff:fdd2]','[::ffff:0:7f00:1]'];
+
+test('privateAddress/checkHost classify embedded IPv4 in every IPv6 form (URL-normalized too)',async()=>{
+ for(const h of V6_PRIVATE){
+  const host=new URL('http://'+h+'/').hostname; // WHATWG-normalized form
+  assert.ok(privateAddress(host.replace(/^\[|\]$/g,'')),host);
+  await assert.rejects(checkHost(host),host);
+  await assert.rejects(checkHost(h),h);
+ }
+ assert.equal(privateAddress('::ffff:8.8.8.8'),false);
+ assert.equal(privateAddress('::ffff:808:808'),false);
+ await checkHost('[::ffff:8.8.8.8]');
+ await checkHost(new URL('http://[::ffff:8.8.8.8]/').hostname);
+ assert.equal(privateAddress('2606:4700:4700::1111'),false);
+});
+
+test('rejects IPv4-in-IPv6 private forms over HTTP and CONNECT',async()=>{
+ await withProxy({},async(proxy,{port,auth})=>{
+  for(const h of V6_PRIVATE){
+   assert.match(await raw(port,getReq('http://'+h+':8080/',auth)),/^HTTP\/1\.1 403 /,h);
+   assert.match(await raw(port,connectReq(h+':443',auth)),/^HTTP\/1\.1 403 Forbidden/,h);
+  }
+ });
+});
+
+test('CONNECT host:80 is accepted (ws://) and a mapped public IPv6 is not over-blocked',async()=>{
+ const echo=net.createServer(s=>s.pipe(s));await new Promise(r=>echo.listen(0,'127.0.0.1',r));
+ const dialed=[];const __testDial=(ip,p)=>{dialed.push([ip,p]);return {host:'127.0.0.1',port:echo.address().port};};
+ try{
+  await withProxy({resolver:publicDns({}),__testDial},async(proxy,{port,auth})=>{
+   assert.match(await raw(port,connectReq('example.test:80',auth),{until:/\r\n\r\n/}),/^HTTP\/1\.1 200 /);
+   assert.match(await raw(port,connectReq('[::ffff:8.8.8.8]:443',auth),{until:/\r\n\r\n/}),/^HTTP\/1\.1 200 /);
+   assert.deepEqual(dialed[0],[PUBLIC,80]);
+  });
+ }finally{echo.close();}
+});
+
+test('HTTP/1.0 without Host gets the checked host; Connection-listed headers are stripped',async()=>{
+ let seen;const origin=http.createServer((req,res)=>{seen=req.headers;res.setHeader('x-hop','1');res.setHeader('connection','close, x-hop');res.end('ok');});
+ await new Promise(r=>origin.listen(0,'127.0.0.1',r));
+ try{
+  await withProxy({resolver:publicDns({}),__testDial:()=>({host:'127.0.0.1',port:origin.address().port})},async(proxy,{port,auth})=>{
+   const r=await raw(port,'GET http://example.test:8081/a HTTP/1.0\r\nProxy-Authorization: '+auth+'\r\nConnection: close, X-Secret\r\nX-Secret: s\r\n\r\n');
+   assert.match(r,/^HTTP\/1\.[01] 200 /);assert.doesNotMatch(r,/x-hop/i);
+   assert.equal(seen.host,'example.test:8081');assert.equal(seen['x-secret'],undefined);
+  });
+ }finally{origin.close();}
 });

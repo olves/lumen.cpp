@@ -9,17 +9,19 @@
 const http=require('node:http'),net=require('node:net'),crypto=require('node:crypto');
 const {resolveHost}=require('./web.cjs');
 
-const CONNECT_TIMEOUT=15000,IDLE_TIMEOUT=120000,MAX_HEADER=16384;
+const DNS_TIMEOUT=10000,REQUEST_TIMEOUT=300000,CONNECT_TIMEOUT=15000,IDLE_TIMEOUT=120000,MAX_HEADER=16384;
 const HOP=['proxy-authorization','proxy-connection','proxy-authenticate','connection','keep-alive','te','trailer','transfer-encoding','upgrade'];
 
 const BLOCKED_PAGE='<!doctype html><html><head><meta charset="utf-8"><title>Blocked</title></head><body style="font-family:system-ui,sans-serif;max-width:34em;margin:4em auto;padding:0 1em">'
  +'<h1>This address is blocked</h1><p>Local and private network addresses cannot be opened from Lumen.</p>'
  +'<h1>Bu adres engellendi</h1><p>Yerel ve özel ağ adresleri Lumen’den açılamaz.</p></body></html>';
 
+// Drops hop-by-hop headers plus any header named in the Connection header.
+const without=headers=>{const extra=String(headers.connection||'').toLowerCase().split(',').map(t=>t.trim()).filter(Boolean);const out={};for(const [k,v] of Object.entries(headers))if(!HOP.includes(k)&&!extra.includes(k))out[k]=v;return out;};
 const digest=value=>crypto.createHash('sha256').update(String(value)).digest();
 
-function startProxy({resolver,testDial}={}){
- // testDial(ip, port) -> {host, port}: TEST ONLY. Lets tests redirect an already-validated public IP to a local server.
+function startProxy({resolver,__testDial}={}){
+ // __testDial(ip, port) -> {host, port}: TEST ONLY (underscore-prefixed on purpose; no product code passes it). Lets tests redirect an already-validated public IP to a local server.
  // Product code never passes it; without it the proxy dials exactly the validated IP.
  const user='lumen',token=crypto.randomBytes(24).toString('hex');
  const expected=digest('Basic '+Buffer.from(user+':'+token).toString('base64'));
@@ -30,11 +32,12 @@ function startProxy({resolver,testDial}={}){
 
  // Resolve + validate, then connect to the first reachable validated address.
  async function open(hostname,port){
-  const addresses=await resolveHost(hostname,{resolver});
+  let timer;
+  const addresses=await Promise.race([resolveHost(hostname,{resolver}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('DNS timeout'),{code:'dns'})),DNS_TIMEOUT);})]).finally(()=>clearTimeout(timer));
   let last;
   for(const ip of addresses){
    try{
-    const target=testDial?testDial(ip,port):{host:ip,port};
+    const target=__testDial?__testDial(ip,port):{host:ip,port};
     return await new Promise((resolve,reject)=>{
      const socket=net.connect({host:target.host,port:target.port});track(socket);
      const timer=setTimeout(()=>{socket.destroy();reject(Object.assign(new Error('timeout'),{code:'timeout'}));},CONNECT_TIMEOUT);
@@ -48,8 +51,9 @@ function startProxy({resolver,testDial}={}){
 
  const refusal=error=>error&&error.code==='blocked';
  const parseHostPort=text=>{
-  try{const u=new URL('http://'+text);const port=Number(u.port);const host=u.hostname.replace(/^\[|\]$/g,'');
-   if(!host||!u.port||!Number.isInteger(port)||port<1||port>65535||u.username||u.password||u.pathname!=='/'||u.search)return null;return {host,port};}catch{return null;}
+  const m=/^(\[[^\]]+\]|[^:\[\]@\/?#]+):(\d{1,5})$/.exec(String(text));if(!m)return null;
+  const port=Number(m[2]),host=m[1].replace(/^\[|\]$/g,'');
+  return host&&port>=1&&port<=65535?{host,port}:null;
  };
 
  function rawReply(socket,status,reason,headers={},body=''){
@@ -64,7 +68,7 @@ function startProxy({resolver,testDial}={}){
  const htmlHeaders={'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'};
  const authHeaders={'Proxy-Authenticate':'Basic realm="Lumen"','Content-Type':'text/plain; charset=utf-8'};
 
- const server=http.createServer({maxHeaderSize:MAX_HEADER,requestTimeout:0,headersTimeout:15000,keepAlive:false},async(req,res)=>{
+ const server=http.createServer({maxHeaderSize:MAX_HEADER,requestTimeout:REQUEST_TIMEOUT,headersTimeout:15000,keepAlive:false},async(req,res)=>{
   try{
    if(!authorized(req))return reply(res,407,authHeaders,'Proxy authentication required');
    let url;try{url=new URL(req.url);}catch{return reply(res,400,{'Content-Type':'text/plain'},'Bad request');}
@@ -73,14 +77,13 @@ function startProxy({resolver,testDial}={}){
    const port=url.port?Number(url.port):80,host=url.hostname.replace(/^\[|\]$/g,'');
    let upstream;
    try{upstream=await open(host,port);}catch(error){return refusal(error)||error.code==='dns'?reply(res,error.code==='dns'?502:403,error.code==='dns'?{'Content-Type':'text/plain'}:htmlHeaders,error.code==='dns'?'Could not resolve host':BLOCKED_PAGE):reply(res,502,{'Content-Type':'text/plain'},'Bad gateway');}
-   const headers={};for(const [k,v] of Object.entries(req.headers))if(!HOP.includes(k))headers[k]=v;
-   headers.connection='close';
+   const headers=without(req.headers);headers.host=url.host;headers.connection='close';
    const agent=new http.Agent({keepAlive:false});agent.createConnection=()=>upstream; // the validated socket; Node never resolves the name
    const out=http.request({method:req.method,path:url.pathname+url.search,headers,agent});
    const fail=()=>{upstream.destroy();if(!res.headersSent)reply(res,502,{'Content-Type':'text/plain'},'Bad gateway');else res.destroy();};
    out.on('error',fail);
    out.on('response',up=>{
-    const h={};for(const [k,v] of Object.entries(up.headers))if(!HOP.includes(k))h[k]=v;h.connection='close';
+    const h=without(up.headers);h.connection='close';
     res.writeHead(up.statusCode,up.statusMessage,h);up.pipe(res);up.on('error',fail);
    });
    res.on('close',()=>{out.destroy();upstream.destroy();});
@@ -88,6 +91,7 @@ function startProxy({resolver,testDial}={}){
   }catch{try{res.destroy();}catch{}}
  });
  server.on('connection',track);
+ server.setTimeout(IDLE_TIMEOUT);
  server.on('clientError',(error,socket)=>{
   if(socket.writable)rawReply(socket,error&&error.code==='HPE_HEADER_OVERFLOW'?431:400,error&&error.code==='HPE_HEADER_OVERFLOW'?'Request Header Fields Too Large':'Bad Request');else socket.destroy();
  });
