@@ -42,6 +42,12 @@ const platform={
  artifact:createArtifactWindow({BrowserWindow,session,getWindow:()=>win,icon:path.join(__dirname,'lumen.ico')}),
 };
 
+// Another running Lumen holds this data folder (core.lock): say so instead of exiting silently. The language is the saved one,
+// else the system's. Test runs (--ui-check) only write desktop-startup-error.log: a modal box would block the harness.
+function lockedBox(message){let tr=false;try{const p=JSON.parse(fs.readFileSync(path.join(data,'desktop-preferences.json'),'utf8').replace(/^﻿/,''));tr=p.language?p.language==='tr':/^tr\b/i.test(app.getLocale());}catch{tr=/^tr\b/i.test(app.getLocale());}
+ const pid=(String(message).match(/\(process (\d+)\)/)||[])[1];
+ if(tr)dialog.showErrorBox('lumen.cpp zaten açık','Lumen bu veri klasörüyle zaten çalışıyor'+(pid?' (işlem '+pid+')':'')+'. Açık olan Lumen penceresini kullanın ya da onu kapatıp yeniden deneyin.');
+ else dialog.showErrorBox('lumen.cpp is already open','Lumen is already running with this data folder'+(pid?' (process '+pid+')':'')+'. Use the open Lumen window, or close it and try again.');}
 function sender(event){if(!win||event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame)throw Error('Invalid IPC sender');}
 app.setName('lumen.cpp');app.setAppUserModelId('Lumen.Beta.Desktop');
 protocol.registerSchemesAsPrivileged([{scheme:'lumen',privileges:{standard:true,secure:true,supportFetchAPI:true}},{scheme:'lumen-artifact',privileges:{standard:true,secure:true}}]);
@@ -58,6 +64,6 @@ app.whenReady().then(async()=>{
  for(const channel of lumen.channels)ipcMain.handle(channel,(event,...a)=>{sender(event);return lumen.call(channel,a);});
  ipcMain.on('window',(e,action)=>{sender(e);platform.windowAction(action);});
  await win.loadURL('lumen://app/');if(!test)win.show();else{win.setPosition(-4000,0);win.showInactive();}
-}).catch(e=>{fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'desktop-startup-error.log'),e.stack);Promise.resolve(lumen?.stop({now:true})).catch(()=>{}).finally(()=>app.exit(1));});}
+}).catch(e=>{fs.mkdirSync(data,{recursive:true});fs.writeFileSync(path.join(data,'desktop-startup-error.log'),e.stack);if(!test&&/^core\.lock: Lumen is already running/.test(String(e&&e.message)))lockedBox(e.message);Promise.resolve(lumen?.stop({now:true})).catch(()=>{}).finally(()=>app.exit(1));});}
 let shuttingDown=false;
 app.on('window-all-closed',()=>app.quit());app.on('before-quit',event=>{if(!lumen||!started||shuttingDown)return;event.preventDefault();shuttingDown=true;if(win&&!win.isDestroyed())win.hide();lumen.stop().catch(()=>{}).finally(()=>app.exit());});

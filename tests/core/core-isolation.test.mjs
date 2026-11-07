@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRequire, Module } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -94,7 +94,7 @@ describe('core isolation', () => {
     const dir = freshDir('lock');
     const first = createCore({ platform: fakePlatform(), dataDir: dir, test: true });
     await first.start();
-    assert.equal(fs.readFileSync(path.join(dir, 'core.lock'), 'utf8').trim(), String(process.pid));
+    assert.equal(fs.readFileSync(path.join(dir, 'core.lock'), 'utf8').split(/\r?\n/)[0], String(process.pid));
     const second = createCore({ platform: fakePlatform(), dataDir: dir, test: true });
     await assert.rejects(second.start(), /core.lock: Lumen is already running/);
     await first.stop();
@@ -106,7 +106,7 @@ describe('core isolation', () => {
     fs.writeFileSync(path.join(stale, 'core.lock'), String(dead));
     const third = createCore({ platform: fakePlatform(), dataDir: stale, test: true });
     await third.start();
-    assert.equal(fs.readFileSync(path.join(stale, 'core.lock'), 'utf8').trim(), String(process.pid));
+    assert.equal(fs.readFileSync(path.join(stale, 'core.lock'), 'utf8').split(/\r?\n/)[0], String(process.pid));
     await third.stop();
     assert.deepEqual(electronLoads, []);
   });
@@ -198,24 +198,83 @@ describe('core isolation', () => {
     const lock = path.join(freshDir('lock-race'), 'core.lock');
     const dead = 999999, A = 1111, B = 2222;
     const alive = pid => pid === A || pid === B;
-    const holder = () => fs.readFileSync(lock, 'utf8').trim();
+    const inspect = () => null; // the image lookup cannot tell (the lock counts as held while alive)
+    const holder = () => fs.readFileSync(lock, 'utf8').split(/\r?\n/)[0].trim();
     // B reads the dead PID; before B renames the file, A completes its takeover. B must not move A's live lock away for good.
     fs.writeFileSync(lock, String(dead));
-    assert.throws(() => takeLock(lock, { pid: B, alive, beforeRename: () => { assert.equal(takeLock(lock, { pid: A, alive }), true); } }),
+    assert.throws(() => takeLock(lock, { pid: B, alive, inspect, beforeRename: () => { assert.equal(takeLock(lock, { pid: A, alive, inspect }), true); } }),
       /core\.lock: Lumen is already running with this data folder \(process 1111\)/);
     assert.equal(holder(), String(A), 'A still holds the lock');
     assert.deepEqual(fs.readdirSync(path.dirname(lock)), ['core.lock'], 'no stale files left behind');
     // The same interleaving the other way round: B wins first, A (who read the dead PID earlier) loses.
     fs.writeFileSync(lock, String(dead));
-    assert.throws(() => takeLock(lock, { pid: A, alive, beforeRename: () => { takeLock(lock, { pid: B, alive }); } }), /already running.*\(process 2222\)/);
+    assert.throws(() => takeLock(lock, { pid: A, alive, inspect, beforeRename: () => { takeLock(lock, { pid: B, alive, inspect }); } }), /already running.*\(process 2222\)/);
     assert.equal(holder(), String(B));
     // Without interference a dead holder is taken over, a live one is refused, and the file is created when absent.
     fs.writeFileSync(lock, String(dead));
-    assert.equal(takeLock(lock, { pid: A, alive }), true); assert.equal(holder(), String(A));
-    assert.throws(() => takeLock(lock, { pid: B, alive }), /already running/);
-    fs.rmSync(lock); assert.equal(takeLock(lock, { pid: B, alive }), true); assert.equal(holder(), String(B));
+    assert.equal(takeLock(lock, { pid: A, alive, inspect }), true); assert.equal(holder(), String(A));
+    assert.throws(() => takeLock(lock, { pid: B, alive, inspect }), /already running/);
+    fs.rmSync(lock); assert.equal(takeLock(lock, { pid: B, alive, inspect }), true); assert.equal(holder(), String(B));
     // An empty or garbage file counts as stale.
-    fs.writeFileSync(lock, 'garbage'); assert.equal(takeLock(lock, { pid: A, alive }), true); assert.equal(holder(), String(A));
+    fs.writeFileSync(lock, 'garbage'); assert.equal(takeLock(lock, { pid: A, alive, inspect }), true); assert.equal(holder(), String(A));
+  });
+
+  // A PID that Windows has given to another program after a crash is not "Lumen is already running". Real processes and the real
+  // lookup (tasklist, PowerShell for the start time) on this conflict path.
+  test('core.lock: a reused PID is stale, a live Lumen holds it; files of older versions still work', async () => {
+    const { takeLock, parseLock, parseTasklist } = require(path.join(appDir, 'corelock.cjs'));
+    const lock = path.join(freshDir('lock-reuse'), 'core.lock');
+    const me = 424242;
+    const holder = () => parseLock(fs.readFileSync(lock, 'utf8'));
+    const nodeChild = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore', windowsHide: true });
+    const otherChild = spawn('ping.exe', ['-n', '60', '127.0.0.1'], { stdio: 'ignore', windowsHide: true });
+    try {
+      await new Promise(r => setTimeout(r, 500));
+      const start = Date.now() - 500;
+      // Same image (node.exe), started when the file says: held.
+      fs.writeFileSync(lock, `${nodeChild.pid}\nimage=node.exe\nstart=${start}\n`);
+      assert.throws(() => takeLock(lock, { pid: me }), new RegExp(`already running.*\\(process ${nodeChild.pid}\\)`));
+      // Legacy file (PID only) naming a live node.exe: held.
+      fs.writeFileSync(lock, String(nodeChild.pid));
+      assert.throws(() => takeLock(lock, { pid: me }), /already running/);
+      // Same image but another start time (the PID was reused by another node.exe): stale.
+      fs.writeFileSync(lock, `${nodeChild.pid}\nimage=node.exe\nstart=${start - 3600000}\n`);
+      assert.equal(takeLock(lock, { pid: me }), true);
+      assert.equal(holder().pid, me);
+      assert.equal(holder().image.toLowerCase(), path.basename(process.execPath).toLowerCase(), 'the new file records the image');
+      assert.ok(Math.abs(holder().start - (Date.now() - process.uptime() * 1000)) < 2000, 'and the start time');
+      // A live PID of another program (ping.exe), new and legacy format: stale, taken over.
+      fs.writeFileSync(lock, `${otherChild.pid}\nimage=lumen.cpp.exe\nstart=${start}\n`);
+      assert.equal(takeLock(lock, { pid: me }), true); assert.equal(holder().pid, me);
+      fs.writeFileSync(lock, String(otherChild.pid));
+      assert.equal(takeLock(lock, { pid: me }), true); assert.equal(holder().pid, me);
+      assert.deepEqual(fs.readdirSync(path.dirname(lock)), ['core.lock'], 'no stale files left behind');
+    } finally { nodeChild.kill(); otherChild.kill(); }
+    // The tasklist output is parsed without relying on its (localized) texts.
+    assert.equal(parseTasklist('"node.exe","1234","Console","1","45.000 K"\r\n', 1234), 'node.exe');
+    assert.equal(parseTasklist('BİLGİ: Belirtilen ölçütlerle eşleşen görev yok.\r\n', 1234), '');
+    assert.equal(parseTasklist('"node.exe","12345","Console","1","45.000 K"\r\n', 1234), '');
+    assert.equal(parseTasklist('', 1234), null, 'no output: the lookup failed');
+  });
+
+  // FAT/exFAT have no hard links: a live lock moved aside by mistake is renamed back, but never over a lock created meanwhile.
+  test('core.lock: the lock is put back by rename where hard links fail', () => {
+    const { takeLock } = require(path.join(appDir, 'corelock.cjs'));
+    const lock = path.join(freshDir('lock-fat'), 'core.lock');
+    const dead = 999999, A = 1111, B = 2222;
+    const alive = pid => pid === A || pid === B;
+    const inspect = () => null;
+    const noLinks = { ...fs, linkSync: () => { throw Object.assign(Error('not supported'), { code: 'EPERM' }); } };
+    const holder = () => fs.readFileSync(lock, 'utf8').split(/\r?\n/)[0];
+    fs.writeFileSync(lock, String(dead));
+    assert.throws(() => takeLock(lock, { pid: B, alive, inspect, fs: noLinks, beforeRename: () => { assert.equal(takeLock(lock, { pid: A, alive, inspect }), true); } }), /already running.*\(process 1111\)/);
+    assert.equal(holder(), String(A), 'A still holds the lock (renamed back)');
+    assert.deepEqual(fs.readdirSync(path.dirname(lock)), ['core.lock']);
+    // A lock that appeared meanwhile is never replaced by the rename back.
+    fs.writeFileSync(lock, String(dead));
+    const racing = { ...noLinks, existsSync: p => { if (p === lock && !fs.existsSync(lock)) fs.writeFileSync(lock, String(B)); return fs.existsSync(p); } };
+    assert.throws(() => takeLock(lock, { pid: B + 1, alive, inspect, fs: racing, beforeRename: () => { takeLock(lock, { pid: A, alive, inspect }); } }), /already running/);
+    assert.equal(holder(), String(B), 'the lock created meanwhile stays');
   });
 
   test('asset urls use platform base', async () => {

@@ -6,7 +6,7 @@
 //   createCore({platform, dataDir, test, backendDir}) -> {channels, call(channel, args[]), start(), stop(), asset(urlPath)}
 //   backendDir: folder with lumen-host.exe and lumen-image-ocr.exe (default: backend/ next to this file).
 //   start(): takes <data>/core.lock (one core per data folder), starts lumen-host and the services.
-//   stop(): the shutdown sequence (cancel, unload, at most 8 s), then releases the lock.
+//   stop({cap}): the shutdown sequence (cancel, unload, at most cap ms, default 8 s), then releases the lock.
 const {spawn}=require('node:child_process');const fs=require('node:fs');const path=require('node:path');const readline=require('node:readline');
 const {assertPlatform}=require('./platform.cjs');
 const allowed=new Set(['backend_status','install_backend','bootstrap','models','scan','save','rename','branch','send','search','files','register','download','bench','unload','cancel']);
@@ -194,7 +194,7 @@ async function request(action,args={}){
  // ---------- Data-folder lock (spec §7): one core per data folder, whichever shell runs it ----------
  const lockPath=path.join(data,'core.lock');let locked=false;
  function takeLock(){locked=require('./corelock.cjs').takeLock(lockPath,{alive});}
- function releaseLock(){if(!locked)return;locked=false;try{if(fs.readFileSync(lockPath,'utf8').trim()===String(process.pid))fs.rmSync(lockPath,{force:true});}catch{}}
+ function releaseLock(){if(!locked)return;locked=false;require('./corelock.cjs').releaseLock(lockPath);}
 
  const handlers={};const handle=(channel,fn)=>{handlers[channel]=fn;};let started=false;
  async function start(){
@@ -648,12 +648,13 @@ async function request(action,args={}){
   if(JSON.stringify(Object.keys(handlers).sort())!==JSON.stringify([...CHANNELS].sort()))throw Error('Core handlers do not match the preload channels.');
  }
  // Shutdown, in order: agent runs, cloud replies and image work stop, downloads pause, the browser panel and preview close;
- // then the engine is asked to cancel and unload, at most 8 s in total. now=true only ends the engine (startup failure).
- async function stop({now=false}={}){
+ // then the engine is asked to cancel and unload, at most cap ms in total (8 s; core-host passes less so that
+ // the lock is released before the Tauri shell ends the process). now=true only ends the engine (startup failure).
+ async function stop({now=false,cap=8000}={}){
   const h=host;
   if(!h||now){try{h?.stdin.end();}catch{}releaseLock();return;}
   agent?.cancelAll();cloudFlight?.abort();imageGen?.cancel();imageGen?.stop().catch(()=>{});apiServer?.stop().catch(()=>{});try{Promise.resolve(artifacts?.close()).catch(()=>{});}catch{}downloader?.cancelAll();try{Promise.resolve(browser?.close()).catch(()=>{});}catch{}
-  await new Promise(resolve=>{const timeout=setTimeout(()=>{h.kill();resolve();},8000);Promise.resolve().then(()=>request('cancel')).then(()=>request('unload')).catch(()=>{}).then(()=>{if(toolSettings?.plain().browser.clearOnExit)return Promise.resolve(platform.browser.clearData()).catch(()=>{});}).finally(()=>{h.stdin.end();clearTimeout(timeout);resolve();});});
+  await new Promise(resolve=>{const timeout=setTimeout(()=>{h.kill();resolve();},Number.isFinite(Number(cap))?Math.max(0,Number(cap)):8000);Promise.resolve().then(()=>request('cancel')).then(()=>request('unload')).catch(()=>{}).then(()=>{if(toolSettings?.plain().browser.clearOnExit)return Promise.resolve(platform.browser.clearData()).catch(()=>{});}).finally(()=>{h.stdin.end();clearTimeout(timeout);resolve();});});
   releaseLock();
  }
  async function call(channel,args){const fn=handlers[channel];if(!fn)throw Error(started?'Unknown channel.':'Lumen is still starting.');return fn(...(Array.isArray(args)?args:[]));}
