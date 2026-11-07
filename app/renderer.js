@@ -1,5 +1,9 @@
 'use strict';
-const $=id=>document.getElementById(id);const api=window.lumen;
+const $=id=>document.getElementById(id);const api={...window.lumen,preferences:queuedPreferences};
+// Preference saves run one at a time. Callers often send {...state.prefs, change}; a second save built before the first answered
+// would carry stale fields and undo it. Each queued save sends the latest prefs plus only the fields this call changed.
+let preferencesQueue=Promise.resolve();
+function queuedPreferences(value){if(value===undefined)return window.lumen.preferences();const base=state.prefs||{};const run=()=>{const changed={};for(const k of Object.keys(value))if(JSON.stringify(value[k])!==JSON.stringify(base[k]))changed[k]=value[k];return window.lumen.preferences({...(state.prefs||{}),...changed}).then(saved=>{state.prefs=saved;return saved;});};const done=preferencesQueue.then(run,run);preferencesQueue=done.catch(()=>{});return done;}
 const paths={search:'M12 12l4 4M13 8a5 5 0 11-10 0 5 5 0 0110 0',paperclip:'M6 10l5-5a2 2 0 013 3l-7 7a3 3 0 01-4-4l7-7a1 1 0 012 2l-6 6',trash:'M3 5h12M7 3h4M5 5l1 10h6l1-10M8 8v4M10 8v4',plus:'M9 3v12M3 9h12',panel:'M3 3h12v12H3zM7 3v12',models:'M3 3h12v4H3zM3 10h12v5H3zM6 5h.1M6 12h.1',activity:'M2 10h3l3-6 3 10 2-4h3',settings:'M3 5h12M3 9h12M3 13h12M6 3v4M12 7v4M8 11v4',lock:'M5 8h8v7H5zM6 8V5a3 3 0 016 0v3',export:'M4 10v5h10v-5M9 11V2M6 5l3-3 3 3',code:'M6 5l-4 4 4 4M12 5l4 4-4 4M10 3l-2 12',pencil:'M3 12l9-9 3 3-9 9H3zM10 5l3 3',book:'M2 3h5l2 2 2-2h5v11h-5l-2 2-2-2H2zM9 5v11',arrowUp:'M9 15V3M4 8l5-5 5 5',stop:'M5 5h8v8H5z',chat:'M3 3h12v9H8l-4 3v-3H3z'};
 function icon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 18 18');svg.setAttribute('aria-hidden','true');const p=document.createElementNS(svg.namespaceURI,'path');p.setAttribute('d',paths[name]||paths.chat);svg.append(p);return svg;}
 document.querySelectorAll('[data-icon]').forEach(el=>el.append(icon(el.dataset.icon)));

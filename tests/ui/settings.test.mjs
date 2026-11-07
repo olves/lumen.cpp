@@ -129,5 +129,18 @@ describe(`settings (${shell})`, () => {
     assert.ok(!JSON.stringify(cleared).includes(KEY));
   });
 
+  // Two saves built from the same (soon stale) prefs and sent without waiting: both changes must survive.
+  test('back-to-back saves from stale prefs keep both changes', async () => {
+    const r = await app.cdp.evaluate(`(async () => {
+      const s = state.prefs, motion = !s.motion, tokens = s.responseTokens === 1024 ? 2048 : 1024;
+      await Promise.all([api.preferences({ ...s, motion }), api.preferences({ ...s, responseTokens: tokens })]);
+      const saved = await window.lumen.preferences();
+      const out = { motion: saved.motion === motion, tokens: saved.responseTokens === tokens, state: state.prefs.motion === motion && state.prefs.responseTokens === tokens };
+      await api.preferences({ ...state.prefs, motion: s.motion, responseTokens: s.responseTokens });
+      return out;
+    })()`);
+    assert.deepEqual(r, { motion: true, tokens: true, state: true });
+  });
+
   test('no console errors', async () => { assert.deepEqual(app.cdp.errors, []); });
 });
