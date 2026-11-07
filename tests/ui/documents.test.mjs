@@ -48,7 +48,7 @@ describe(`documents (${shell})`, () => {
   });
   after(async () => { await app?.stop(); });
 
-  test('+ -> Documents reads the text file and the PDF and reports the unsupported one', async () => {
+  test('+ -> Documents reads the text file and the PDF; the unsupported file is not added', async () => {
     await ev("document.getElementById('attach-docs').click(); 0");
     await app.cdp.waitFor("!!document.querySelector('.docs-chip .project-chip-open')", 60000);
     const id = await ev('state.chat.Id');
