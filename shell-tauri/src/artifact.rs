@@ -160,8 +160,10 @@ pub fn open(app: &AppHandle, html: String, kind: &str, title: Option<&str>, dark
                     loaded(payload.url());
                 }
             });
-        if let Some(main) = app.get_webview_window(crate::window::MAIN) {
-            builder = builder.parent(&main).map_err(|e| e.to_string())?;
+        // Owned by the main window (WebviewWindowBuilder::parent does the same). The main window is looked up as a Window: with
+        // the browser panel in it, Tauri no longer reports it as a WebviewWindow.
+        if let Some(main) = app.get_window(crate::window::MAIN) {
+            builder = builder.owner_raw(main.hwnd().map_err(|e| e.to_string())?);
         }
         builder = if ui_check {
             // Tests must not take the user's focus: off screen, shown without activation.

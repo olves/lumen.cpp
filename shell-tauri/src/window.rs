@@ -133,9 +133,10 @@ pub fn append(file: &Path, line: &str) {
     }
 }
 
-/// minimize | maximize (toggles) | close (the exit sequence runs from CloseRequested).
+/// minimize | maximize (toggles) | close (the exit sequence runs from CloseRequested). The main window is looked up as a Window:
+/// once the browser panel (a child webview) is in it, Tauri no longer reports it as a WebviewWindow.
 pub fn action(app: &AppHandle, action: &str) -> Result<(), String> {
-    let window = app.get_webview_window(MAIN).ok_or("The window is gone.")?;
+    let window = app.get_window(MAIN).ok_or("The window is gone.")?;
     let r = match action {
         "minimize" => window.minimize(),
         "maximize" => {
@@ -153,7 +154,7 @@ pub fn action(app: &AppHandle, action: &str) -> Result<(), String> {
 
 /// Second instance: bring the existing window forward.
 pub fn focus_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(MAIN) {
+    if let Some(w) = app.get_window(MAIN) {
         if w.is_minimized().unwrap_or(false) {
             let _ = w.unminimize();
         }

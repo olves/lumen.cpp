@@ -93,9 +93,10 @@ fn level(o: &Value) -> MessageLevel {
     }
 }
 
-/// The main window owns the dialog (modal to it), as `dialog.showOpenDialog(win, ...)` in Electron.
-fn main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
-    app.get_webview_window(crate::window::MAIN)
+/// The main window owns the dialog (modal to it), as `dialog.showOpenDialog(win, ...)` in Electron. Looked up as a Window: with
+/// the browser panel in it, Tauri no longer reports it as a WebviewWindow.
+fn main_window(app: &AppHandle) -> Option<tauri::Window> {
+    app.get_window(crate::window::MAIN)
 }
 
 fn builder(app: &AppHandle, r: &FileRequest) -> FileDialog {

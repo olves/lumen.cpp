@@ -1,5 +1,5 @@
 // Launches Lumen in test mode and returns a CDP handle.
-// launch({shell:'electron'|'tauri', dataDir, port, env}) -> {cdp, process, stop()}
+// launch({shell:'electron'|'tauri', dataDir, port, env, args}) -> {cdp, process, stop()}   args: extra command-line arguments
 // Test mode passes the shell: --ui-check --test-data=<dir> --remote-debugging-port=<port>
 // LUMEN_SHELL=tauri needs work/tauri-build from scripts/build-tauri.ps1 -Features ui-check (app/ is mirrored on each launch).
 import { spawn, spawnSync } from 'node:child_process';
@@ -47,7 +47,7 @@ export function syncApp(def) {
   if (r.error || r.status > 7) throw new Error(`robocopy failed (${r.status ?? r.error}): ${r.stdout}`);
 }
 
-export async function launch({ shell = 'electron', dataDir, port, env = {}, sync = true, timeoutMs = 60000 } = {}) {
+export async function launch({ shell = 'electron', dataDir, port, env = {}, args = [], sync = true, timeoutMs = 60000 } = {}) {
   const def = SHELLS[shell];
   if (!def) throw new Error(`Unknown shell '${shell}'`);
   if (!fs.existsSync(def.exe)) throw new Error(`${shell} executable not found: ${def.exe}`);
@@ -55,7 +55,7 @@ export async function launch({ shell = 'electron', dataDir, port, env = {}, sync
   if (sync) syncApp(def);
   fs.mkdirSync(dataDir, { recursive: true });
   port = port || await freePort();
-  const child = spawn(def.exe, def.args(dataDir, port), { stdio: 'ignore', env: { ...process.env, ...def.env(dataDir, port), ...env } });
+  const child = spawn(def.exe, [...def.args(dataDir, port), ...args], { stdio: 'ignore', env: { ...process.env, ...def.env(dataDir, port), ...env } });
   const tracked = new Map();
   let exited = false;
   child.on('exit', () => { exited = true; tracked.delete(child.pid); });

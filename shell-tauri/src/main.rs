@@ -4,6 +4,7 @@
 //             [--user-data-dir=<dir> (with --ui-check only: Electron's userData of the test, whose Local State holds the secrets key)]
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 mod artifact;
+mod browser;
 mod core;
 mod platform;
 mod protocol;
@@ -101,7 +102,7 @@ fn begin_exit(app: &AppHandle) {
     if shell.exiting.swap(true, Ordering::SeqCst) {
         return;
     }
-    if let Some(w) = app.get_webview_window(window::MAIN) {
+    if let Some(w) = app.get_window(window::MAIN) {
         let _ = w.hide();
     }
     let core = shell.core.clone();
@@ -210,6 +211,8 @@ fn main() {
             let notify_data = data.clone();
             let notify = Box::new(move |notice: core::Notice| match notice {
                 core::Notice::Event { channel, payload } => emit(&notify_app, &channel, payload),
+                // Browser requests run in the order they arrive (browser.rs keeps its own queue).
+                core::Notice::Platform { id, method, args } if method.starts_with("browser.") => browser::dispatch(&notify_app, id, method, args),
                 core::Notice::Platform { id, method, args } => {
                     let app = notify_app.clone();
                     tauri::async_runtime::spawn(async move {

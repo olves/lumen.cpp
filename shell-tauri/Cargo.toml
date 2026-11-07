@@ -14,15 +14,15 @@ path = "src/main.rs"
 tauri-build = { version = "=2.7.3", features = [] }
 
 [dependencies]
-# Pinned exactly: the shell will use Tauri's `unstable` multi-webview API later (spec 5.2, 6.1).
-tauri = { version = "=2.12.4", features = [] }
+# Pinned exactly: the browser panel is a child webview of the main window, Tauri's `unstable` multi-webview API (spec 5.2, 6.1).
+tauri = { version = "=2.12.4", features = ["unstable"] }
 tauri-plugin-single-instance = "=2.5.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "time", "macros"] }
 percent-encoding = "2"
 webview2-com = "0.39"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Security_Cryptography", "Win32_UI_Input_KeyboardAndMouse"] }
 # Platform services (Task 6), pinned exactly. Dialogs (rfd directly: no Tauri plugin, so no init script in any webview) and the
 # opener (its Rust function only; the plugin is not registered) are called from Rust only.
 rfd = { version = "=0.17.2", default-features = false, features = ["common-controls-v6"] }

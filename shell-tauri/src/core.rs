@@ -449,6 +449,11 @@ impl Core {
         let _ = self.write(&frame);
     }
 
+    /// A callback event of the platform (browser.onNavigate / onPopup / onState); `payload` is an object.
+    pub fn event(&self, name: &str, payload: Value) {
+        let _ = self.write(&Frame::PlatformEvent { name: name.to_string(), payload });
+    }
+
     /// Exit: `shutdown`, then the Job Object ends everything after 5 s.
     pub async fn shutdown(&self) {
         let generation = {

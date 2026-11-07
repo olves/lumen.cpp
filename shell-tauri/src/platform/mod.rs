@@ -1,6 +1,6 @@
 // Platform requests of the core (app/platform.cjs) that the Tauri shell answers, with the same inputs and outputs as Electron's
-// shell (app/shell-electron.cjs). Task 6 adds dialogs, clipboard, images, secrets and openExternal; the browser panel (Task 9)
-// is still refused with NOT_IMPLEMENTED (ruling T5-a).
+// shell (app/shell-electron.cjs): dialogs, clipboard, images, secrets, openExternal and the artifact preview. browser.* requests
+// never come here: main.rs hands them to browser.rs, which runs them in order. Unknown methods are refused with NOT_IMPLEMENTED.
 pub mod clipboard;
 pub mod dialog;
 pub mod image;
@@ -250,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn browser_waits_for_its_task() {
-        for m in ["browser.render", "browser.create", "browser.onNavigate", "unknown"] {
+    fn unknown_methods_are_refused() {
+        for m in ["unknown", "browser.render"] {
             assert_eq!(routed(m, json!([])), Outcome::Answer(Err(NOT_IMPLEMENTED.to_string())), "{m}");
         }
     }
