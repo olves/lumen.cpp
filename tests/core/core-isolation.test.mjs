@@ -343,7 +343,7 @@ describe('core isolation', () => {
       assert.equal(index.status, 200);
       assert.equal(index.mime, 'text/html; charset=utf-8');
       assert.match(String(index.body), /<body class="no-motion" data-theme="pro" data-mode="light">/);
-      for (const file of ['/appearance.js', '/ui/tokens.css', '/ui/base.css', '/ui/c-shell.css', '/ui/c-chat.css', '/ui/c-controls.css', '/ui/c-dialogs.css', '/ui/c-settings.css', '/ui/c-explore.css', '/ui/c-tools.css', '/ui/c-run.css', '/ui/c-media.css', '/vendor/katex.min.css']) assert.equal((await core.asset(file)).status, 200, file);
+      for (const file of ['/appearance.js', '/ui/tokens.css', '/ui/base.css', '/ui/c-shell.css', '/ui/c-chat.css', '/ui/c-status.css', '/statusbar.js', '/ui/c-controls.css', '/ui/c-dialogs.css', '/ui/c-settings.css', '/ui/c-explore.css', '/ui/c-tools.css', '/ui/c-run.css', '/ui/c-media.css', '/vendor/katex.min.css']) assert.equal((await core.asset(file)).status, 200, file);
       for (const file of ['/style.css', '/design.css', '/polish.css', '/extras.css']) assert.equal((await core.asset(file)).status, 404, 'removed legacy CSS ' + file);
       const css = await core.asset('/ui/c-shell.css');
       assert.equal(css.filePath, path.join(appDir, 'ui', 'c-shell.css'));

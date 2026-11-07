@@ -102,7 +102,7 @@ describe(`smoke (${shell})`, () => {
     assert.equal(after[n - 1].interrupted, true, 'cancelled reply still marked interrupted');
   });
 
-  test('language', async t => {
+  test('language', async () => {
     const { cdp } = app;
     await cdp.click('[data-page="settings"]');
     const index = await cdp.evaluate("[...document.querySelector('#language').options].findIndex(o=>o.value==='tr')");
@@ -112,9 +112,8 @@ describe(`smoke (${shell})`, () => {
     await cdp.waitFor("state.prefs.language==='tr'", 5000);
     const placeholder = await cdp.evaluate("document.querySelector('#prompt').placeholder");
     await shot('language');
-    // Known product bug (not fixed in this task): the composer placeholder stays English in Turkish.
-    if (placeholder === 'Ask anything. Keep it local.') t.todo('composer placeholder is still English ("Ask anything. Keep it local.") in Turkish');
-    assert.match(placeholder, /Bir şey sor|Yerelde/i, `placeholder was: ${placeholder}`);
+    // Task 5: the placeholder comes from translations.composerPlaceholder, so Turkish is translated too.
+    assert.equal(placeholder, 'Ne istersen sor; her şey bu cihazda kalsın.', `placeholder was: ${placeholder}`);
   });
 
   test('800x600', async () => {

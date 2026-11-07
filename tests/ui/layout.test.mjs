@@ -1,9 +1,11 @@
-// Visual matrix: theme (native/reading/pro) x Light/Dark x English/Turkish over the chat (with a conversation that stresses the layout: a wide
-// table, a long code line, a long unbroken URL) and every Settings section, then 800x600. Per cell: the right layout/mode/language
-// is applied, the page does not overflow the window sideways, text is translated, and there are no console errors. Screenshots go to
-// <run>/shots for a human to look at (they are not compared automatically).
+// Visual and accessibility matrix: theme (native/reading/pro) x Light/Dark x English/Turkish over the chat (with a conversation
+// that stresses the layout: a wide table, a long code line, a long unbroken URL) and every Settings section, then 800x600 and
+// the default window at 150% Windows scaling. Per cell: the right theme/mode/language is applied, the page does not overflow
+// sideways, token contrast pairs pass (>=4.5:1 text, >=3:1 UI), every visible control is focusable, keyboard focus reaches the
+// main controls with a visible ring, and there are no console errors. Screenshots for every theme x mode go to
+// <work>/ui-shots/final for a human to look at (they are not compared automatically).
 // Skipped on purpose: Settings -> Explore (it loads Hugging Face over the network).
-// The Turkish composer placeholder that stays English is a known product bug and is kept as a todo in smoke.test.mjs.
+// The Turkish composer placeholder is translated (translations.composerPlaceholder; smoke.test.mjs checks the exact text).
 //   $env:LUMEN_SHELL='tauri'; node --test tests/ui/layout.test.mjs
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +17,9 @@ import { prepareData } from './data.mjs';
 
 const shell = process.env.LUMEN_SHELL || 'electron';
 const runDir = path.join(workRoot, 'ui-tests', `layout-${shell}-` + new Date().toISOString().replace(/[:.]/g, '-'));
-const dataDir = path.join(runDir, 'data'), shots = path.join(runDir, 'shots');
+const dataDir = path.join(runDir, 'data'), shots = path.join(workRoot, 'ui-shots', 'final');
+const slug = text => String(text).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase();
+const shotName = (label, kind) => path.join(shots, `${shell}-${slug(label)}-${kind}.png`);
 const CHAT_ID = crypto.randomBytes(16).toString('hex');
 const SKIP_SETTINGS = new Set(['explore']);
 let app;
@@ -53,6 +57,33 @@ const OVERFLOW = `(() => {
   return { scroll: document.documentElement.scrollWidth, body: document.body.scrollWidth, w: W, bad };
 })()`;
 
+// Contrast of the tokens actually applied to :root (not just the theme table): text pairs >=4.5:1, UI/focus >=3:1.
+const CONTRAST = `(() => {
+  const A = globalThis.LumenAppearance, cs = getComputedStyle(document.documentElement), value = name => cs.getPropertyValue(name).trim();
+  const bad = [];
+  for (const p of A.PAIRS) {
+    const fg = value(p.fg), bg = value(p.bg), ratio = A.contrast(fg, bg);
+    if (!(ratio >= p.min)) bad.push({ fg: p.fg, bg: p.bg, fgValue: fg, bgValue: bg, ratio: Math.round(ratio * 100) / 100, min: p.min });
+  }
+  return bad;
+})()`;
+// Every visible, enabled, tabbable control accepts keyboard focus (script focus; the ring is checked with real Tab presses below).
+const FOCUSABLE = `(() => {
+  const failed = []; let tested = 0;
+  for (const e of document.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')) {
+    // checkVisibility() also excludes the content of a closed <details> (Chromium still reports a rect for it).
+    const visible = e.checkVisibility ? e.checkVisibility({ checkVisibilityCSS: true }) : e.getClientRects().length > 0;
+    if (!visible || e.disabled || e.tabIndex < 0 || e.closest('[inert]') || e.closest('[hidden]')) continue;
+    tested++;
+    e.focus({ preventScroll: true });
+    if (document.activeElement !== e) failed.push(e.id || e.tagName + '.' + String(e.className).split(' ')[0]);
+  }
+  document.activeElement?.blur();
+  return { tested, failed };
+})()`;
+
+const settingsVisible = () => app.cdp.waitFor("getComputedStyle(document.getElementById('settings-page')).opacity === '1'", 5000);
+
 async function checkCell(label, theme, mode, lang) {
   const o = await ev(OVERFLOW);
   assert.ok(o.scroll <= o.w && o.body <= o.w, `${label}: horizontal overflow ${JSON.stringify(o)}`);
@@ -61,6 +92,35 @@ async function checkCell(label, theme, mode, lang) {
   assert.equal(await ev('document.documentElement.dataset.theme'), theme, label);
   assert.equal(await ev('document.body.dataset.mode'), mode, label);
   assert.equal(await ev('document.documentElement.lang'), lang, label);
+  const contrast = await ev(CONTRAST);
+  assert.deepEqual(contrast, [], `${label}: token contrast`);
+  const focus = await ev(FOCUSABLE);
+  assert.ok(focus.tested >= 10, `${label}: only ${focus.tested} visible controls tested`);
+  assert.deepEqual(focus.failed, [], `${label}: controls that do not take focus`);
+}
+
+async function pressTab() {
+  await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+  await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+  return ev(`(() => { const e = document.activeElement; if (!e) return null; const cs = getComputedStyle(e);
+    return { id: e.id || '', text: (e.textContent || '').trim().slice(0, 24), tag: e.tagName, match: e.matches(':focus-visible'),
+      outline: cs.outlineStyle, width: parseFloat(cs.outlineWidth) || 0, shadow: cs.boxShadow }; })()`);
+}
+// Real Tab presses show :focus-visible. Keyboard order must reach the main chat controls, and every button it lands on must
+// draw the 2 px focus ring (text fields intentionally use their own border instead).
+async function checkKeyboard(label) {
+  await ev("document.getElementById('new-chat').focus({ preventScroll: true }); 0");
+  const seen = [];
+  // The conversation carries hidden-until-hover Copy/Branch/Regenerate buttons, so leave room for them before the composer.
+  for (let i = 0; i < 34; i++) seen.push(await pressTab());
+  const ids = new Set(seen.map(item => item?.id));
+  for (const id of ['prompt', 'add-button', 'model-trigger', 'send', 'status-model', 'status-context', 'status-web']) assert.ok(ids.has(id), `${label}: Tab reaches #${id}; saw ${[...ids].filter(Boolean).join(',')}`);
+  for (const item of seen) if (item && ['BUTTON', 'A'].includes(item.tag)) {
+    assert.equal(item.match, true, `${label}: ${item.id || item.text} is not :focus-visible after Tab`);
+    const outlineRing = item.outline !== 'none' && item.width >= 2;
+    const shadowRing = item.shadow && item.shadow !== 'none'; // code-copy and similar use a 2 px box-shadow ring
+    assert.ok(outlineRing || shadowRing, `${label}: ${item.id || item.text} has no visible focus ring (${item.outline} ${item.width}px, shadow ${item.shadow})`);
+  }
 }
 
 describe(`layout matrix (${shell})`, () => {
@@ -96,26 +156,43 @@ describe(`layout matrix (${shell})`, () => {
           await ev("setPage('chat'); 0");
           await app.cdp.waitFor("document.querySelectorAll('.message.assistant').length === 1", 5000);
           await checkCell(label + ' chat', layout, mode, lang);
-          await app.cdp.screenshot(path.join(shots, `${label.replace(/\//g, '-')}-chat.png`));
+          await app.cdp.screenshot(shotName(label, 'chat'));
+          await checkKeyboard(label + ' chat');
           // Text is in the chosen language: the sidebar's new-chat button differs between languages.
           const nav = await ev("document.querySelector('#new-chat').textContent.trim()");
           assert.ok(nav.length > 0);
           globalThis.__navText = globalThis.__navText || {};
           globalThis.__navText[lang] = nav;
           // Settings sections
-          await ev("document.querySelector('[data-page=\"settings\"]').click(); 0");
+          await ev("openSettings('general', false); 0");
+          await settingsVisible();
           for (const s of sections) {
-            await ev(`openSettings(${JSON.stringify(s)}); 0`);
+            await ev(`openSettings(${JSON.stringify(s)}, false); 0`);
             await app.cdp.waitFor("!document.querySelector('#settings-page').hidden", 5000);
             await checkCell(`${label} settings/${s}`, layout, mode, lang);
           }
-          await app.cdp.screenshot(path.join(shots, `${label.replace(/\//g, '-')}-settings.png`));
+          await app.cdp.screenshot(shotName(label, 'settings'));
           assert.deepEqual(app.cdp.errors, [], label + ' console errors');
         });
       }
 
   test('Turkish text differs from English text', async () => {
     assert.notEqual(globalThis.__navText.en, globalThis.__navText.tr, JSON.stringify(globalThis.__navText));
+  });
+
+  test('Settings navigation is keyboard reachable with a visible ring', async () => {
+    await setSelect('language', 'en');
+    await ev("openSettings('appearance', false); 0");
+    await app.cdp.waitFor("!document.querySelector('#settings-page').hidden", 5000);
+    await settingsVisible();
+    await ev("document.getElementById('back-to-chat').focus({ preventScroll: true }); 0");
+    const seen = [];
+    for (let i = 0; i < 4; i++) seen.push(await pressTab());
+    assert.ok(seen.some(item => item?.text === 'Appearance'), `settings nav not reached: ${JSON.stringify(seen)}`);
+    for (const item of seen) if (item?.tag === 'BUTTON') {
+      assert.equal(item.match, true, `settings: ${item.text} is not :focus-visible after Tab`);
+      assert.ok((item.outline !== 'none' && item.width >= 2) || (item.shadow && item.shadow !== 'none'), `settings: ${item.text} has no visible focus ring`);
+    }
   });
 
   // A real Tab keypress (CDP Input) onto a message link and a code-block Copy button: each must get :focus-visible and a visible
@@ -142,15 +219,39 @@ describe(`layout matrix (${shell})`, () => {
       await app.cdp.waitFor(`document.body.dataset.theme === '${layout}' && document.body.dataset.mode === '${mode}' && state.prefs.language === '${lang}'`, 5000);
       await ev("setPage('chat'); 0");
       await checkCell(label + ' chat', layout, mode, lang);
-      await app.cdp.screenshot(path.join(shots, `${label.replace(/[ /]/g, '-')}-chat.png`));
-      await ev("document.querySelector('[data-page=\"settings\"]').click(); 0");
+      await app.cdp.screenshot(shotName(label, 'chat'));
+      await ev("openSettings('general', false); 0");
+      await settingsVisible();
       for (const s of ['general', 'appearance', 'library', 'runtime']) {
-        await ev(`openSettings(${JSON.stringify(s)}); 0`);
+        await ev(`openSettings(${JSON.stringify(s)}, false); 0`);
         await checkCell(`${label} settings/${s}`, layout, mode, lang);
       }
       assert.equal(await ev('innerHeight'), 600);
     }
     await app.cdp.send('Emulation.clearDeviceMetricsOverride');
+    assert.deepEqual(app.cdp.errors, []);
+  });
+
+  test('150% Windows scaling: the default window in all themes, modes and languages', { timeout: 180000 }, async () => {
+    // 1240x860 at 150% is 827x573 CSS pixels; devicePixelRatio 1.5 also exercises high-DPI text and borders.
+    await app.cdp.send('Emulation.setDeviceMetricsOverride', { width: 827, height: 573, deviceScaleFactor: 1.5, mobile: false });
+    await app.cdp.waitFor('window.innerWidth === 827 && window.devicePixelRatio === 1.5', 5000);
+    for (const lang of ['en', 'tr']) for (const layout of ['native', 'reading', 'pro']) for (const mode of ['dark', 'light']) {
+      const label = `150% ${layout}/${mode}/${lang}`;
+      await setSelect('language', lang); await setSelect('interface-design', layout); await setSelect('display-mode', mode);
+      await app.cdp.waitFor(`document.body.dataset.theme === '${layout}' && document.body.dataset.mode === '${mode}' && state.prefs.language === '${lang}'`, 5000);
+      await ev("setPage('chat'); 0");
+      await checkCell(label + ' chat', layout, mode, lang);
+      await ev("openSettings('general', false); 0");
+      await settingsVisible();
+      for (const s of ['general', 'appearance', 'library', 'runtime']) {
+        await ev(`openSettings(${JSON.stringify(s)}, false); 0`);
+        await checkCell(`${label} settings/${s}`, layout, mode, lang);
+      }
+      assert.equal(await ev('innerHeight'), 573);
+    }
+    await app.cdp.send('Emulation.clearDeviceMetricsOverride');
+    await app.cdp.waitFor('window.innerWidth > 800', 5000);
     assert.deepEqual(app.cdp.errors, []);
   });
 });

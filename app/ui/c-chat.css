@@ -157,6 +157,7 @@ body.no-motion .message.search-hit{animation:none;outline:1px solid var(--focus)
 .md .hljs-emphasis{font-style:italic}
 .md .hljs-strong{font-weight:600}
 
+
 /* Composer */
 .composer-region{width:min(720px,calc(100% - 48px));margin:0 auto;padding:8px 0 12px;flex:none}
 .composer{position:relative;padding:11px 13px 9px;background:var(--surface-2);border:1px solid var(--border);border-radius:calc(var(--radius) * 2);transition:border-color var(--duration) ease,box-shadow var(--duration) ease}

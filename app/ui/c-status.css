@@ -1,0 +1,38 @@
+/* Status surface: the line under the composer and the optional bar at the bottom of the window. Both placements are the
+   same element (#app-status, moved by statusbar.js), so only one is visible at a time. Tokens only. */
+:root{--statusbar-height:26px}
+
+.app-status{display:flex;align-items:center;gap:12px;min-width:0;overflow:hidden;white-space:nowrap;font-size:var(--font-size-small);color:var(--text-muted)}
+.app-status[hidden]{display:none}
+/* Under the composer: one quiet row of its own, after the hint/assistant/run-settings line. */
+.app-status[data-placement=composer]{width:100%;justify-content:flex-start;margin-top:4px}
+.app-status[data-placement=composer] .status-web{margin-left:auto}
+/* At the bottom of the window: full width, labels visible, the web toggle at the far right. */
+.app-status[data-placement=window]{position:fixed;left:0;right:0;bottom:0;z-index:30;height:var(--statusbar-height);padding:0 14px;background:var(--surface-1);border-top:1px solid var(--border)}
+.app-status[data-placement=window] .status-web{margin-left:auto}
+body.statusbar-window .shell{height:calc(100vh - 36px - var(--statusbar-height))}
+@media (max-height:700px){body.statusbar-window .shell{height:calc(100vh - 32px - var(--statusbar-height))}}
+
+.status-item{display:inline-flex;align-items:center;gap:5px;min-width:0;height:22px;padding:0 3px;border:0;border-radius:calc(var(--radius) - 2px);color:var(--text-muted);font:inherit;background:transparent}
+.status-item[hidden]{display:none}
+.status-label{flex:none;color:var(--text-muted)}
+.status-value{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
+.status-mono{font-family:var(--font-mono);font-size:calc(var(--font-size-small) - 1px);font-variant-numeric:tabular-nums}
+.status-model .status-value{max-width:200px}
+.status-context .status-value{max-width:190px}
+button.status-item{cursor:pointer;text-align:left}
+button.status-item:hover:not(:disabled){background:var(--hover);color:var(--text)}
+button.status-item:disabled{opacity:.55;cursor:default}
+.status-web{flex:none;color:var(--text)}
+.status-web[aria-pressed=false]{color:var(--text-muted)}
+.status-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--text-muted)}
+.status-dot[data-phase=ready],.status-dot[data-phase=answering]{background:var(--text)}
+.status-dot[data-phase=loading]{background:var(--text-muted)}
+.status-phase{color:var(--text-muted)}
+/* In the compact line the dot carries the state; the window bar has room for the word too. */
+.app-status[data-placement=composer] .status-phase{display:none}
+
+@media (max-width:900px){
+ .app-status[data-placement=composer]{gap:9px}
+ .app-status[data-placement=composer] .status-model .status-value{max-width:120px}
+}
