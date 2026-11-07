@@ -32,3 +32,19 @@ test('index.html links only app/ui stylesheets and the vendored KaTeX CSS; no le
   assert.equal(links[1], 'ui/tokens.css', 'tokens load before the components');
   assert.deepEqual(fs.readdirSync(app).filter(f => f.endsWith('.css')), []);
 });
+
+test('focus-visible rules that remove the outline keep a valid box-shadow ring', () => {
+  const bad = [];
+  for (const f of fs.readdirSync(ui).filter(f => f.endsWith('.css'))) {
+    const css = fs.readFileSync(path.join(ui, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    if (css.includes('0 0 0 2px 0 0 0 2px')) bad.push(`${f}: doubled box-shadow offsets`);
+    for (const [, sel, body] of css.matchAll(/([^{}]*:focus-visible[^{}]*)\{([^{}]*)\}/g)) {
+      if (!/outline\s*:\s*(none|0)\b/.test(body)) continue;
+      const shadow = body.match(/box-shadow\s*:\s*([^;]+)/);
+      // Valid ring: offsets then a colour; three or four length values, then a token colour.
+      const ok = shadow && [shadow[1]].every(l =>/^\s*(inset\s+)?(-?[\d.]+(px)?\s+){3,4}(color-mix\(|var\(--)/.test(l));
+      if (!ok) bad.push(`${f}: ${sel.trim()}`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});

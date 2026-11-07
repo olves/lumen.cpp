@@ -46,7 +46,7 @@
 .thinking>summary::after{content:'';width:5px;height:5px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .16s ease;margin-left:2px}
 .thinking[open]>summary::after{transform:rotate(45deg)}
 .thinking>summary:hover{color:var(--text-muted)}
-.thinking>summary:focus-visible{outline:none;box-shadow:0 0 0 2px 0 0 0 2px color-mix(in srgb,var(--focus) 45%,transparent)}
+.thinking>summary:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--focus) 45%,transparent)}
 .thinking.live .thinking-label{color:var(--text-muted)}
 .thinking-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.92em;line-height:1.55;color:var(--text-muted);max-height:320px;overflow:auto;padding:6px 0 4px}
 @media(prefers-reduced-motion:reduce){.thinking>summary::after{transition:none}}
@@ -65,11 +65,11 @@
 .md blockquote{margin:0 0 .75em;padding:.1em 0 .1em 1em;border-left:2px solid var(--border);color:var(--text-muted)}
 .md hr{border:0;border-top:1px solid var(--border);margin:1.2em 0}
 .md a{color:var(--text);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
-.md a:focus-visible{outline:none;box-shadow:0 0 0 2px 0 0 0 2px color-mix(in srgb,var(--focus) 45%,transparent);border-radius:3px}
+.md a:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--focus) 45%,transparent);border-radius:3px}
 .md :not(pre)>code{font:.88em var(--font-mono);color:var(--text);background:var(--surface-1);border:1px solid var(--border);padding:1px 5px;border-radius:5px}
 .md .code-copy{border:0;background:transparent;color:var(--text-muted);font:inherit;padding:3px 6px;border-radius:5px;cursor:pointer}
 .md .code-copy:hover{background:var(--hover);color:var(--text)}
-.md .code-copy:focus-visible{outline:none;box-shadow:0 0 0 2px 0 0 0 2px color-mix(in srgb,var(--focus) 45%,transparent)}
+.md .code-copy:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--focus) 45%,transparent)}
 .md pre{margin:0;padding:10px 12px;overflow-x:auto;max-width:100%}
 .md pre code{font:.86em/1.55 var(--font-mono);color:var(--text);white-space:pre;display:block;tab-size:4}
 .md .table-scroll{max-width:100%;overflow-x:auto;margin:0 0 .9em;border:1px solid var(--border);border-radius:calc(var(--radius) + 2px)}

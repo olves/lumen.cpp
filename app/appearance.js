@@ -180,7 +180,7 @@ function mergeAppearance(previous,patch){
 }
 
 // ---- migration from the old preferences ----
-// Old accent presets (themes.css) per mode; 'warm' was the default and maps to the new theme's own accent (no override).
+// Old accent presets (the pre-redesign accent themes) per mode; 'warm' was the default and maps to the new theme's own accent (no override).
 const OLD_PRESET_ACCENT={
  graphite:{dark:'#c1c2b8',light:'#414f48'},ocean:{dark:'#8fb4d9',light:'#2f5f8a'},forest:{dark:'#9cc49a',light:'#3d6a3c'},plum:{dark:'#c3a6d9',light:'#6a4a85'},
  rose:{dark:'#e0a3b0',light:'#984358'},teal:{dark:'#86c7c0',light:'#2a6c66'},gold:{dark:'#d9bf7a',light:'#765e1d'}

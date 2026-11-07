@@ -102,7 +102,7 @@
 #toast{background:var(--surface-2);color:var(--text);border-color:var(--border);box-shadow:0 10px 30px var(--shadow-color)}
 .photo-viewer::backdrop{background:color-mix(in srgb,var(--shadow-color) 60%,transparent)}
 .search-result{display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;border:0;background:transparent;color:var(--text);padding:7px 9px;border-radius:var(--radius);cursor:pointer;font:inherit}
-.search-result:hover,.search-result:focus-visible{background:var(--hover);outline:none}
+.search-result:hover,.search-result:focus-visible{background:var(--hover)}.search-result:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--focus)}
 .search-result-head{display:flex;flex-direction:column;gap:1px;min-width:0}
 .search-result-head strong{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .search-result-head small{font-size:var(--font-size-small);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

@@ -118,6 +118,20 @@ describe(`layout matrix (${shell})`, () => {
     assert.notEqual(globalThis.__navText.en, globalThis.__navText.tr, JSON.stringify(globalThis.__navText));
   });
 
+  // A real Tab keypress (CDP Input) onto a message link and a code-block Copy button: each must get :focus-visible and a visible
+  // ring (outline or a box-shadow). A temporary tabindex anchor right before the target makes the Tab land on it.
+  test('keyboard focus ring on a message link and a code Copy button', async () => {
+    await ev("setPage('chat'); 0");
+    await app.cdp.waitFor("document.querySelector('.message.assistant .md a') && document.querySelector('.message.assistant .code-copy')", 5000);
+    for (const sel of ['.message.assistant .md a', '.message.assistant .code-copy']) {
+      await ev(`(() => { const t = document.querySelector(${JSON.stringify(sel)}); t.scrollIntoView({ block: 'center' }); const a = document.createElement('span'); a.id = 'tab-anchor'; a.tabIndex = 0; t.before(a); a.focus(); return 0; })()`);
+      for (const type of ['keyDown', 'keyUp']) await app.cdp.send('Input.dispatchKeyEvent', { type, key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+      const r = await ev(`(() => { const t = document.querySelector(${JSON.stringify(sel)}); const cs = getComputedStyle(t); const res = { active: document.activeElement === t, visible: t.matches(':focus-visible'), outline: cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0, shadow: cs.boxShadow !== 'none' }; document.getElementById('tab-anchor').remove(); return res; })()`);
+      assert.ok(r.active && r.visible, `${sel}: Tab focus ${JSON.stringify(r)}`);
+      assert.ok(r.outline || r.shadow, `${sel}: no focus ring ${JSON.stringify(r)}`);
+    }
+  });
+
   test('800x600: chat and settings (three themes, dark and light, both languages)', { timeout: 180000 }, async () => {
     // Electron's DevTools endpoint has no Browser.setWindowBounds, so the 800x600 viewport is emulated.
     await app.cdp.send('Emulation.setDeviceMetricsOverride', { width: 800, height: 600, deviceScaleFactor: 1, mobile: false });

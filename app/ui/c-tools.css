@@ -119,7 +119,7 @@
 .browser-find{flex:none;display:flex;align-items:center;gap:4px;padding:6px 8px;border-bottom:1px solid var(--border)}
 .browser-find[hidden]{display:none}
 .browser-find input{flex:1;min-width:0;height:28px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);color:var(--text);font:inherit;font-size:12px}
-.browser-find input:focus{outline:none;border-color:var(--surface-2)}
+.browser-find input:focus{outline:none;border-color:var(--focus)}
 #browser-find-count{font:var(--font-size-small) var(--font-mono);color:var(--text-muted);min-width:54px;text-align:right}
 #open-browser[aria-pressed=true]{color:var(--text)}
 body[data-browser-width=narrow] .browser-panel{flex-basis:clamp(320px,34%,560px)}
