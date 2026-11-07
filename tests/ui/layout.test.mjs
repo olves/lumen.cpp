@@ -100,8 +100,8 @@ async function checkCell(label, theme, mode, lang) {
 }
 
 async function pressTab() {
-  await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-  await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+  await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+  await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
   return ev(`(() => { const e = document.activeElement; if (!e) return null; const cs = getComputedStyle(e);
     return { id: e.id || '', text: (e.textContent || '').trim().slice(0, 24), tag: e.tagName, match: e.matches(':focus-visible'),
       outline: cs.outlineStyle, width: parseFloat(cs.outlineWidth) || 0, shadow: cs.boxShadow }; })()`);
