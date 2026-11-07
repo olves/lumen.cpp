@@ -5,9 +5,12 @@
 // (by name, by literal, or by DNS answer). The host is resolved HERE, every answer is validated with web.cjs rules, and the
 // connection goes to the validated IP, so DNS rebinding cannot swap the address after the check. CONNECT tunnels raw bytes
 // (TLS stays end to end; nothing is terminated or inspected).
-// Listens on 127.0.0.1 only, random port, Basic auth with a random per-run token.
+// Listens on 127.0.0.1 only, random port, Basic auth with a random per-run token. The realm is random too: the shell answers
+// WebView2's authentication request only when the challenge carries this realm, so a web site asking for Basic auth with a
+// realm of its choosing never receives the token. Every reply the proxy makes itself carries X-Lumen-Proxy (blocked | dns |
+// gateway | bad-request), so the shell can tell its refusals from a site's own error pages.
 const http=require('node:http'),net=require('node:net'),crypto=require('node:crypto');
-const {resolveHost}=require('./web.cjs');
+const {resolveHost,testAllowed}=require('./web.cjs');
 
 const DNS_TIMEOUT=10000,REQUEST_TIMEOUT=300000,CONNECT_TIMEOUT=15000,IDLE_TIMEOUT=120000,MAX_HEADER=16384;
 const HOP=['proxy-authorization','proxy-connection','proxy-authenticate','connection','keep-alive','te','trailer','transfer-encoding','upgrade'];
@@ -23,7 +26,7 @@ const digest=value=>crypto.createHash('sha256').update(String(value)).digest();
 function startProxy({resolver,__testDial}={}){
  // __testDial(ip, port) -> {host, port}: TEST ONLY (underscore-prefixed on purpose; no product code passes it). Lets tests redirect an already-validated public IP to a local server.
  // Product code never passes it; without it the proxy dials exactly the validated IP.
- const user='lumen',token=crypto.randomBytes(24).toString('hex');
+ const user='lumen',token=crypto.randomBytes(24).toString('hex'),realm='lumen-'+crypto.randomBytes(16).toString('hex');
  const expected=digest('Basic '+Buffer.from(user+':'+token).toString('base64'));
  const sockets=new Set();
  const track=socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));socket.on('error',()=>socket.destroy());return socket;};
@@ -33,7 +36,8 @@ function startProxy({resolver,__testDial}={}){
  // Resolve + validate, then connect to the first reachable validated address.
  async function open(hostname,port){
   let timer;
-  const addresses=await Promise.race([resolveHost(hostname,{resolver}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('DNS timeout'),{code:'dns'})),DNS_TIMEOUT);})]).finally(()=>clearTimeout(timer));
+  // The UI tests' local server (web.cjs allowTestHost, test mode only) is dialled as is; nothing else skips the checks.
+  const addresses=testAllowed(hostname,port)?['127.0.0.1']:await Promise.race([resolveHost(hostname,{resolver}),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Object.assign(new Error('DNS timeout'),{code:'dns'})),DNS_TIMEOUT);})]).finally(()=>clearTimeout(timer));
   let last;
   for(const ip of addresses){
    try{
@@ -65,22 +69,24 @@ function startProxy({resolver,__testDial}={}){
   if(res.headersSent||res.writableEnded){res.destroy();return;}
   res.writeHead(status,{'Content-Length':Buffer.byteLength(body),'Connection':'close',...headers});res.end(body);
  }
- const htmlHeaders={'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'};
- const authHeaders={'Proxy-Authenticate':'Basic realm="Lumen"','Content-Type':'text/plain; charset=utf-8'};
+ const htmlHeaders={'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Lumen-Proxy':'blocked'};
+ const textHeaders=kind=>({'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','X-Lumen-Proxy':kind});
+ const challenge='Basic realm="'+realm+'"';
+ const authHeaders={'Proxy-Authenticate':challenge,'Content-Type':'text/plain; charset=utf-8'};
 
  const server=http.createServer({maxHeaderSize:MAX_HEADER,requestTimeout:REQUEST_TIMEOUT,headersTimeout:15000,keepAlive:false},async(req,res)=>{
   try{
    if(!authorized(req))return reply(res,407,authHeaders,'Proxy authentication required');
-   let url;try{url=new URL(req.url);}catch{return reply(res,400,{'Content-Type':'text/plain'},'Bad request');}
-   if(url.protocol!=='http:')return reply(res,url.protocol==='https:'?400:403,{'Content-Type':'text/plain'},'Unsupported scheme');
+   let url;try{url=new URL(req.url);}catch{return reply(res,400,textHeaders('bad-request'),'Bad request');}
+   if(url.protocol!=='http:')return url.protocol==='https:'?reply(res,400,textHeaders('bad-request'),'Unsupported scheme'):reply(res,403,htmlHeaders,BLOCKED_PAGE);
    if(url.username||url.password)return reply(res,403,htmlHeaders,BLOCKED_PAGE);
    const port=url.port?Number(url.port):80,host=url.hostname.replace(/^\[|\]$/g,'');
    let upstream;
-   try{upstream=await open(host,port);}catch(error){return refusal(error)||error.code==='dns'?reply(res,error.code==='dns'?502:403,error.code==='dns'?{'Content-Type':'text/plain'}:htmlHeaders,error.code==='dns'?'Could not resolve host':BLOCKED_PAGE):reply(res,502,{'Content-Type':'text/plain'},'Bad gateway');}
+   try{upstream=await open(host,port);}catch(error){return refusal(error)?reply(res,403,htmlHeaders,BLOCKED_PAGE):error.code==='dns'?reply(res,502,textHeaders('dns'),'Could not resolve host'):reply(res,502,textHeaders('gateway'),'Bad gateway');}
    const headers=without(req.headers);headers.host=url.host;headers.connection='close';
    const agent=new http.Agent({keepAlive:false});agent.createConnection=()=>upstream; // the validated socket; Node never resolves the name
    const out=http.request({method:req.method,path:url.pathname+url.search,headers,agent});
-   const fail=()=>{upstream.destroy();if(!res.headersSent)reply(res,502,{'Content-Type':'text/plain'},'Bad gateway');else res.destroy();};
+   const fail=()=>{upstream.destroy();if(!res.headersSent)reply(res,502,textHeaders('gateway'),'Bad gateway');else res.destroy();};
    out.on('error',fail);
    out.on('response',up=>{
     const h=without(up.headers);h.connection='close';
@@ -99,11 +105,11 @@ function startProxy({resolver,__testDial}={}){
  server.on('connect',async(req,client,head)=>{
   client.on('error',()=>client.destroy());
   try{
-   if(!authorized(req))return rawReply(client,407,'Proxy Authentication Required',{'Proxy-Authenticate':'Basic realm="Lumen"'});
+   if(!authorized(req))return rawReply(client,407,'Proxy Authentication Required',{'Proxy-Authenticate':challenge});
    const target=parseHostPort(req.url);
    if(!target)return rawReply(client,400,'Bad Request');
    let upstream;
-   try{upstream=await open(target.host,target.port);}catch(error){return rawReply(client,refusal(error)?403:502,refusal(error)?'Forbidden':'Bad Gateway');}
+   try{upstream=await open(target.host,target.port);}catch(error){return rawReply(client,refusal(error)?403:502,refusal(error)?'Forbidden':'Bad Gateway',{'X-Lumen-Proxy':refusal(error)?'blocked':error.code==='dns'?'dns':'gateway'});}
    if(client.destroyed){upstream.destroy();return;}
    client.setTimeout(IDLE_TIMEOUT,()=>client.destroy());
    client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -122,6 +128,8 @@ function startProxy({resolver,__testDial}={}){
    const port=server.address().port;
    resolve({
     url:'http://'+user+':'+token+'@127.0.0.1:'+port,
+    // The realm of the proxy's Basic challenge (random per run): the shell answers only this challenge with the token.
+    realm,
     stop(){return new Promise(done=>{for(const s of sockets)s.destroy();server.close(()=>done());server.closeAllConnections?.();});}
    });
   });

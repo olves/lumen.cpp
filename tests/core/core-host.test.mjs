@@ -5,6 +5,7 @@
 import { describe, test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -282,6 +283,65 @@ describe('core host', () => {
     const before = sent.length;
     await assert.rejects(platform.openExternal('https://x.example/'), /shell is gone/);
     assert.equal(sent.length, before, 'nothing is sent once the shell is gone');
+  });
+
+  test('browser requests wait for the proxy in order; configure carries its address; pop-ups arrive as {url} and are checked', async () => {
+    const require = createRequire(import.meta.url);
+    const { createRpcPlatform } = require(hostScript);
+    const sent = [];
+    let started = 0, release;
+    const webProxy = () => { started++; return new Promise(r => { release = () => r({ url: 'http://lumen:tok@127.0.0.1:5', realm: 'lumen-r' }); }); };
+    const { platform, state } = createRpcPlatform({ data: freshDir('rpc-proxy'), assetBase: 'x://', appDir: 'x', updateMode: 'full', version: '1', send: m => sent.push(m), webProxy });
+    platform.browser.configure({ privacySignals: true });
+    platform.browser.create({ javascript: true });
+    const render = platform.browser.render('https://a.example/', {});
+    platform.browser.navigate('https://b.example/');
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(sent.length, 0, 'nothing reaches the shell before the proxy runs');
+    release();
+    await new Promise(r => setTimeout(r, 20));
+    assert.deepEqual(sent.map(m => m.method), ['browser.configure', 'browser.create', 'browser.render', 'browser.navigate']);
+    assert.deepEqual(sent[0].args, [{ privacySignals: true }, { proxy: 'http://lumen:tok@127.0.0.1:5', realm: 'lumen-r', testHost: null }]);
+    platform.browser.configure({ privacySignals: false });
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(started, 1, 'one proxy for the whole run');
+    state.pending.get(sent[2].id).resolve({ title: 't', url: 'https://a.example/', text: 'x' });
+    assert.equal((await render).title, 't');
+    // Pop-ups: {url} only, and only addresses web.cjs accepts.
+    const popups = [];
+    platform.browser.onPopup(url => popups.push(url));
+    for (const payload of [{ url: 'https://c.example/p#x' }, { url: 'http://192.168.1.1/' }, { url: 'file:///C:/x' }, { url: 'https://u:p@d.example/' }, {}, { url: 5 }]) state.deliver('browser.onPopup', payload);
+    assert.deepEqual(popups, ['https://c.example/p']);
+  });
+
+  test('LUMEN_TEST_ALLOW_HOST takes effect only with --ui-check (core checks, proxy and the testHost given to the shell)', async () => {
+    const target = 'http://127.0.0.1:' + 47321 + '/page';
+    const run = async extra => {
+      const saved = process.env.LUMEN_TEST_ALLOW_HOST;
+      process.env.LUMEN_TEST_ALLOW_HOST = '127.0.0.1:47321';
+      let shell;
+      try { shell = await launch(extra); } finally { if (saved === undefined) delete process.env.LUMEN_TEST_ALLOW_HOST; else process.env.LUMEN_TEST_ALLOW_HOST = saved; }
+      for (const m of ['configure', 'create', 'show', 'hide', 'navigate', 'onNavigate', 'onPopup', 'onState']) shell.platform['browser.' + m] = async () => null;
+      shell.platform['browser.info'] = async () => ({ url: target, title: '', loading: false, canGoBack: false, canGoForward: false, zoom: 1 });
+      const open = await shell.call('browser', ['open', { url: target }]);
+      const configure = await shell.until(() => shell.platformRequests.find(p => p.method === 'browser.configure'));
+      // The proxy the shell is told about: does it let the test host through?
+      const proxy = new URL(configure.args[1].proxy);
+      const auth = 'Basic ' + Buffer.from(decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password)).toString('base64');
+      const reply = await new Promise(resolve => { const s = net.connect(Number(proxy.port), '127.0.0.1'); let d = ''; s.on('data', x => { d += x; }); s.on('close', () => resolve(d)); s.on('error', () => resolve(d)); s.write('GET ' + target + ' HTTP/1.1\r\nHost: 127.0.0.1:47321\r\nProxy-Authorization: ' + auth + '\r\nConnection: close\r\n\r\n'); });
+      await shell.shutdown();
+      return { open, configure, reply };
+    };
+    const product = await run([]);
+    assert.equal(product.open.ok, false, 'blocked without --ui-check');
+    assert.match(product.open.error, /blocked/);
+    assert.equal(product.configure.args[1].testHost, null);
+    assert.match(product.configure.args[1].realm, /^lumen-[0-9a-f]{32}$/);
+    assert.match(product.reply, /^HTTP\/1\.1 403 [^]*X-Lumen-Proxy: blocked/i, 'the proxy blocks it too');
+    const testMode = await run(['--ui-check']);
+    assert.equal(testMode.open.ok, true, testMode.open.error);
+    assert.equal(testMode.configure.args[1].testHost, '127.0.0.1:47321');
+    assert.doesNotMatch(testMode.reply, /X-Lumen-Proxy: blocked/i, 'the proxy dials the test host (nothing listens there: 502)');
   });
 
   test('stdin EOF rejects pending and new platform calls and the core exits quickly', async () => {

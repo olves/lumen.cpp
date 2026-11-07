@@ -199,3 +199,46 @@ test('HTTP/1.0 without Host gets the checked host; Connection-listed headers are
   });
  }finally{origin.close();}
 });
+
+test('the challenge carries a random realm; the proxy marks its own replies with X-Lumen-Proxy',async()=>{
+ const a=await startProxy({}),b=await startProxy({});
+ try{
+  assert.match(a.realm,/^lumen-[0-9a-f]{32}$/);assert.notEqual(a.realm,b.realm);
+  const {port,auth}=cred(a.url);
+  const challenge=await raw(port,getReq('http://example.test/'));
+  assert.match(challenge,new RegExp('Proxy-Authenticate: Basic realm="'+a.realm+'"','i'));
+  const blocked=await raw(port,getReq('http://127.0.0.1:9/x',auth));
+  assert.match(blocked,/^HTTP\/1\.1 403 /);assert.match(blocked,/X-Lumen-Proxy: blocked/i);
+  const ftp=await raw(port,getReq('ftp://example.test/x',auth));
+  assert.match(ftp,/X-Lumen-Proxy: blocked/i);
+  const tunnel=await raw(port,connectReq('127.0.0.1:443',auth));
+  assert.match(tunnel,/^HTTP\/1\.1 403 /);assert.match(tunnel,/X-Lumen-Proxy: blocked/i);
+ }finally{await a.stop();await b.stop();}
+});
+
+test('LUMEN_TEST_ALLOW_HOST seam: nothing local passes unless allowTestHost names exactly that loopback host and port',async()=>{
+ const web=require('../../app/web.cjs');
+ const server=http.createServer((req,res)=>{res.writeHead(200,{'content-type':'text/plain'});res.end('local '+req.url);});
+ const other=http.createServer((req,res)=>{res.end('other');});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));await new Promise(r=>other.listen(0,'127.0.0.1',r));
+ const p=server.address().port,q=other.address().port;
+ try{
+  assert.equal(web.allowedTestHost(),null,'nothing is allowed by default');
+  await withProxy({},async(proxy,{port,auth})=>{
+   assert.match(await raw(port,getReq('http://127.0.0.1:'+p+'/x',auth)),/^HTTP\/1\.1 403 /,'loopback blocked by default');
+   assert.throws(()=>web.checkUrl('http://127.0.0.1:'+p+'/'),/blocked/);
+   for(const bad of ['localhost:'+p,'10.0.0.1:'+p,'127.0.0.1','127.0.0.1:0','127.0.0.1:99999','x127.0.0.1:'+p,'']){assert.equal(web.allowTestHost(bad),null,bad);}
+   assert.equal(web.allowTestHost('127.0.0.1:'+p),'127.0.0.1:'+p);
+   const ok=await raw(port,getReq('http://127.0.0.1:'+p+'/x',auth));
+   assert.match(ok,/^HTTP\/1\.1 200 /);assert.match(ok,/local \/x/);
+   assert.equal(web.checkUrl('http://127.0.0.1:'+p+'/a').href,'http://127.0.0.1:'+p+'/a');
+   // Only that port: another local server, other loopback forms and names stay blocked.
+   assert.match(await raw(port,getReq('http://127.0.0.1:'+q+'/x',auth)),/^HTTP\/1\.1 403 /);
+   assert.match(await raw(port,connectReq('127.0.0.1:'+q,auth)),/^HTTP\/1\.1 403 /);
+   assert.match(await raw(port,getReq('http://localhost:'+p+'/x',auth)),/^HTTP\/1\.1 403 /);
+   assert.match(await raw(port,getReq('http://[::ffff:127.0.0.1]:'+p+'/x',auth)),/^HTTP\/1\.1 403 /);
+   for(const u of ['http://127.0.0.1:'+q+'/','http://localhost:'+p+'/','http://127.0.0.1/','https://127.0.0.2:'+p+'/'])assert.throws(()=>web.checkUrl(u),/blocked/,u);
+  });
+ }finally{web.allowTestHost(null);server.close();other.close();}
+ assert.equal(web.allowedTestHost(),null);
+});

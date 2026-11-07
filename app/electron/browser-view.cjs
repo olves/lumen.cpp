@@ -9,7 +9,7 @@
 // What the panel shows (state, errors, find results, zoom rules, clicking) is decided by the core in browser.cjs.
 const {BrowserWindow,WebContentsView,session}=require('electron');
 const dns=require('node:dns').promises,net=require('node:net');
-const {checkUrl,privateAddress,blockedHostname}=require('../web.cjs');
+const {checkUrl,privateAddress,blockedHostname,testAllowed}=require('../web.cjs');
 const {PARTITION}=require('../browser.cjs');
 
 const webPreferences={partition:PARTITION,sandbox:true,contextIsolation:true,nodeIntegration:false,nodeIntegrationInSubFrames:false,webSecurity:true,allowRunningInsecureContent:false,spellcheck:false,disableDialogs:true,safeDialogs:true,autoplayPolicy:'document-user-activation-required',enableWebSQL:false,navigateOnDragDrop:false};
@@ -43,6 +43,8 @@ function createBrowserView({getWindow}){
    let url;try{url=new URL(details.url);}catch{return callback({cancel:true});}
    if(['data:','blob:','about:'].includes(url.protocol))return callback({});
    if(!['http:','https:','ws:','wss:'].includes(url.protocol)||url.username||url.password)return callback({cancel:true});
+   // TEST ONLY: the UI tests' local server (web.cjs allowTestHost, set by the core's --ui-check hook; never in the product).
+   if(testAllowed(url.hostname,url.port))return callback({});
    hostAllowed(url.hostname).then(ok=>callback({cancel:!ok}),()=>callback({cancel:true}));
   });
   return web;
@@ -55,6 +57,8 @@ function createBrowserView({getWindow}){
   wc.on('will-attach-webview',event=>event.preventDefault());
   wc.on('login',event=>event.preventDefault());
   wc.on('select-client-certificate',event=>event.preventDefault());
+  // TEST ONLY: the self-signed certificate of the UI tests' local HTTPS server (test host only; otherwise Electron's default refusal).
+  wc.on('certificate-error',(event,url,_error,_certificate,callback)=>{let u;try{u=new URL(url);}catch{return callback(false);}if(u.protocol==='https:'&&testAllowed(u.hostname,u.port)){event.preventDefault();callback(true);}else callback(false);});
   wc.setAudioMuted(true);
  }
 

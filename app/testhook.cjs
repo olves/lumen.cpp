@@ -3,6 +3,8 @@
 //   platform.dialog.open(options) -> {canceled, filePaths}   the real open dialog (platform.cjs)
 //   platform.dialog.save(options) -> {canceled, filePath}    the real save dialog
 // LUMEN_TEST_FILES: JSON array of paths. When set, open dialogs return those paths instead of asking.
+// LUMEN_TEST_ALLOW_HOST: 127.0.0.1:<port>. The UI tests' local server passes the web checks of the core, the shells and the browser
+// proxy (web.cjs allowTestHost). Any other value allows nothing.
 // LUMEN_TEST_SAVE_DIR: a folder. When set, save dialogs return <folder>\<file name of options.defaultPath> instead of asking.
 // The update/import overrides below are returned only here, so they cannot take effect outside test mode.
 'use strict';
@@ -21,6 +23,7 @@ function install({ platform, env = {} }) {
       updateApi: env.LUMEN_UPDATE_API || undefined,
       updateKey: env.LUMEN_UPDATE_KEY ? fs.readFileSync(env.LUMEN_UPDATE_KEY, 'utf8') : undefined,
       importHome: env.LUMEN_IMPORT_HOME || null,
+      allowHost: env.LUMEN_TEST_ALLOW_HOST || null,
     },
     openDialog: options => files
       ? Promise.resolve({ canceled: false, filePaths: [...files] })

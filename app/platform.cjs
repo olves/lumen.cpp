@@ -43,7 +43,13 @@
 //    {method:'browser.cancel', args:[idOfTheRenderRequest]}; the shell should stop that render (best effort, answer ignored).
 //  - browser.onNavigate / browser.onPopup / browser.onState (no args): the shell starts forwarding that callback and, for each
 //    event, sends {type:'platform-event', name:'browser.onNavigate'|'browser.onPopup'|'browser.onState', payload} to the core
-//    (payload is the callback's argument; it must be an object, other names and payloads are ignored).
+//    (payload is the callback's argument; it must be an object, other names and payloads are ignored). browser.onPopup sends
+//    {url}: the core passes the address on only if web.cjs checkUrl accepts it.
+//  - The shell's browser webviews have no network of their own: every request goes through the core's filtering proxy
+//    (webproxy.cjs), which applies Electron's webRequest rules. The core starts it on the first browser request and gives it in
+//    browser.configure [settings, {proxy, realm, testHost}]: proxy = 'http://lumen:<token>@127.0.0.1:<port>' (the shell answers
+//    the proxy's Basic challenge, and only a challenge with this realm, with that user and token; page scripts never see them),
+//    testHost = '127.0.0.1:<port>' in test mode only (LUMEN_TEST_ALLOW_HOST), else null. configure always comes first.
 //  - app.version, assetBase, appDir, updateMode are command-line arguments of core-host.cjs and never requests.
 //  - After the shell closes the core's stdin every platform request fails at once; after an explicit {type:'shutdown'} the shell
 //    must keep answering until the core has exited.

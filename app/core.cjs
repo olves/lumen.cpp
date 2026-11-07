@@ -204,6 +204,8 @@ async function request(action,args={}){
  // Test mode (--ui-check): app/testhook.cjs supplies the dialog bypass and the update/import overrides. A missing hook aborts startup.
  // The core installs it, so every shell gets the same hook.
  const hook=test?require('./testhook.cjs').install({platform,env:process.env}):null;
+ // LUMEN_TEST_ALLOW_HOST: the UI tests' local server passes the web checks (web.cjs allowTestHost; test mode only).
+ if(hook?.overrides.allowHost)require('./web.cjs').allowTestHost(hook.overrides.allowHost);
  const openDialog=o=>hook?hook.openDialog(o):platform.dialog.open(o);const saveDialog=o=>hook?hook.saveDialog(o):platform.dialog.save(o);
  // lumen-host (backend/LumenHost.cs + LumenCore.cs) is the local engine process: chats, models, engine setup and llama-server.
  const fail=e=>{for(const p of pending.values())p.reject(e);pending.clear();platform.send('engine-event',{type:'fatal',data:{message:e.message}});};

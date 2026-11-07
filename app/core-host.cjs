@@ -23,7 +23,9 @@
 // through files under <data>/temp/rpc: image.decodeWebp [inPath, outPath], image.normalize [inPath, outPath, maxSide|null,
 // quality] (maxSide null = no limit; answer null when the image cannot be decoded, else {width, height, original}),
 // image.thumbnail [inPath, outPath, maxSide, fit]; the shell writes the PNG to outPath. browser.render [url, {}] can be
-// cancelled with the request {method:'browser.cancel', args:[renderRequestId]}. The full list is in platform.cjs.
+// cancelled with the request {method:'browser.cancel', args:[renderRequestId]}. The browser webviews of the shell send all their
+// traffic through the filtering proxy of this process (webproxy.cjs): browser.configure carries [settings, {proxy, realm, testHost}].
+// browser.onPopup events carry {url}. The full list is in platform.cjs.
 // Once stdin has ended (the shell is gone) every platform request is rejected at once; after an explicit 'shutdown' message the
 // shell can still answer, so requests keep working until the core has stopped.
 const fs = require('node:fs');
@@ -50,7 +52,8 @@ const CALLBACK_NAMES = ['browser.onNavigate', 'browser.onPopup', 'browser.onStat
 
 // createRpcPlatform: the platform object whose methods are platform requests. `send(message)` writes one protocol line.
 // Returns {platform, state}; state.pending/callbacks/gone are what the stdin loop needs.
-function createRpcPlatform({data, assetBase, appDir, updateMode, version, send = emit}) {
+// webProxy() -> Promise<{url, realm}> (optional): starts the browser proxy; given, every browser.* request waits for it, in order.
+function createRpcPlatform({data, assetBase, appDir, updateMode, version, send = emit, webProxy = null}) {
   const {FUNCTIONS} = require('./platform.cjs');
   const state = {pending: new Map(), callbacks: Object.create(null), gone: false, seq: 0};
   // Asks the shell to run one platform method. The promise settles with the shell's platform-result.
@@ -80,8 +83,16 @@ function createRpcPlatform({data, assetBase, appDir, updateMode, version, send =
     async (info, o) => info ? {png: await fs.promises.readFile(o), width: info.width, height: info.height, original: info.original} : null));
   set('image.thumbnail', (buffer, maxSide, fit = 'longest') => withTemp(buffer, (i, o) => rpc('image.thumbnail', [i, o, maxSide, fit]), (_v, o) => fs.promises.readFile(o)));
 
+  // The browser webviews (Tauri) reach the web only through the filtering proxy: it starts with the first browser request, and
+  // browser.configure tells the shell its address, the realm of its challenge and, in test mode only, the test server's host:port
+  // (web.cjs allowTestHost). Requests wait for the proxy in the order they were made (then-callbacks of one promise run in order).
+  let proxyStart = null;
+  const proxyReady = () => webProxy ? (proxyStart = proxyStart || Promise.resolve().then(webProxy)) : null;
+  const viaProxy = (name, call) => (...args) => { const ready = proxyReady(); return ready ? ready.then(proxy => call(proxy, ...args)) : call(null, ...args); };
+  for (const name of FUNCTIONS.filter(n => n.startsWith('browser.') && !CALLBACK_NAMES.includes(n) && n !== 'browser.render')) set(name, viaProxy(name, (proxy, ...args) => rpc(name, args)));
+  set('browser.configure', viaProxy('browser.configure', (proxy, settings) => rpc('browser.configure', proxy ? [settings, {proxy: proxy.url, realm: proxy.realm, testHost: require('./web.cjs').allowedTestHost()}] : [settings])));
   // An AbortSignal cannot travel: the shell is told to cancel by request id and the caller is released at once.
-  set('browser.render', (url, options = {}) => {
+  set('browser.render', viaProxy('browser.render', (proxy, url, options = {}) => {
     const signal = options.signal;
     const cancelled = () => Object.assign(Error('Cancelled'), {cancelled: true});
     if (signal?.aborted) return Promise.reject(cancelled());
@@ -93,9 +104,12 @@ function createRpcPlatform({data, assetBase, appDir, updateMode, version, send =
       signal.addEventListener('abort', abort, {once: true});
       request.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
     });
-  });
+  }));
   // Callback registrations stay here; the shell is told once (so it starts forwarding) and pushes 'platform-event' messages.
   for (const name of CALLBACK_NAMES) set(name, cb => { state.callbacks[name] = cb; rpc(name, []).catch(() => {}); });
+  // A pop-up arrives as {url}; the callback gets the address only when it passes web.cjs checkUrl (Electron: setWindowOpenHandler).
+  const popup = cb => payload => { let url; try { url = require('./web.cjs').checkUrl(payload.url).href; } catch { return; } cb(url); };
+  state.deliver = (name, payload) => { const cb = state.callbacks[name]; if (cb) (name === 'browser.onPopup' ? popup(cb) : cb)(payload); };
   return {platform, state};
 }
 
@@ -120,8 +134,10 @@ async function main() {
   installProcessGuards();
   const args = parseArgs(process.argv.slice(2));
   if (!args.data || !args.app) { console.error('usage: node core-host.cjs --data <dir> --app <dir> [--ui-check] [--asset-base <url>] [--update-mode full|check-only] [--version <v>]'); process.exit(2); }
+  let proxy = null;
+  const webProxy = () => require('./webproxy.cjs').startProxy().then(p => (proxy = p));
   const {platform, state} = createRpcPlatform({data: path.resolve(args.data), assetBase: args.assetBase || 'lumen://app/', appDir: path.resolve(args.app),
-    updateMode: args.updateMode === 'check-only' ? 'check-only' : 'full', version: args.version || require('./package.json').version});
+    updateMode: args.updateMode === 'check-only' ? 'check-only' : 'full', version: args.version || require('./package.json').version, webProxy});
   const {createCore} = require('./core.cjs');
   const core = createCore({platform, dataDir: path.resolve(args.data), test: args.uiCheck, backendDir: backendDirFor(path.resolve(args.app))});
   let stopping = false;
@@ -133,6 +149,7 @@ async function main() {
     if (stopping) return; stopping = true;
     // core.stop() caps the engine's shutdown at 8 s; the host process never waits longer than that.
     try { await core.stop(); } catch (e) { console.error('[core-host] stop failed:', e && e.message); }
+    try { await proxy?.stop(); } catch {}
     stdout.write('', () => process.exit(code));
   }
 
@@ -165,7 +182,7 @@ async function main() {
     }
     if (message.type === 'platform-event') {
       if (!CALLBACK_NAMES.includes(message.name) || !message.payload || typeof message.payload !== 'object') return; // unknown names and non-object payloads are ignored
-      try { state.callbacks[message.name]?.(message.payload); } catch (e) { console.error('[core-host] platform event failed:', e && e.message); } return; }
+      try { state.deliver(message.name, message.payload); } catch (e) { console.error('[core-host] platform event failed:', e && e.message); } return; }
     emit({type: 'protocol-error', reason: 'invalid-message'});
   }
 

@@ -45,13 +45,22 @@ function privateAddress(address){
 }
 function blockedHostname(host){const h=host.toLowerCase().replace(/\.$/,'');return h==='localhost'||h.endsWith('.localhost')||h.endsWith('.local')||h.endsWith('.internal')||h.endsWith('.home.arpa')||h==='metadata.google.internal';}
 
+// TEST ONLY. UI tests run a local server, which cannot pass as a public address. Only the core's --ui-check test hook
+// (testhook.cjs, LUMEN_TEST_ALLOW_HOST=127.0.0.1:<port>) calls allowTestHost; then exactly that loopback host and port is let
+// through by checkUrl, the shells' request filters and the browser proxy. Product code never calls it: nothing is allowed.
+let testHost=null;
+function allowTestHost(hostPort){const m=/^127\.0\.0\.1:(\d{1,5})$/.exec(String(hostPort||''));const port=m?Number(m[1]):0;testHost=port>=1&&port<=65535?'127.0.0.1:'+port:null;return testHost;}
+// host: a name or literal (brackets allowed); port: number or text ('' is the scheme's default, never the test port).
+function testAllowed(host,port){return testHost!==null&&String(host||'').replace(/^\[|\]$/g,'')+':'+String(port||'')===testHost;}
+const allowedTestHost=()=>testHost;
+
 // Throws a user-readable error for anything a model-driven request must not reach.
 function checkUrl(raw,{allowPrivate=false}={}){
  let url;try{url=new URL(String(raw));}catch{throw webError('invalid-url','That is not a valid web address.');}
  if(!['http:','https:'].includes(url.protocol))throw webError('blocked','Only http and https pages can be opened.');
  if(url.username||url.password)throw webError('blocked','Addresses with embedded credentials are not opened.');
  const host=url.hostname.replace(/^\[|\]$/g,'');
- if(!allowPrivate){if(blockedHostname(host))throw webError('blocked','Local and private network addresses are blocked.');if(net.isIP(host)&&privateAddress(host))throw webError('blocked','Local and private network addresses are blocked.');}
+ if(!allowPrivate&&!testAllowed(host,url.port)){if(blockedHostname(host))throw webError('blocked','Local and private network addresses are blocked.');if(net.isIP(host)&&privateAddress(host))throw webError('blocked','Local and private network addresses are blocked.');}
  url.hash='';return url;
 }
 function webError(code,message,extra={}){return Object.assign(new Error(message),{code,...extra});}
@@ -290,4 +299,4 @@ function createWeb({render}={}){
  return {search,readPage,checkUrl,providerLabel:id=>providers[id]?.label||id,clear(){searchCache.clear();pageCache.clear();},providers:Object.fromEntries(Object.entries(providers).map(([id,p])=>[id,{label:p.label,needsKey:p.needsKey,scope:p.scope}]))};
 }
 
-module.exports={createWeb,checkUrl,checkHost,resolveHost,privateAddress,blockedHostname,guardedFetch,extractReadable,siteOf};
+module.exports={createWeb,checkUrl,allowTestHost,testAllowed,allowedTestHost,checkHost,resolveHost,privateAddress,blockedHostname,guardedFetch,extractReadable,siteOf};
