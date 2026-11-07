@@ -47,7 +47,7 @@ describe(`settings (${shell})`, () => {
 
   test('appearance: Pro theme, light, ocean accent, 15 px, motion off', async () => {
     await open('appearance');
-    await segment('interface-design', 'pro');
+    await app.cdp.click('#theme-cards [data-theme-card="pro"]'); // the theme select is shown as cards (radio buttons)
     await app.cdp.waitFor("state.prefs.appearance.theme === 'pro'", 5000);
     await segment('display-mode', 'light');
     await app.cdp.waitFor("state.prefs.appearance.theme === 'pro' && state.prefs.appearance.mode === 'light' && state.prefs.colorMode === 'light'", 5000);

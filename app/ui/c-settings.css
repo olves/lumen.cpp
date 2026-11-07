@@ -267,9 +267,27 @@ code.connect-url{background:none;padding:0;border:0}
 .plugin-advanced{margin-top:12px}
 .plugin-advanced summary{cursor:pointer;font-size:12px;color:var(--text-muted)}
 .plugin-advanced[open] summary{margin-bottom:8px}
-/* Accent swatches show the preset colours themselves (data, not chrome): values live in tokens.css. */
-.theme-swatch-warm{--swatch:var(--swatch-warm)}.theme-swatch-graphite{--swatch:var(--swatch-graphite)}.theme-swatch-ocean{--swatch:var(--swatch-ocean)}.theme-swatch-forest{--swatch:var(--swatch-forest)}
-.theme-swatch-plum{--swatch:var(--swatch-plum)}.theme-swatch-rose{--swatch:var(--swatch-rose)}.theme-swatch-teal{--swatch:var(--swatch-teal)}.theme-swatch-gold{--swatch:var(--swatch-gold)}
 /* Status texts: a non-colour cue (check mark / dot and weight) since they no longer have a colour of their own. */
 .connect-ok{font-weight:600}.connect-ok::before{content:"\2713\00a0"}
 .plugin-net.online{font-weight:600}.plugin-net.online::before{content:"\25CF\00a0";font-size:.8em}
+/* Settings → Appearance (appearanceui.js): theme cards with a live preview. Preview colours are the resolved tokens of each theme,
+   set by JS as --pv-* custom properties on the card (no colour values here). */
+.setting-row.setting-stack{flex-direction:column;align-items:stretch;gap:14px}
+.theme-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.theme-card{display:flex;flex-direction:column;gap:6px;align-items:stretch;text-align:left;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);color:var(--text);cursor:pointer;transition:border-color var(--duration) var(--ease)}
+.theme-card:hover{border-color:var(--text-muted)}
+.theme-card[aria-checked=true]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.theme-preview{display:flex;height:64px;border:1px solid var(--pv-border);border-radius:var(--pv-radius);overflow:hidden;background:var(--pv-s0)}
+.theme-preview-side{width:26%;background:var(--pv-s1);border-right:1px solid var(--pv-border)}
+.theme-preview-main{flex:1;position:relative;padding:7px 8px;display:flex;flex-direction:column;gap:5px}
+.theme-preview-text{font:600 14px/1 var(--pv-font);color:var(--pv-text)}
+.theme-preview-line{height:4px;width:80%;border-radius:2px;background:var(--pv-muted)}
+.theme-preview-line.short{width:50%}
+.theme-preview-send{position:absolute;right:7px;bottom:7px;width:16px;height:10px;border-radius:var(--pv-radius);background:var(--pv-accent)}
+.theme-card-name{font-size:var(--font-size-ui);font-weight:500}
+.theme-card-desc{font-size:var(--font-size-small);color:var(--text-muted);line-height:1.4}
+.appearance-note{font-size:var(--font-size-small);color:var(--text-muted);margin:8px 0 0;line-height:1.5;max-width:470px}
+.setting-row p.appearance-warning,.setting-row .appearance-note[data-key=fontInvalid]{color:var(--danger)}
+.font-field,.reset-field{display:flex;flex-direction:column;align-items:flex-end;min-width:0;max-width:260px;flex:0 1 260px}
+.font-field input{width:100%;min-width:0;height:32px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2)}
+.font-field .appearance-note,.reset-field .appearance-note{text-align:right}

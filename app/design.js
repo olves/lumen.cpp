@@ -1,7 +1,7 @@
 'use strict';
 // One design for the whole app. prefs.appearance ({theme, mode, overrides, statusBar}; see appearance.js) is resolved into tokens
 // that are set on :root one by one (CSSOM, so the page's CSP stays strict); <html> and <body> carry data-theme and data-mode.
-// Until Settings → Appearance is rebuilt, the existing controls write prefs.appearance: Theme (the old design select),
+// Settings → Appearance (appearanceui.js: theme cards, fonts, radius, status bar, reset) and the older controls write prefs.appearance: Theme (hidden select),
 // Display mode, text size and the accent swatches (themes.js). Old preference fields are kept as they were.
 Object.assign(translations,{interfaceDesign:['Theme','Tema'],interfaceHint:['Colors, fonts and spacing for the whole app.','Uygulamanın tamamı için renkler, yazı tipleri ve aralıklar.'],
  themeNative:['Windows','Windows'],themeReading:['Reading','Okuma'],themePro:['Pro','Profesyonel'],
@@ -18,6 +18,17 @@ function applyAppearance(appearance=currentAppearance()){
  return tokens;
 }
 const refreshWorkspaceBeforeAppearance=refreshWorkspace;refreshWorkspace=function(){refreshWorkspaceBeforeAppearance();applyAppearance();};
+// The core merges appearance overrides per entry (a missing token stays), so a full appearance is sent as a patch from the saved
+// one: every token that disappeared becomes null (= back to the theme value).
+function appearancePatch(next,from=currentAppearance()){
+ const a=appearanceModel.sanitizeAppearance(next),overrides={};
+ for(const sec of ['common','dark','light']){
+  const section={...a.overrides[sec]};
+  for(const token of Object.keys(from.overrides[sec]))if(!(token in section))section[token]=null;
+  overrides[sec]=section;
+ }
+ return {theme:a.theme,mode:a.mode,statusBar:a.statusBar,overrides};
+}
 // Saves a change to the appearance (merged by the core) together with any old fields that mirror it.
 let appearanceSaving=Promise.resolve();
 function saveAppearance(patch,legacy={}){

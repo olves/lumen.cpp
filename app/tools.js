@@ -286,7 +286,7 @@ window.addEventListener('lumen-ready',initializeTools,{once:true});if(state.read
 
 // ---------- Segmented controls for short option lists ----------
 // The real <select> stays in the DOM (hidden) and keeps its value and onchange logic; buttons only mirror it.
-const segmentedIds=['language','interface-design','display-mode','text-size','context-size','search-results','search-language'];
+const segmentedIds=['language','display-mode','text-size','context-size','search-results','search-language'];
 function syncSegmented(){
  for(const id of segmentedIds){
   const select=$(id);if(!select)continue;let group=select.nextElementSibling?.classList.contains('segmented')?select.nextElementSibling:null;
