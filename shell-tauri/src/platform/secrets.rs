@@ -14,6 +14,10 @@ use base64::Engine;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use zeroize::Zeroizing;
+
+/// The AES key, wiped from memory when dropped.
+type Key = Zeroizing<[u8; 32]>;
 
 const DPAPI_PREFIX: &[u8] = b"DPAPI";
 const V10: &[u8] = b"v10";
@@ -22,7 +26,7 @@ const TAG_LEN: usize = 16;
 
 pub struct Secrets {
     local_state: PathBuf,
-    key: Mutex<Option<[u8; 32]>>,
+    key: Mutex<Option<Key>>,
 }
 
 impl Secrets {
@@ -31,13 +35,13 @@ impl Secrets {
         Secrets { local_state: user_data.join("Local State"), key: Mutex::new(None) }
     }
 
-    fn key(&self) -> Result<[u8; 32], String> {
+    fn key(&self) -> Result<Key, String> {
         let mut cached = self.key.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(k) = *cached {
-            return Ok(k);
+        if let Some(k) = cached.as_ref() {
+            return Ok(k.clone());
         }
         let k = load_or_create(&self.local_state)?;
-        *cached = Some(k);
+        *cached = Some(k.clone());
         Ok(k)
     }
 
@@ -50,7 +54,8 @@ impl Secrets {
         let key = self.key()?;
         let mut nonce = [0u8; NONCE_LEN];
         getrandom::fill(&mut nonce).map_err(|_| "Secure storage could not create a nonce.".to_string())?;
-        let sealed = Aes256Gcm::new(&key.into()).encrypt(Nonce::from_slice(&nonce), text.as_bytes()).map_err(|_| "Encryption failed.".to_string())?;
+        let cipher = Aes256Gcm::new_from_slice(&key[..]).map_err(|_| "Encryption failed.".to_string())?;
+        let sealed = cipher.encrypt(Nonce::from_slice(&nonce), text.as_bytes()).map_err(|_| "Encryption failed.".to_string())?;
         let mut out = Vec::with_capacity(V10.len() + NONCE_LEN + sealed.len());
         out.extend_from_slice(V10);
         out.extend_from_slice(&nonce);
@@ -61,27 +66,28 @@ impl Secrets {
     /// base64 (as stored by the core) -> text
     pub fn decrypt(&self, value: &str) -> Result<String, String> {
         let bytes = B64.decode(value.trim()).map_err(|_| "Error while decrypting the ciphertext provided to safeStorage.decryptString.".to_string())?;
-        let plain = if let Some(rest) = bytes.strip_prefix(V10) {
+        let plain: Zeroizing<Vec<u8>> = Zeroizing::new(if let Some(rest) = bytes.strip_prefix(V10) {
             if rest.len() < NONCE_LEN + TAG_LEN {
                 return Err("Error while decrypting the ciphertext provided to safeStorage.decryptString.".into());
             }
             let key = self.key()?;
             let (nonce, sealed) = rest.split_at(NONCE_LEN);
-            Aes256Gcm::new(&key.into())
+            Aes256Gcm::new_from_slice(&key[..])
+                .map_err(|_| "Error while decrypting the ciphertext provided to safeStorage.decryptString.".to_string())?
                 .decrypt(Nonce::from_slice(nonce), sealed)
                 .map_err(|_| "Error while decrypting the ciphertext provided to safeStorage.decryptString.".to_string())?
         } else {
             dpapi::unprotect(&bytes).map_err(|_| "Error while decrypting the ciphertext provided to safeStorage.decryptString.".to_string())?
-        };
-        String::from_utf8(plain).map_err(|_| "The decrypted value is not text.".to_string())
+        });
+        String::from_utf8(plain.to_vec()).map_err(|_| "The decrypted value is not text.".to_string())
     }
 }
 
 fn read_state(file: &Path) -> Result<Option<Value>, String> {
     match std::fs::read(file) {
         Ok(bytes) => {
-            let text = String::from_utf8_lossy(&bytes);
-            serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')).map(Some).map_err(|_| "Local State is not valid JSON; it is left unchanged.".to_string())
+            let json = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+            serde_json::from_slice::<Value>(json).map(Some).map_err(|_| "Local State is not valid JSON; it is left unchanged.".to_string())
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(_) => Err("Local State could not be read.".into()),
@@ -89,23 +95,28 @@ fn read_state(file: &Path) -> Result<Option<Value>, String> {
 }
 
 /// Key from `encrypted_key` (base64 of "DPAPI" + DPAPI blob).
-fn key_from(encrypted_key: &str) -> Result<[u8; 32], String> {
+fn key_from(encrypted_key: &str) -> Result<Key, String> {
     let blob = B64.decode(encrypted_key).map_err(|_| "os_crypt.encrypted_key is not base64.".to_string())?;
     let protected = blob.strip_prefix(DPAPI_PREFIX).ok_or_else(|| "os_crypt.encrypted_key has no DPAPI prefix.".to_string())?;
-    let key = dpapi::unprotect(protected).map_err(|_| "os_crypt.encrypted_key could not be opened for this Windows user.".to_string())?;
-    key.as_slice().try_into().map_err(|_| "os_crypt.encrypted_key is not a 32-byte key.".to_string())
+    let key = Zeroizing::new(dpapi::unprotect(protected).map_err(|_| "os_crypt.encrypted_key could not be opened for this Windows user.".to_string())?);
+    if key.len() != 32 {
+        return Err("os_crypt.encrypted_key is not a 32-byte key.".into());
+    }
+    let mut out: Key = Zeroizing::new([0u8; 32]);
+    out.copy_from_slice(&key);
+    Ok(out)
 }
 
-fn load_or_create(file: &Path) -> Result<[u8; 32], String> {
+fn load_or_create(file: &Path) -> Result<Key, String> {
     let state = read_state(file)?;
     if let Some(existing) = state.as_ref().and_then(|s| s["os_crypt"]["encrypted_key"].as_str()) {
         return key_from(existing);
     }
     // No key yet: create one in Chromium's format, keeping every other Local State field.
-    let mut key = [0u8; 32];
-    getrandom::fill(&mut key).map_err(|_| "Secure storage could not create a key.".to_string())?;
+    let mut key: Key = Zeroizing::new([0u8; 32]);
+    getrandom::fill(&mut key[..]).map_err(|_| "Secure storage could not create a key.".to_string())?;
     let mut blob = DPAPI_PREFIX.to_vec();
-    blob.extend_from_slice(&dpapi::protect_key(&key).map_err(|_| "Windows data protection (DPAPI) is unavailable.".to_string())?);
+    blob.extend_from_slice(&dpapi::protect_key(&key[..]).map_err(|_| "Windows data protection (DPAPI) is unavailable.".to_string())?);
     let mut state = state.unwrap_or_else(|| json!({}));
     if !state.is_object() {
         return Err("Local State is not a JSON object; it is left unchanged.".into());
@@ -226,6 +237,23 @@ pub(crate) mod tests {
         std::fs::write(dir.join("Local State"), "not json").unwrap();
         assert!(!Secrets::new(&dir).available());
         assert_eq!(std::fs::read_to_string(dir.join("Local State")).unwrap(), "not json");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_state_is_parsed_from_bytes() {
+        let dir = temp_dir("bom");
+        let stored = Secrets::new(&dir).encrypt("bom").unwrap();
+        let file = dir.join("Local State");
+        let mut bytes = vec![0xef, 0xbb, 0xbf];
+        bytes.extend(std::fs::read(&file).unwrap());
+        std::fs::write(&file, &bytes).unwrap();
+        assert_eq!(Secrets::new(&dir).decrypt(&stored).unwrap(), "bom", "a UTF-8 BOM is skipped");
+        // Invalid UTF-8 is not "repaired" into JSON: an error, and the file stays as it was.
+        let broken = [b"{\"os_crypt\":{\"encrypted_key\":\"".as_slice(), &[0xff, 0xfe], b"\"}}"].concat();
+        std::fs::write(&file, &broken).unwrap();
+        assert!(!Secrets::new(&dir).available());
+        assert_eq!(std::fs::read(&file).unwrap(), broken);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

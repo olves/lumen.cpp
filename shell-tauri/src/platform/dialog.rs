@@ -1,4 +1,6 @@
-// platform.dialog with tauri-plugin-dialog, called from Rust only (no JavaScript permission exists for it). Inputs and answers
+// platform.dialog with rfd (the native Windows dialogs), called from Rust only. tauri-plugin-dialog is deliberately not used: it
+// injects an init script into every webview that replaces window.alert/confirm (confirm would become an async, always-truthy
+// function in the untrusted browser panel). Inputs and answers
 // are Electron's (the core passes Electron's options and reads Electron's results):
 //   open({title, defaultPath, properties:[openFile|openDirectory|multiSelections|...], filters:[{name, extensions}]}) -> {canceled, filePaths}
 //   save({title, defaultPath, filters}) -> {canceled, filePath}
@@ -7,8 +9,8 @@
 // is the default, which is the core's defaultId (0, "Cancel") in every caller. Esc or closing the box answers cancelId, as in Electron.
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use rfd::{FileDialog, MessageButtons as MessageDialogButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 
 #[derive(Debug, PartialEq, Default)]
 pub struct FileRequest {
@@ -83,17 +85,22 @@ pub fn response(result: &MessageDialogResult, labels: &[String], cancel_id: u64)
     }
 }
 
-fn kind(o: &Value) -> MessageDialogKind {
+fn level(o: &Value) -> MessageLevel {
     match o.get("type").and_then(Value::as_str) {
-        Some("warning") => MessageDialogKind::Warning,
-        Some("error") => MessageDialogKind::Error,
-        _ => MessageDialogKind::Info,
+        Some("warning") => MessageLevel::Warning,
+        Some("error") => MessageLevel::Error,
+        _ => MessageLevel::Info,
     }
 }
 
-fn builder(app: &AppHandle, r: &FileRequest) -> FileDialogBuilder<tauri::Wry> {
-    let mut b = app.dialog().file();
-    if let Some(w) = app.get_webview_window(crate::window::MAIN) {
+/// The main window owns the dialog (modal to it), as `dialog.showOpenDialog(win, ...)` in Electron.
+fn main_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    app.get_webview_window(crate::window::MAIN)
+}
+
+fn builder(app: &AppHandle, r: &FileRequest) -> FileDialog {
+    let mut b = FileDialog::new();
+    if let Some(w) = main_window(app) {
         b = b.set_parent(&w);
     }
     if let Some(t) = &r.title {
@@ -106,14 +113,13 @@ fn builder(app: &AppHandle, r: &FileRequest) -> FileDialogBuilder<tauri::Wry> {
         b = b.set_file_name(n);
     }
     for (name, ext) in &r.filters {
-        let ext: Vec<&str> = ext.iter().map(String::as_str).collect();
-        b = b.add_filter(name, &ext);
+        b = b.add_filter(name, ext);
     }
     b
 }
 
-fn path_of(p: tauri_plugin_dialog::FilePath) -> Option<String> {
-    p.into_path().ok().map(|p| p.to_string_lossy().to_string())
+fn text_of(p: PathBuf) -> String {
+    p.to_string_lossy().to_string()
 }
 
 /// Blocking: call from a blocking thread, never the main thread.
@@ -121,17 +127,17 @@ pub fn open(app: &AppHandle, options: &Value) -> Result<Value, String> {
     let r = file_request(options, false);
     let b = builder(app, &r);
     let picked: Vec<String> = match (r.folder, r.multiple) {
-        (true, true) => b.blocking_pick_folders().unwrap_or_default().into_iter().filter_map(path_of).collect(),
-        (true, false) => b.blocking_pick_folder().and_then(path_of).into_iter().collect(),
-        (false, true) => b.blocking_pick_files().unwrap_or_default().into_iter().filter_map(path_of).collect(),
-        (false, false) => b.blocking_pick_file().and_then(path_of).into_iter().collect(),
+        (true, true) => b.pick_folders().unwrap_or_default().into_iter().map(text_of).collect(),
+        (true, false) => b.pick_folder().map(text_of).into_iter().collect(),
+        (false, true) => b.pick_files().unwrap_or_default().into_iter().map(text_of).collect(),
+        (false, false) => b.pick_file().map(text_of).into_iter().collect(),
     };
     Ok(json!({"canceled": picked.is_empty(), "filePaths": picked}))
 }
 
 pub fn save(app: &AppHandle, options: &Value) -> Result<Value, String> {
     let r = file_request(options, true);
-    match builder(app, &r).blocking_save_file().and_then(path_of) {
+    match builder(app, &r).save_file().map(text_of) {
         Some(path) => Ok(json!({"canceled": false, "filePath": path})),
         None => Ok(json!({"canceled": true, "filePath": ""})),
     }
@@ -141,19 +147,19 @@ pub fn message(app: &AppHandle, options: &Value) -> Result<Value, String> {
     let (buttons, labels, cancel_id) = message_buttons(options);
     // Electron shows `message` as the heading and `detail` below it; the task dialog has one text.
     let body = match (text(options, "message"), text(options, "detail")) {
-        (Some(m), Some(d)) => format!("{m}\n\n{}", d.trim_end()),
+        (Some(m), Some(d)) => format!("{m}
+
+{}", d.trim_end()),
         (Some(m), None) => m,
         (None, Some(d)) => d,
         (None, None) => String::new(),
     };
-    let mut b = app.dialog().message(body).kind(kind(options)).buttons(buttons);
-    if let Some(t) = text(options, "title") {
-        b = b.title(t);
+    // Without a title Electron shows the app name.
+    let mut b = MessageDialog::new().set_level(level(options)).set_title(text(options, "title").unwrap_or_else(|| "lumen.cpp".into())).set_description(body).set_buttons(buttons);
+    if let Some(w) = main_window(app) {
+        b = b.set_parent(&w);
     }
-    if let Some(w) = app.get_webview_window(crate::window::MAIN) {
-        b = b.parent(&w);
-    }
-    let result = b.blocking_show_with_result();
+    let result = b.show();
     Ok(json!({"response": response(&result, &labels, cancel_id), "checkboxChecked": false}))
 }
 

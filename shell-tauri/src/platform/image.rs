@@ -12,10 +12,10 @@ use serde_json::{json, Value};
 use std::io::Cursor;
 use std::path::Path;
 
-/// Decoding limit: the core accepts sources up to 12 MB and 50 million pixels; this only stops decompression bombs.
+/// Decoding limits: 50 million pixels (the core's own limit, checked from the header before decoding) and 1 GiB of memory.
 const MAX_ALLOC: u64 = 1024 * 1024 * 1024;
+const MAX_PIXELS: u64 = 50_000_000;
 const WEBP_MAX_SIDE: f64 = 1600.0;
-const WEBP_MAX_PIXELS: u64 = 50_000_000;
 
 fn filter(quality: &str) -> FilterType {
     // Skia's RESIZE_BEST is a Lanczos3 filter; 'good' is a cheaper smooth filter.
@@ -27,7 +27,22 @@ fn side(x: f64) -> u32 {
     (x.round() as u32).max(1)
 }
 
+/// Width and height from the header, without decoding.
+fn dimensions(bytes: &[u8], format: Option<ImageFormat>) -> Option<(u32, u32)> {
+    let mut reader = ImageReader::new(Cursor::new(bytes));
+    match format {
+        Some(f) => reader.set_format(f),
+        None => reader = reader.with_guessed_format().ok()?,
+    }
+    reader.into_dimensions().ok()
+}
+
+/// None when the bytes are not a PNG, JPEG or WebP picture of at most 50 million pixels.
 fn decode(bytes: &[u8], format: Option<ImageFormat>) -> Option<DynamicImage> {
+    let (w, h) = dimensions(bytes, format)?;
+    if w as u64 * h as u64 > MAX_PIXELS {
+        return None;
+    }
     let mut reader = ImageReader::new(Cursor::new(bytes));
     match format {
         Some(f) => reader.set_format(f),
@@ -82,10 +97,10 @@ pub fn thumbnail(input: &Path, out: &Path, max_side: f64, fit: &str) -> Result<V
 /// image.decodeWebp [inPath, outPath]: WebP -> PNG, at most 1600 px on the long side and 50 million pixels (as Electron's canvas path).
 pub fn decode_webp(input: &Path, out: &Path) -> Result<Value, String> {
     let bytes = read(input)?;
-    let image = decode(&bytes, Some(ImageFormat::WebP)).ok_or("The WebP image could not be decoded.")?;
-    if image.width() as u64 * image.height() as u64 > WEBP_MAX_PIXELS {
+    if dimensions(&bytes, Some(ImageFormat::WebP)).is_some_and(|(w, h)| w as u64 * h as u64 > MAX_PIXELS) {
         return Err("Use a photo with at most 50 million pixels.".into());
     }
+    let image = decode(&bytes, Some(ImageFormat::WebP)).ok_or("The WebP image could not be decoded.")?;
     let (w, h) = (image.width() as f64, image.height() as f64);
     let scale = (WEBP_MAX_SIDE / w.max(h)).min(1.0);
     let (tw, th) = (side(w * scale), side(h * scale));
@@ -126,6 +141,41 @@ mod tests {
         assert_eq!(png_size(&dir.join("out.png")), (original.width(), original.height()));
         assert_eq!((original.width(), original.height()), (640, 427));
         assert!(decode_webp(&write_test_png(&dir, "not-webp.png", 4, 4), &dir.join("x.png")).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Over 50 million pixels is refused from the header, before any pixel is decoded (and GIF/BMP are not decoded at all).
+    #[test]
+    fn pixel_limit_and_formats() {
+        let dir = temp_dir("limit");
+        // A PNG header claiming 10000 x 5001 pixels, with no pixel data behind it.
+        let mut header = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        header.extend_from_slice(&10000u32.to_be_bytes());
+        header.extend_from_slice(&5001u32.to_be_bytes());
+        header.extend_from_slice(&[8, 6, 0, 0, 0]);
+        // Chunk CRC-32 of type + data; then an empty IDAT, where the header ends.
+        let crc = |bytes: &[u8]| {
+            bytes.iter().fold(0xffff_ffffu32, |mut c, b| {
+                c ^= *b as u32;
+                for _ in 0..8 {
+                    c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
+                }
+                c
+            }) ^ 0xffff_ffff
+        };
+        let ihdr_crc = crc(&header[12..]);
+        header.extend_from_slice(&ihdr_crc.to_be_bytes());
+        header.extend_from_slice(&[0, 0, 0, 0]);
+        header.extend_from_slice(b"IDAT");
+        header.extend_from_slice(&crc(b"IDAT").to_be_bytes());
+        assert_eq!(dimensions(&header, None), Some((10000, 5001)));
+        assert!(decode(&header, None).is_none());
+        std::fs::write(dir.join("huge.png"), &header).unwrap();
+        assert_eq!(normalize(&dir.join("huge.png"), &dir.join("o.png"), Some(1600.0), "best").unwrap(), Value::Null);
+        assert!(thumbnail(&dir.join("huge.png"), &dir.join("o.png"), 160.0, "longest").is_err());
+        // GIF and BMP: not decoded (nativeImage decodes neither for photos; the core accepts PNG, JPEG and WebP).
+        assert!(decode(b"GIF89a\x01\x00\x01\x00\x00\x00\x00;", None).is_none());
+        assert!(decode(b"BM\x1e\x00\x00\x00", None).is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

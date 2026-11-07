@@ -2,7 +2,8 @@
 // the save dialog (test hook), and an API key that survives switching shells. Shell chosen with LUMEN_SHELL (default electron).
 //   $env:LUMEN_SHELL='tauri'; node --test tests/ui/platform.test.mjs
 // The key test always uses both shells: LUMEN_SHELL=tauri runs Electron -> Tauri -> Electron, LUMEN_SHELL=electron the reverse.
-// The clipboard tests write the Windows clipboard (read back with PowerShell, independent of the shell); its text is restored after.
+// The clipboard tests write the Windows clipboard (read back with PowerShell, independent of the shell). What was on it before is
+// restored afterwards: an image (kept in <run>/clipboard-backup.png), text, or an empty clipboard.
 // No model is needed: the conversation is seeded. Test data goes to <work>/ui-tests/platform-<shell>-<run>.
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -69,7 +70,19 @@ function seed(dir) {
   return sha;
 }
 
+// Clipboard backup: {kind:'image'|'text'|'empty'|'other', text?}. 'other' (files, HTML only...) cannot be put back and is left alone.
+function backupClipboard(file) {
+  const kind = ps(`Add-Type -AssemblyName System.Windows.Forms,System.Drawing;$c=[Windows.Forms.Clipboard];if($c::ContainsImage()){$i=$c::GetImage();$i.Save('${file.replace(/'/g, "''")}',[Drawing.Imaging.ImageFormat]::Png);$i.Dispose();[Console]::Out.Write('image')}elseif($c::ContainsText()){[Console]::Out.Write('text')}elseif(-not ($d=$c::GetDataObject()) -or $d.GetFormats().Count -eq 0){[Console]::Out.Write('empty')}else{[Console]::Out.Write('other')}`);
+  return kind === 'text' ? { kind, text: clipboardText() } : { kind };
+}
+function restoreClipboard(backup, file) {
+  if (backup.kind === 'image') ps(`Add-Type -AssemblyName System.Windows.Forms,System.Drawing;$i=[Drawing.Image]::FromFile('${file.replace(/'/g, "''")}');[Windows.Forms.Clipboard]::SetImage($i);$i.Dispose()`);
+  else if (backup.kind === 'text') setClipboardText(backup.text);
+  else if (backup.kind === 'empty') ps('Add-Type -AssemblyName System.Windows.Forms;[Windows.Forms.Clipboard]::Clear()');
+}
+
 let app, savedClipboard = null;
+const clipboardBackupFile = path.join(runDir, 'clipboard-backup.png');
 const shot = name => app?.cdp.screenshot(path.join(runDir, name + '.png')).catch(() => {});
 
 describe(`platform (${shell})`, () => {
@@ -77,7 +90,7 @@ describe(`platform (${shell})`, () => {
     seed(dataDir);
     fs.mkdirSync(filesDir, { recursive: true }); fs.mkdirSync(saveDir, { recursive: true });
     fs.writeFileSync(turkishPdf, pdf('Lumen test belgesi: Subat raporu, 2026.'));
-    try { savedClipboard = clipboardText(); } catch {}
+    try { savedClipboard = backupClipboard(clipboardBackupFile); } catch {}
     app = await launch({ shell, dataDir, env: { LUMEN_TEST_FILES: JSON.stringify([turkishPdf]), LUMEN_TEST_SAVE_DIR: saveDir } });
     await app.cdp.waitFor('state.ready === true', 30000);
     // Open the seeded conversation from the history list.
@@ -87,7 +100,17 @@ describe(`platform (${shell})`, () => {
   });
   after(async () => {
     await app?.stop();
-    if (savedClipboard) { try { setClipboardText(savedClipboard); } catch {} }
+    if (savedClipboard) { try { restoreClipboard(savedClipboard, clipboardBackupFile); } catch {} }
+  });
+
+  // No plugin init script reaches the page: alert/confirm stay the browser's own (tauri-plugin-dialog would replace them, and its
+  // async confirm would always be truthy in the browser panel).
+  test('no dialog plugin script in the page', async () => {
+    const r = await app.cdp.evaluate("({alert: String(window.alert), confirm: String(window.confirm), prompt: String(window.prompt), async: window.confirm.constructor.name})");
+    assert.match(r.alert, /\[native code\]/);
+    assert.match(r.confirm, /\[native code\]/);
+    assert.match(r.prompt, /\[native code\]/);
+    assert.equal(r.async, 'Function');
   });
 
   test('copy text', async () => {

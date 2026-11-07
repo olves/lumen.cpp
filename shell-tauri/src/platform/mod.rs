@@ -8,7 +8,7 @@ pub mod opener;
 pub mod secrets;
 
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 pub const NOT_IMPLEMENTED: &str = "not implemented in Tauri shell yet";
@@ -18,6 +18,32 @@ pub fn random_hex(n: usize) -> String {
     let mut bytes = vec![0u8; n];
     let _ = getrandom::fill(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `path` resolved, if it lies inside `base` (both canonicalized; compared case-insensitively with a separator after the base,
+/// so "rpc2" is not inside "rpc"). Inputs (`must_exist`) must exist; for outputs only the folder must exist.
+pub fn inside(base: &Path, path: &Path, must_exist: bool) -> Result<PathBuf, String> {
+    let refused = || "The file is outside Lumen's data folder.".to_string();
+    let base = std::fs::canonicalize(base).map_err(|_| refused())?;
+    let resolved = if must_exist {
+        std::fs::canonicalize(path).map_err(|_| refused())?
+    } else {
+        let name = path.file_name().filter(|n| *n != "." && *n != "..").ok_or_else(refused)?;
+        std::fs::canonicalize(path.parent().ok_or_else(refused)?).map_err(|_| refused())?.join(name)
+    };
+    let (b, r) = (base.to_string_lossy().to_lowercase(), resolved.to_string_lossy().to_lowercase());
+    let sep = std::path::MAIN_SEPARATOR;
+    if r.len() > b.len() + 1 && r.starts_with(&b) && (b.ends_with(sep) || r[b.len()..].starts_with(sep)) {
+        Ok(resolved)
+    } else {
+        Err(refused())
+    }
+}
+
+/// Image requests read and write only the core's RPC folder, <data>/temp/rpc.
+fn rpc_files(data: &Path, input: &Path, output: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let rpc = data.join("temp").join("rpc");
+    Ok((inside(&rpc, input, true)?, inside(&rpc, output, false)?))
 }
 
 /// What a request runs as.
@@ -107,11 +133,11 @@ fn run(app: &AppHandle, service: Service) -> Result<Value, String> {
         Service::DialogSave(o) => dialog::save(app, &o),
         Service::DialogMessage(o) => dialog::message(app, &o),
         Service::ClipboardWriteText(t) => clipboard::write_text(&t),
-        Service::ClipboardWritePng(p) => clipboard::write_png(&p),
+        Service::ClipboardWritePng(p) => clipboard::write_png(&inside(&shell.data, &p, true)?),
         Service::ClipboardRead => clipboard::read(&shell.data),
-        Service::ImageDecodeWebp(i, o) => image::decode_webp(&i, &o),
-        Service::ImageNormalize(i, o, max, q) => image::normalize(&i, &o, max, &q),
-        Service::ImageThumbnail(i, o, max, fit) => image::thumbnail(&i, &o, max, &fit),
+        Service::ImageDecodeWebp(i, o) => rpc_files(&shell.data, &i, &o).and_then(|(i, o)| image::decode_webp(&i, &o)),
+        Service::ImageNormalize(i, o, max, q) => rpc_files(&shell.data, &i, &o).and_then(|(i, o)| image::normalize(&i, &o, max, &q)),
+        Service::ImageThumbnail(i, o, max, fit) => rpc_files(&shell.data, &i, &o).and_then(|(i, o)| image::thumbnail(&i, &o, max, &fit)),
         Service::SecretsAvailable => Ok(Value::Bool(shell.secrets.available())),
         Service::SecretsEncrypt(t) => shell.secrets.encrypt(&t).map(Value::String),
         Service::SecretsDecrypt(v) => shell.secrets.decrypt(&v).map(Value::String),
@@ -169,6 +195,37 @@ mod tests {
         for (m, a) in [("clipboard.writeText", json!([])), ("clipboard.writePng", json!([""])), ("image.thumbnail", json!(["i", "o", 0])), ("image.normalize", json!(["i", "o", "big"])), ("image.decodeWebp", json!(["i"])), ("secrets.encrypt", json!([1]))] {
             assert!(matches!(routed(m, a.clone()), Outcome::Answer(Err(_))), "{m} {a}");
         }
+    }
+
+    #[test]
+    fn files_must_lie_inside_their_folder() {
+        let data = crate::platform::secrets::tests::temp_dir("inside");
+        let rpc = data.join("temp").join("rpc");
+        std::fs::create_dir_all(&rpc).unwrap();
+        std::fs::create_dir_all(data.join("temp").join("rpc2")).unwrap();
+        std::fs::write(rpc.join("a.in"), b"x").unwrap();
+        std::fs::write(data.join("temp").join("rpc2").join("b.in"), b"x").unwrap();
+        std::fs::write(data.join("secret.txt"), b"x").unwrap();
+        assert!(rpc_files(&data, &rpc.join("a.in"), &rpc.join("a.out")).is_ok());
+        // Case differences are the same file on Windows.
+        let upper = PathBuf::from(rpc.to_string_lossy().to_uppercase());
+        assert!(rpc_files(&data, &upper.join("A.IN"), &rpc.join("a.out")).is_ok());
+        for (i, o) in [
+            (data.join("secret.txt"), rpc.join("a.out")),
+            (rpc.join("..").join("..").join("secret.txt"), rpc.join("a.out")),
+            (data.join("temp").join("rpc2").join("b.in"), rpc.join("a.out")),
+            (rpc.join("missing.in"), rpc.join("a.out")),
+            (rpc.join("a.in"), data.join("out.png")),
+            (rpc.join("a.in"), rpc.join("..").join("x.out")),
+            (rpc.join("a.in"), rpc.join("..")),
+            (rpc.join("a.in"), PathBuf::from(r"C:\Windows\x.png")),
+        ] {
+            assert!(rpc_files(&data, &i, &o).is_err(), "{i:?} {o:?}");
+        }
+        assert!(inside(&data, &data.join("secret.txt"), true).is_ok());
+        assert!(inside(&data, &std::env::temp_dir(), true).is_err());
+        assert!(inside(&data, &data, true).is_err());
+        std::fs::remove_dir_all(data).unwrap();
     }
 
     #[test]

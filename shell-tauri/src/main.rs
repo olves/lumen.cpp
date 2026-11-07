@@ -172,9 +172,9 @@ fn main() {
         // Test runs use separate data folders and may run side by side (as in Electron); core.lock still guards each folder.
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| window::focus_main(app)));
     }
-    // Dialogs are called from Rust only (platform/dialog.rs); the main window's capability grants no dialog permission.
+    // No dialog/opener plugin is registered: platform/dialog.rs and platform/opener.rs call rfd and the opener function from Rust,
+    // so no plugin init script reaches any webview.
     let app = builder
-        .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("lumen", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let allowed = ctx.webview_label() == window::MAIN && request.method() == tauri::http::Method::GET;
