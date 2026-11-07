@@ -16,6 +16,7 @@ Object.assign(translations,{
  updateReady:['v{version} is downloaded and verified.','v{version} indirildi ve doğrulandı.'],
  restartUpdate:['Restart and update','Yeniden başlat ve güncelle'],
  updateInstalling:['Closing Lumen to install the update…','Güncelleme için Lumen kapatılıyor…'],
+ updatePreviewNote:['This preview build can\'t install updates.','Bu önizleme sürümü güncellenemez.'],modePreview:['preview build','önizleme sürümü'],
  updateFailed:['Update failed: {error}','Güncelleme başarısız: {error}'],
  updateNotWritable:['Lumen cannot write to its own folder, so it cannot update itself here. Download the new version from GitHub.','Lumen kendi klasörüne yazamıyor, bu yüzden burada kendini güncelleyemez. Yeni sürümü GitHub’dan indir.'],
  autoUpdates:['Check automatically','Otomatik denetle'],
@@ -58,7 +59,7 @@ function paintUpdates(s){
  if(!s)return;updateState=s;buildUpdateSection();
  const box=$('update-status');if(!box)return;
  const d=s.download,a=s.available;
- $('update-version').textContent=updateFill('versionLine',{version:s.version,mode:t(s.mode==='installed'?'modeInstalled':'modePortable')});
+ $('update-version').textContent=updateFill('versionLine',{version:s.version,mode:t(s.mode==='check-only'?'modePreview':s.mode==='installed'?'modeInstalled':'modePortable')});
  $('update-auto').checked=s.auto;$('update-check').textContent=t(s.checking?'checkingUpdates':'checkUpdates');$('update-check').disabled=s.checking||['downloading','verifying'].includes(d?.phase);
  let text;
  if(s.error)text=updateFill('updateFailed',{error:s.error});
@@ -69,13 +70,15 @@ function paintUpdates(s){
  else if(a)text=updateFill('updateAvailable',{version:a.version,size:updateSize(a.size)});
  else if(s.checking)text=t('checkingUpdates');
  else text=s.lastCheck?t('upToDate')+' '+updateFill('checkedAgo',{when:updateAgo(s.lastCheck)}):t('neverChecked');
- if(a&&!s.writable)text+=' '+t('updateNotWritable');
+ const checkOnly=s.mode==='check-only';
+ if(a&&!s.writable&&!checkOnly)text+=' '+t('updateNotWritable');
+ if(checkOnly)text+=' '+t('updatePreviewNote');
  box.textContent=text;
  const notes=a?(state.prefs.language==='tr'&&a.notes?.tr||a.notes?.en||''):'';$('update-notes').textContent=notes;$('update-notes').hidden=!notes;
  const busy=['downloading','verifying'].includes(d?.phase);
  $('update-progress').hidden=!busy;if(busy)$('update-fill').style.transform=`scaleX(${d.total?d.bytes/d.total:0})`;
- $('update-download').hidden=!a||!s.writable||busy||d?.phase==='ready';
- $('update-install').hidden=!(a&&d?.phase==='ready'&&s.writable);$('update-install').disabled=false;
+ $('update-download').hidden=checkOnly||!a||!s.writable||busy||d?.phase==='ready';
+ $('update-install').hidden=checkOnly||!(a&&d?.phase==='ready'&&s.writable);$('update-install').disabled=false;
  $('update-cancel').hidden=d?.phase!=='downloading';
  $('update-box').dataset.state=a?(d?.phase==='ready'?'ready':'available'):'idle';
  const pill=updatePill();pill.hidden=!a;pill.textContent=t(d?.phase==='ready'?'updatePillReady':'updatePill');pill.title=a?updateFill('updateAvailable',{version:a.version,size:updateSize(a.size)}):'';

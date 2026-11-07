@@ -20,7 +20,10 @@ function buildOf(version) { const m = /-beta\.(\d+)$/.exec(String(version || '')
 function parseVersion(version) { const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)(?:\.(\d+))?)?$/i.exec(String(version || '').trim()); return m ? [Number(m[1]), Number(m[2]), Number(m[3]), m[4] ? 0 : 1, Number(m[5] || 0)] : null; }
 function compareVersions(a, b) { const x = parseVersion(a), y = parseVersion(b); if (!x || !y) return null; for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] > y[i] ? 1 : -1; return 0; }
 
-function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => {}, log = () => {}, test = false, apiBase, publicKey}) {
+function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => {}, log = () => {}, test = false, apiBase, publicKey, mode = 'full'}) {
+  // 'check-only' (Tauri preview build): look for releases and show notes, never download or install (the installer would replace
+  // the Tauri build with an Electron release and relaunch node.exe).
+  const checkOnly = mode === 'check-only';
   // Overrides exist only for the isolated UI tests; the product always uses GitHub and the embedded key.
   const api = test && apiBase ? apiBase.replace(/\/$/, '') : 'https://api.github.com';
   const key = crypto.createPublicKey(test && publicKey ? publicKey : PUBLIC_KEY);
@@ -38,7 +41,7 @@ function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => 
   function status() {
     const s = readState(), latest = newer(s.latest) ? s.latest : null;
     const ready = download?.phase === 'ready' || (latest && s.downloaded?.build === latest.build && fs.existsSync(s.downloaded.file || ''));
-    return {version, build, repo: REPO, mode: installed ? 'installed' : 'portable', writable: installed || writable(), auto: s.auto !== false,
+    return {version, build, repo: REPO, mode: checkOnly ? 'check-only' : installed ? 'installed' : 'portable', writable: installed || writable(), auto: s.auto !== false,
       lastCheck: s.lastCheck || null, checking: !!checking, error: lastError,
       available: latest ? {build: latest.build, version: latest.version, notes: latest.notes, published: latest.published, size: latest.asset.size} : null,
       download: download && download.phase !== 'ready' ? {phase: download.phase, bytes: download.bytes, total: download.total, speed: Math.round(download.speed || 0), error: download.error || null} : (ready ? {phase: 'ready'} : null)};
@@ -115,6 +118,7 @@ function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => 
   async function sha256(file) { return new Promise((resolve, reject) => { const h = crypto.createHash('sha256'); fs.createReadStream(file).on('data', d => h.update(d)).on('end', () => resolve(h.digest('hex'))).on('error', reject); }); }
 
   async function startDownload() {
+    if (checkOnly) throw updateError('check-only', 'This preview build cannot install updates.');
     const s = readState(), latest = s.latest;
     if (!newer(latest)) throw updateError('none', 'There is no newer version to download.');
     if (download && ['downloading', 'verifying'].includes(download.phase)) return status();
@@ -155,7 +159,8 @@ function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => 
   }
 
   // Starts the updater and asks the app to quit; the updater waits for this process to exit before changing files.
-  async function install({quit, relaunchArgs = [], language = 'en'}) {
+  async function install({quit, relaunchArgs = [], language = 'en'} = {}) {
+    if (checkOnly) throw updateError('check-only', 'This preview build cannot install updates.');
     const s = readState(), d = s.downloaded;
     if (!d || !s.latest || d.build !== s.latest.build || !fs.existsSync(d.file)) throw updateError('none', 'Download the update first.');
     if (!installed && !writable()) throw updateError('denied', 'Lumen cannot write to its folder. Download the new version from GitHub instead.');

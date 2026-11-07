@@ -605,7 +605,7 @@ async function request(action,args={}){
   throw Error('Invalid vision action.');
  });
  // Version check and updates (updates.cjs). Test runs may point at a local release server and test key; the product cannot.
- const updater=require('./updates.cjs').createUpdater({dataDir:data,appDir:platform.appDir,version:platform.app.version,build:require('./package.json').build,emit:s=>emitWindow('update-event',s),log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}},test,apiBase:hook?.overrides.updateApi,publicKey:hook?.overrides.updateKey});
+ const updater=require('./updates.cjs').createUpdater({dataDir:data,appDir:platform.appDir,version:platform.app.version,build:require('./package.json').build,emit:s=>emitWindow('update-event',s),log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}},test,apiBase:hook?.overrides.updateApi,publicKey:hook?.overrides.updateKey,mode:platform.updateMode});
  const engineUpdater=require('./engine.cjs').createEngineUpdater({dataDir:data,emit:s=>emitWindow('engine-update-event',s),log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}},unload:()=>request('unload')});
  // Startup checks run while the opening animation plays: Lumen's own update and a newer llama.cpp engine, each only when its
  // automatic check is on. The renderer waits for them at most a few seconds; results that arrive later still show.

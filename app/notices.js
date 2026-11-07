@@ -2,7 +2,7 @@
 // Startup notices: renderer.js starts the update checks (Lumen and the llama.cpp engine) with the window and holds the splash for
 // them. Each result gets its own notice in the top-right corner once the workspace is shown.
 Object.assign(translations,{
- noticeAppTitle:['Lumen v{version} is available','Lumen v{version} hazır'],noticeUpdate:['Update','Güncelle'],noticeLater:['Later','Daha sonra'],
+ noticeAppTitle:['Lumen v{version} is available','Lumen v{version} hazır'],noticeUpdate:['Update','Güncelle'],noticeView:['View','Göster'],noticeLater:['Later','Daha sonra'],
  noticeEngineTitle:['New llama.cpp engine: {build}','Yeni llama.cpp motoru: {build}'],
  noticeEngineText:['You are on {current} · {behind} builds newer · {size} to download.','Şu an {current} kullanılıyor · {behind} derleme daha yeni · {size} indirilecek.'],
  noticeEngineLater:['Remind me in 7 days','7 gün sonra hatırlat'],noticeEngineFailedTitle:['Engine update rolled back','Motor güncellemesi geri alındı'],
@@ -31,7 +31,7 @@ function showStartupNotices(r){
  if(app?.auto&&app.available&&app.download?.phase!=='ready'&&!startupShown.has('app')){startupShown.add('app');
   const notes=(state.prefs.language==='tr'&&app.available.notes?.tr||app.available.notes?.en||'').split(/(?<=\.)\s/)[0];
   showNotice('app',{title:updateFill('noticeAppTitle',{version:app.available.version}),text:notes,actions:[
-   {label:t('noticeUpdate'),primary:true,run:()=>{closeNotice('app');api.updates('download').catch(e=>toast(engineClean(e)));openSettings('general');}},
+   {label:t(app.mode==='check-only'?'noticeView':'noticeUpdate'),primary:true,run:()=>{closeNotice('app');if(app.mode!=='check-only')api.updates('download').catch(e=>toast(engineClean(e)));openSettings('general');}},
    {label:t('noticeLater'),run:()=>closeNotice('app')}]});
  }
  if(engine?.current?.failed&&!startupShown.has('engine-failed')){startupShown.add('engine-failed');

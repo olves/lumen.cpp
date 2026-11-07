@@ -163,6 +163,36 @@ describe(`platform (${shell})`, () => {
     assert.match(text, /^# Platform test/);
     assert.ok(text.includes(REPLY), 'the reply is in the export');
   });
+
+  // Task 10: the Tauri build only checks for updates (note in both languages, no download/install button); Electron keeps them.
+  test('updates section: check-only note (Tauri) / full mode (Electron)', async () => {
+    const { cdp } = app;
+    await cdp.click('[data-page="settings"]');
+    await cdp.waitFor("!!document.querySelector('#update-section') && !!document.querySelector('#update-status')", 10000);
+    const setLanguage = async code => {
+      const index = await cdp.evaluate(`[...document.querySelector('#language').options].findIndex(o=>o.value==='${code}')`);
+      await cdp.click(`#language + .segmented button:nth-child(${index + 1})`);
+      await cdp.waitFor(`state.prefs.language==='${code}'`, 5000);
+    };
+    const section = () => cdp.evaluate("({text: document.querySelector('#update-box').textContent, mode: updateState?.mode, download: document.querySelector('#update-download').hidden, install: document.querySelector('#update-install').hidden, version: document.querySelector('#update-version').textContent})");
+    await setLanguage('en');
+    let r = await section();
+    if (shell === 'tauri') {
+      assert.equal(r.mode, 'check-only');
+      assert.match(r.text, /This preview build can't install updates./);
+      assert.equal(r.download, true);
+      assert.equal(r.install, true);
+      await setLanguage('tr');
+      r = await section();
+      assert.match(r.text, /Bu önizleme sürümü güncellenemez./);
+      assert.equal(r.download, true);
+      assert.equal(r.install, true);
+      await setLanguage('en');
+    } else {
+      assert.notEqual(r.mode, 'check-only');
+      assert.doesNotMatch(r.text, /preview build/);
+    }
+  });
 });
 
 // ---------- An API key saved in one shell opens in the other (Electron safeStorage format, spec §7) ----------
