@@ -64,13 +64,20 @@ function failingPair(tokens){
 
 // ---- value validation ----
 const FONT_VALUE=/^[A-Za-z0-9 ,"'._-]{1,160}$/;
-// Quotes must pair up properly: a quote of the other kind inside a quoted name is fine ("Foo's Font"), an unclosed one is not.
-function balanced(v){let open=null;for(const c of v){if(c!=='"'&&c!=="'")continue;if(open===null)open=c;else if(c===open)open=null;}return open===null;}
+// Font value = comma separated families; each is either fully quoted (one quote kind, opened at the start, closed at the end;
+// the other quote kind may appear inside: "Foo's Font") or unquoted with no quote characters at all.
+function validFamilies(v){
+ const parts=[];let cur='',open=null;
+ for(const ch of v){if(ch==='"'||ch==="'"){if(open===null)open=ch;else if(ch===open)open=null;}if(ch===','&&open===null){parts.push(cur);cur='';}else cur+=ch;}
+ parts.push(cur);
+ if(open!==null)return false;
+ return parts.every(p=>{p=p.trim();if(!p)return false;const q=p[0];if(q==='"'||q==="'")return p.length>=3&&p.endsWith(q)&&!p.slice(1,-1).includes(q);return !/["']/.test(p);});
+}
 function checkValue(token,value){
  if(!TOKEN_NAMES.includes(token))return 'unknown-token';
  if(typeof value!=='string')return 'invalid-value';
  if(COLOR_TOKENS.includes(token))return HEX.test(value)?null:'invalid-color';
- if(FONT_TOKENS.includes(token))return FONT_VALUE.test(value)&&value.trim()&&balanced(value)?null:'invalid-font';
+ if(FONT_TOKENS.includes(token))return FONT_VALUE.test(value)&&value.trim()&&validFamilies(value)?null:'invalid-font';
  if(token==='--font-size'){const m=/^(\d{2})(\.5)?px$/.exec(value),n=m&&Number(m[1]+(m[2]||''));return m&&n>=12&&n<=20?null:'invalid-size';}
  if(token==='--radius'){const m=/^(\d{1,2})px$/.exec(value);return m&&Number(m[1])<=16?null:'invalid-radius';}
  return 'unknown-token';
@@ -149,12 +156,27 @@ function clearOverride(appearance,token,mode){
 function resetOverrides(appearance){return {...sanitize(appearance),overrides:EMPTY()};}
 
 // A partial appearance (e.g. only statusBar or only mode) merges over the previous one. Per field, an invalid value keeps the
-// PREVIOUS value (project rule): unknown theme/mode, non-boolean statusBar, a non-object overrides section are all ignored.
-// A valid overrides section (common/dark/light) replaces that section only; its invalid entries are dropped by sanitize.
+// PREVIOUS value (project rule): unknown theme/mode, non-boolean statusBar, a non-object overrides section are ignored.
+// Override sections merge PER ENTRY: an entry in the patch sets that token; an invalid entry (bad value, unknown token, or a
+// color that would break a contrast pair together with the section's other overrides) keeps the previous value for that token;
+// tokens not mentioned stay. Explicit removal needs an explicit signal: a value of null removes the token (back to the theme value).
 function mergeAppearance(previous,patch){
  const prev=sanitize(previous),p=plain(patch),po=plain(p.overrides),overrides=copyOver(prev.overrides);
- for(const sec of ['common','dark','light'])if(isObj(po[sec]))overrides[sec]=po[sec];
- return sanitize({theme:THEME_IDS.includes(p.theme)?p.theme:prev.theme,mode:MODES.includes(p.mode)?p.mode:prev.mode,statusBar:typeof p.statusBar==='boolean'?p.statusBar:prev.statusBar,overrides});
+ const theme=THEME_IDS.includes(p.theme)?p.theme:prev.theme,mode=MODES.includes(p.mode)?p.mode:prev.mode;
+ for(const sec of ['common','dark','light']){
+  if(!isObj(po[sec]))continue;
+  const colors=sec!=='common',section=overrides[sec];
+  for(const token of TOKEN_NAMES){
+   if(!Object.prototype.hasOwnProperty.call(po[sec],token)||COLOR_TOKENS.includes(token)!==colors)continue;
+   const value=po[sec][token];
+   if(value===null){delete section[token];continue;}
+   if(checkValue(token,value))continue;
+   if(!colors){section[token]=norm(token,value);continue;}
+   const trial=cleanColors(theme,sec,{...section,[token]:value});
+   if(trial[token]===norm(token,value)&&Object.keys(section).every(k=>k in trial))section[token]=trial[token];
+  }
+ }
+ return sanitize({theme,mode,statusBar:typeof p.statusBar==='boolean'?p.statusBar:prev.statusBar,overrides});
 }
 
 // ---- migration from the old preferences ----

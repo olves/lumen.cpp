@@ -103,7 +103,7 @@ describe('override validation', () => {
     assert.equal(validateOverride(base, '--font-ui', 'url(http://x)').ok, false);
   });
   test('font values need balanced quotes', () => {
-    for (const v of ['"Open Sans', 'Open Sans"', "'Foo", '"a" "b', "a,\"b'", "Foo's Font"]) assert.equal(validateOverride(base, '--font-ui', v).ok, false, v);
+    for (const v of ['"Open Sans', 'Open Sans"', "'Foo", '"a" "b', "a,\"b'", "Foo's Font", "Foo's Font, Bar's", '"A" B', 'A, ,B', '""', "'a'b'"]) assert.equal(validateOverride(base, '--font-ui', v).ok, false, v);
     for (const v of ['"Open Sans"', "'Foo Bar',serif", 'Inter', `"Foo's Font"`,"'Say \"hi\"'"]) assert.equal(validateOverride(base, '--font-ui', v).ok, true, v);
   });
   test('modes are validated separately and a mode switch never drops the other mode', () => {
@@ -156,13 +156,25 @@ describe('override validation', () => {
     const m2 = A.mergeAppearance(prev, { mode: 'dark' });
     assert.equal(m2.theme, 'pro'); assert.deepEqual(m2.overrides, prev.overrides);
     const m3 = A.mergeAppearance(prev, { overrides: { common: {} } });
-    assert.deepEqual(m3.overrides, { common: {}, dark: prev.overrides.dark, light: prev.overrides.light });
+    assert.deepEqual(m3.overrides, prev.overrides, 'an empty section changes nothing (entries merge, nothing is replaced wholesale)');
     // invalid values keep the PREVIOUS value, never reset to defaults
     const bad = A.mergeAppearance(prev, { theme: 'nope', mode: 'x', statusBar: 'yes', overrides: { dark: 5, light: [1], common: null } });
     assert.deepEqual(bad, prev);
     assert.deepEqual(A.mergeAppearance(prev, 'garbage'), prev);
     assert.equal(A.mergeAppearance(prev, { theme: 'reading', mode: 'nope' }).mode, 'light');
-    assert.deepEqual(A.mergeAppearance(prev, { overrides: { dark: { '--accent': 'red', '--radius': '3px' } } }).overrides.dark, {}, 'a valid section replaces it; invalid entries are dropped');
+    // sections merge per entry: an invalid entry keeps the previous value, other tokens are untouched
+    const per = A.mergeAppearance(prev, { overrides: { dark: { '--accent': 'red', '--border': '#445566' }, common: { '--radius': '99px', '--font-size': '16px' } } });
+    assert.equal(per.overrides.dark['--accent'], '#ffeb99', 'invalid entry keeps previous value');
+    assert.equal(per.overrides.dark['--border'], '#445566', 'valid entry applied');
+    assert.equal(per.overrides.common['--radius'], '10px', 'invalid common entry keeps previous');
+    assert.equal(per.overrides.common['--font-size'], '16px');
+    assert.equal(per.overrides.light['--accent'], '#2f5f8a', 'untouched section stays');
+    // a color that is well-formed but breaks contrast also keeps the previous value
+    assert.equal(A.mergeAppearance(prev, { overrides: { light: { '--accent': '#ffeb99' } } }).overrides.light['--accent'], '#2f5f8a');
+    // explicit removal: null
+    const gone = A.mergeAppearance(prev, { overrides: { dark: { '--accent': null }, common: { '--radius': null } } });
+    assert.deepEqual(gone.overrides.dark, {}); assert.deepEqual(gone.overrides.common, {}); assert.equal(gone.overrides.light['--accent'], '#2f5f8a');
+    assert.deepEqual(A.mergeAppearance(prev, { overrides: { dark: { '--nope': null, '--accent': undefined } } }).overrides, prev.overrides, 'unknown token and undefined change nothing');
   });
 });
 
@@ -270,7 +282,7 @@ describe('core preferences', () => {
       const next = (await core.call('preferences', [{ appearance: { theme: 'reading', mode: 'dark', statusBar: true, overrides: { common: { '--radius': '10px', '--nope': '1px' }, dark: { '--accent': '#ffffff', '--text': '#101010' } } } }])).value;
       assert.equal(next.appearance.theme, 'reading');
       assert.equal(next.appearance.statusBar, true);
-      assert.deepEqual(next.appearance.overrides.common, { '--radius': '10px' });
+      assert.deepEqual(next.appearance.overrides.common, { '--font-size': '15px', '--radius': '10px' }, 'merged per entry: migrated font size stays, unknown token dropped');
       assert.deepEqual(next.appearance.overrides.dark, { '--accent': '#ffffff' }, 'unreadable text and unknown token are dropped');
       assert.equal(next.appearance.overrides.light['--accent'], '#6a4a85', 'the other mode keeps its override');
       const onDisk = JSON.parse(fs.readFileSync(path.join(core.dataDir, 'desktop-preferences.json'), 'utf8'));

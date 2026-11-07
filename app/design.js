@@ -4,7 +4,7 @@
 // Until Settings → Appearance is rebuilt, the existing controls write prefs.appearance: Theme (the old design select),
 // Display mode, text size and the accent swatches (themes.js). Old preference fields are kept as they were.
 Object.assign(translations,{interfaceDesign:['Theme','Tema'],interfaceHint:['Colors, fonts and spacing for the whole app.','Uygulamanın tamamı için renkler, yazı tipleri ve aralıklar.'],
- themeNative:['Native','Yerli Windows'],themeReading:['Reading','Okuma'],themePro:['Pro','Profesyonel'],
+ themeNative:['Windows','Windows'],themeReading:['Reading','Okuma'],themePro:['Pro','Profesyonel'],
  displayMode:['Display mode','Görünüm modu'],displayModeHint:['Light or dark, with any theme.','Her temada açık veya koyu.'],darkMode:['Dark','Koyu'],lightMode:['Light','Açık']});
 const appearanceModel=globalThis.LumenAppearance;
 function currentAppearance(){return appearanceModel.sanitizeAppearance(state.prefs.appearance);}

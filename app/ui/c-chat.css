@@ -53,7 +53,9 @@ body.no-motion .message.search-hit{animation:none;outline:1px solid var(--focus)
 /* Composer */
 .composer-region{width:min(720px,calc(100% - 48px));margin:0 auto;padding:8px 0 12px;flex:none}
 .composer{position:relative;padding:11px 13px 9px;background:var(--surface-2);border:1px solid var(--border);border-radius:calc(var(--radius) * 2);transition:border-color var(--duration) ease,box-shadow var(--duration) ease}
-.composer:focus-within{border-color:var(--focus);box-shadow:0 0 0 1px var(--focus)}
+.composer:focus-within{border-color:color-mix(in srgb,var(--text-muted) 70%,var(--border))}
+/* Text fields always match :focus-visible in Chromium, so the accent ring is for keyboard focus on the composer buttons. */
+.composer:has(:focus-visible:not(textarea)){border-color:var(--focus);box-shadow:0 0 0 1px var(--focus)}
 .composer textarea{display:block;width:100%;min-height:48px;max-height:230px;padding:0 2px 6px;resize:none;border:0;outline:none!important;background:none;font-family:var(--font-ui);font-size:var(--font-size);line-height:1.6;color:var(--text)}
 .composer textarea:focus-visible{box-shadow:none}
 .composer textarea::placeholder{color:var(--text-muted);opacity:1}
@@ -82,7 +84,7 @@ body.no-motion .message.search-hit{animation:none;outline:1px solid var(--focus)
 /* The line under the composer: hint on the left, context (numbers in mono) on the right. */
 .composer-foot{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:var(--font-size-small);color:var(--text-muted)}
 .context-wrap{position:relative}
-.context-toggle{display:flex;align-items:center;gap:6px;padding:3px 0 3px 4px;white-space:nowrap;font-family:var(--font-mono);font-size:var(--font-size-small);color:var(--text-muted)}
+.context-toggle{display:flex;align-items:center;gap:6px;padding:3px 0 3px 4px;white-space:nowrap;font-family:var(--font-ui);font-size:var(--font-size-small);font-variant-numeric:tabular-nums;color:var(--text-muted)}
 .context-toggle:hover{color:var(--text)}
 .mini-meter{width:40px;height:4px;display:flex;overflow:hidden;background:var(--surface-3);border-radius:2px}
 .mini-meter>span{height:100%;width:0;max-width:100%;background:var(--accent)}

@@ -10,8 +10,8 @@
  --font-mono:"Cascadia Mono",Consolas,monospace;
  --font-size:14px;--radius:6px;
  /* Derived, not user-editable. */
- --font-size-ui:calc(var(--font-size) - 1px);
- --font-size-small:calc(var(--font-size) - 2px);
+ --font-size-ui:max(13px,calc(var(--font-size) - 1px));
+ --font-size-small:max(12px,calc(var(--font-size) - 2px));
  --hover:color-mix(in srgb,var(--surface-3) 70%,transparent);
  --selected:var(--surface-3);
  --duration:120ms;
