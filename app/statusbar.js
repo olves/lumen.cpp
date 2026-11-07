@@ -14,12 +14,16 @@ Object.assign(translations,{
  statusWebOn:['Web on','Web açık'],
  statusWebOff:['Web off','Web kapalı'],
  statusCloud:['Cloud · {provider}','Bulut · {provider}'],
+ statusCloudGeneric:['the cloud provider','bulut'],
  statusTokens:['{n} tokens','{n} token'],
  statusLoading:['Loading','Yükleniyor'],
  statusReady:['Ready','Hazır'],
  statusAnswering:['Answering','Yanıtlıyor'],
- composerPlaceholder:['Ask anything. Keep it local.','Ne istersen sor; her şey bu cihazda kalsın.']
+ composerPlaceholder:['Ask anything. Keep it local.','Ne istersen sor; her şey bu cihazda kalsın.'],
+ composerPlaceholderCloud:['Ask anything. This chat goes to {provider}.','Ne istersen sor. Bu sohbet {provider} sağlayıcısına gider.']
 });
+// Cloud models never get the "keep it local" promise. Runs after localize (which sets the local text) via paintStatus.
+function paintPlaceholder(){const prompt=document.getElementById('prompt');if(!prompt)return;const cloud=isCloud();const text=cloud?tf('composerPlaceholderCloud',{provider:providerOf()||t('statusCloudGeneric')}):t('composerPlaceholder');prompt.placeholder=text;prompt.dataset.placeholder=text;}
 
 // The only source the status surface reads. syncStatus() fills it from the app; paintStatus() never reads state.* itself.
 const statusState={ready:false,placement:'composer',model:'',cloud:null,context:null,vram:null,engine:'',web:false,phase:'ready'};
@@ -98,6 +102,7 @@ function syncStatus(){
 
 function paintStatus(){
  if(!statusRoot)return;
+ paintPlaceholder();
  statusRoot.hidden=!statusState.ready;
  if(statusRoot.hidden)return;
  statusRoot.setAttribute('aria-label',t('statusBarLabel'));

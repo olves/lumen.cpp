@@ -152,6 +152,7 @@ describe(`status bar (${shell})`, () => {
     assert.equal(await ev("document.querySelector('.local-label').hidden"), true, 'header privacy badge is hidden for a cloud model');
     assert.ok(!/Yerel|Local/i.test(cloud.text), 'cloud status has no local wording');
     assert.ok(!/4[,.]096|32[,.]768/.test(cloud.text), 'no local context window for a cloud model');
+    assert.equal(await ev("document.querySelector('#prompt').placeholder"), 'Ask anything. This chat goes to Mock Cloud.', 'cloud placeholder makes no local promise');
     await shot('cloud');
   });
 
@@ -161,7 +162,7 @@ describe(`status bar (${shell})`, () => {
     assert.equal(await ev("document.getElementById('status-model-value').textContent"), 'Bulut · Mock Cloud');
     assert.equal(await ev("document.getElementById('status-context-value').textContent"), '18 token');
     assert.equal(await ev("document.querySelector('#status-context .status-label').textContent"), 'Bağlam');
-    assert.equal(await ev("document.querySelector('#prompt').placeholder"), 'Ne istersen sor; her şey bu cihazda kalsın.');
+    assert.equal(await ev("document.querySelector('#prompt').placeholder"), 'Ne istersen sor. Bu sohbet Mock Cloud sağlayıcısına gider.');
     assert.ok(!/Yerel/.test(await ev("document.getElementById('app-status').textContent")));
     assert.deepEqual(app.cdp.errors, [], 'no console errors: ' + app.cdp.errors.join(' | '));
   });
