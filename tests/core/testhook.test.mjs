@@ -28,3 +28,11 @@ test('LUMEN_TEST_SAVE_DIR answers save dialogs with the default file name in tha
   assert.deepEqual(await hook.saveDialog({ defaultPath: 'C:\\elsewhere\\SKILL.md' }), { canceled: false, filePath: path.join(dir, 'SKILL.md') });
   assert.deepEqual(await hook.openDialog({}), { real: 'open' });
 });
+
+test('LUMEN_TEST_DOWNLOAD_BASE is honoured only for a loopback http origin', () => {
+  const base = 'http://127.0.0.1:4567';
+  assert.equal(install({ platform, env: { LUMEN_TEST_DOWNLOAD_BASE: base } }).overrides.downloadBase, base);
+  for (const bad of ['https://127.0.0.1:4567', 'http://example.com', 'http://127.0.0.1:4567/x', 'http://localhost:4567', ''])
+    assert.equal(install({ platform, env: { LUMEN_TEST_DOWNLOAD_BASE: bad } }).overrides.downloadBase, null, bad);
+  assert.equal(install({ platform, env: {} }).overrides.downloadBase, null);
+});

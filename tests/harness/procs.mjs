@@ -54,10 +54,15 @@ export function track(rows, rootPid, tracked, rootAlive) {
   }
 }
 
+// Identity comparison inside the PowerShell kill script. No ToLower(): that is culture-sensitive (on Turkish Windows "I".ToLower() is
+// "ı"), so a path with a capital I would never match the lower-cased identity. Ordinal ignore-case does not depend on the culture.
+export const IDENTITY_MATCH = '[string]::Equals($id,$e.id,[StringComparison]::OrdinalIgnoreCase)';
+export const KILL_SCRIPT = '$m=ConvertFrom-Json $env:LUMEN_KILL; foreach($e in $m){$p=Get-CimInstance Win32_Process -Filter ("ProcessId="+$e.pid); if($p){$id=$p.ExecutablePath; if(-not $id){$id=$p.Name}; if(' + IDENTITY_MATCH + '){Stop-Process -Id $e.pid -Force -ErrorAction SilentlyContinue}}}';
+
 // Kill only tracked PIDs that still exist with the same executable. Identity is re-checked inside the same
 // PowerShell call, immediately before each kill, and the process table is re-read between passes. No path sweep.
 export function killTracked(tracked) {
-  const script = '$m=ConvertFrom-Json $env:LUMEN_KILL; foreach($e in $m){$p=Get-CimInstance Win32_Process -Filter ("ProcessId="+$e.pid); if($p){$id=$p.ExecutablePath; if(-not $id){$id=$p.Name}; if($id.ToLower() -eq $e.id){Stop-Process -Id $e.pid -Force -ErrorAction SilentlyContinue}}}';
+  const script = KILL_SCRIPT;
   for (let pass = 0; pass < 3; pass++) {
     let rows;
     try { rows = processTable(); } catch { return; }

@@ -6,6 +6,8 @@
 // LUMEN_TEST_ALLOW_HOST: 127.0.0.1:<port>. The UI tests' local server passes the web checks of the core, the shells and the browser
 // proxy (web.cjs allowTestHost). Any other value allows nothing.
 // LUMEN_TEST_SAVE_DIR: a folder. When set, save dialogs return <folder>\<file name of options.defaultPath> instead of asking.
+// LUMEN_TEST_DOWNLOAD_BASE: http://127.0.0.1:<port>. Model downloads then fetch <base>/<repo>/resolve/main/<file> from the UI tests'
+// local server instead of Hugging Face. Any other value is ignored.
 // The update/import overrides below are returned only here, so they cannot take effect outside test mode.
 'use strict';
 const fs = require('fs');
@@ -24,6 +26,7 @@ function install({ platform, env = {} }) {
       updateKey: env.LUMEN_UPDATE_KEY ? fs.readFileSync(env.LUMEN_UPDATE_KEY, 'utf8') : undefined,
       importHome: env.LUMEN_IMPORT_HOME || null,
       allowHost: env.LUMEN_TEST_ALLOW_HOST || null,
+      downloadBase: /^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(String(env.LUMEN_TEST_DOWNLOAD_BASE || '')) ? env.LUMEN_TEST_DOWNLOAD_BASE : null,
     },
     openDialog: options => files
       ? Promise.resolve({ canceled: false, filePaths: [...files] })

@@ -306,7 +306,7 @@ async function request(action,args={}){
   cancel(){return coreRequest('cancel').catch(()=>{});}
  };
  agent=createAgent({engine,web:webTools,settings:toolSettings,emit:event=>send('agent-event',event),log:message=>fs.appendFileSync(path.join(data,'desktop-engine.log'),'[agent] '+message+'\n')});
- downloader=createDownloader({dataDir:data,emit:state=>{send('download-event',state);if(state.phase==='completed')request('models').then(models=>send('download-event',{...state,models})).catch(()=>{});}});
+ downloader=createDownloader({dataDir:data,...(hook?.overrides.downloadBase?{resolveUrl:m=>`${hook.overrides.downloadBase}/${m.Repo}/resolve/main/${m.File.split('/').map(encodeURIComponent).join('/')}`}:{}),emit:state=>{send('download-event',state);if(state.phase==='completed')request('models').then(models=>send('download-event',{...state,models})).catch(()=>{});}});
  // Image generation (imagegen.cjs): local stable-diffusion.cpp server or the user's cloud provider.
  imageGen=require('./imagegen.cjs').createImageGen({dataDir:data,image:platform.image,downloader,cloud,connections,emit:e=>send('image-event',e),
   log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}},releaseChatModel:()=>request('unload').catch(()=>{})});
