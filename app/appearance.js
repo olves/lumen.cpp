@@ -64,7 +64,8 @@ function failingPair(tokens){
 
 // ---- value validation ----
 const FONT_VALUE=/^[A-Za-z0-9 ,"'._-]{1,160}$/;
-const balanced=v=>(v.match(/"/g)||[]).length%2===0&&(v.match(/'/g)||[]).length%2===0;
+// Quotes must pair up properly: a quote of the other kind inside a quoted name is fine ("Foo's Font"), an unclosed one is not.
+function balanced(v){let open=null;for(const c of v){if(c!=='"'&&c!=="'")continue;if(open===null)open=c;else if(c===open)open=null;}return open===null;}
 function checkValue(token,value){
  if(!TOKEN_NAMES.includes(token))return 'unknown-token';
  if(typeof value!=='string')return 'invalid-value';
@@ -78,7 +79,8 @@ const norm=(token,value)=>COLOR_TOKENS.includes(token)?value.toLowerCase():value
 // A font choice always falls back to the theme's own stack, so a font that is not installed cannot break the layout.
 const fontStack=(value,fallback)=>value.trim()===fallback?fallback:value.trim().replace(/[,\s]+$/,'')+','+fallback;
 
-const plain=o=>o&&typeof o==='object'&&!Array.isArray(o)?o:{};
+const isObj=o=>!!o&&typeof o==='object'&&!Array.isArray(o);
+const plain=o=>isObj(o)?o:{};
 
 // ---- overrides: {common:{fonts,size,radius}, dark:{colors}, light:{colors}} ----
 // Each mode's colors are validated on their own, so switching mode never drops the other mode's overrides.
@@ -146,12 +148,13 @@ function clearOverride(appearance,token,mode){
 }
 function resetOverrides(appearance){return {...sanitize(appearance),overrides:EMPTY()};}
 
-// A partial appearance (e.g. only statusBar or only mode) merges over the previous one. A given overrides section
-// (common/dark/light) replaces that section only. The result is sanitized.
+// A partial appearance (e.g. only statusBar or only mode) merges over the previous one. Per field, an invalid value keeps the
+// PREVIOUS value (project rule): unknown theme/mode, non-boolean statusBar, a non-object overrides section are all ignored.
+// A valid overrides section (common/dark/light) replaces that section only; its invalid entries are dropped by sanitize.
 function mergeAppearance(previous,patch){
  const prev=sanitize(previous),p=plain(patch),po=plain(p.overrides),overrides=copyOver(prev.overrides);
- for(const sec of ['common','dark','light'])if(po[sec]!==undefined)overrides[sec]=plain(po[sec]);
- return sanitize({theme:p.theme!==undefined?p.theme:prev.theme,mode:p.mode!==undefined?p.mode:prev.mode,statusBar:p.statusBar!==undefined?p.statusBar:prev.statusBar,overrides});
+ for(const sec of ['common','dark','light'])if(isObj(po[sec]))overrides[sec]=po[sec];
+ return sanitize({theme:THEME_IDS.includes(p.theme)?p.theme:prev.theme,mode:MODES.includes(p.mode)?p.mode:prev.mode,statusBar:typeof p.statusBar==='boolean'?p.statusBar:prev.statusBar,overrides});
 }
 
 // ---- migration from the old preferences ----
@@ -160,7 +163,8 @@ const OLD_PRESET_ACCENT={
  graphite:{dark:'#c1c2b8',light:'#414f48'},ocean:{dark:'#8fb4d9',light:'#2f5f8a'},forest:{dark:'#9cc49a',light:'#3d6a3c'},plum:{dark:'#c3a6d9',light:'#6a4a85'},
  rose:{dark:'#e0a3b0',light:'#984358'},teal:{dark:'#86c7c0',light:'#2a6c66'},gold:{dark:'#d9bf7a',light:'#765e1d'}
 };
-// Per mode: the color as is if it passes, else moved lighter (dark) / darker (light) until it does; null if nothing works.
+// Per mode: the color as is if it passes, else moved lighter (dark) / darker (light) until it does. Returns null if nothing
+// works; the caller then sets no override for that mode, which leaves the mode on the theme's own accent.
 function fitAccent(theme,mode,hex){
  const probe={theme,mode,overrides:EMPTY()},ok=c=>validateOverride(probe,'--accent',c,mode).ok;
  if(ok(hex))return hex.toLowerCase();

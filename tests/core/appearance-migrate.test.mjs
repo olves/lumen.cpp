@@ -103,8 +103,8 @@ describe('override validation', () => {
     assert.equal(validateOverride(base, '--font-ui', 'url(http://x)').ok, false);
   });
   test('font values need balanced quotes', () => {
-    for (const v of ['"Open Sans', 'Open Sans"', "'Foo", '"a" "b', 'a,"b\'']) assert.equal(validateOverride(base, '--font-ui', v).ok, false, v);
-    for (const v of ['"Open Sans"', "'Foo Bar',serif", 'Inter']) assert.equal(validateOverride(base, '--font-ui', v).ok, true, v);
+    for (const v of ['"Open Sans', 'Open Sans"', "'Foo", '"a" "b', "a,\"b'", "Foo's Font"]) assert.equal(validateOverride(base, '--font-ui', v).ok, false, v);
+    for (const v of ['"Open Sans"', "'Foo Bar',serif", 'Inter', `"Foo's Font"`,"'Say \"hi\"'"]) assert.equal(validateOverride(base, '--font-ui', v).ok, true, v);
   });
   test('modes are validated separately and a mode switch never drops the other mode', () => {
     let a = { ...base, mode: 'dark' };
@@ -157,7 +157,12 @@ describe('override validation', () => {
     assert.equal(m2.theme, 'pro'); assert.deepEqual(m2.overrides, prev.overrides);
     const m3 = A.mergeAppearance(prev, { overrides: { common: {} } });
     assert.deepEqual(m3.overrides, { common: {}, dark: prev.overrides.dark, light: prev.overrides.light });
-    assert.equal(A.mergeAppearance(prev, { theme: 'nope' }).theme, 'native');
+    // invalid values keep the PREVIOUS value, never reset to defaults
+    const bad = A.mergeAppearance(prev, { theme: 'nope', mode: 'x', statusBar: 'yes', overrides: { dark: 5, light: [1], common: null } });
+    assert.deepEqual(bad, prev);
+    assert.deepEqual(A.mergeAppearance(prev, 'garbage'), prev);
+    assert.equal(A.mergeAppearance(prev, { theme: 'reading', mode: 'nope' }).mode, 'light');
+    assert.deepEqual(A.mergeAppearance(prev, { overrides: { dark: { '--accent': 'red', '--radius': '3px' } } }).overrides.dark, {}, 'a valid section replaces it; invalid entries are dropped');
   });
 });
 
