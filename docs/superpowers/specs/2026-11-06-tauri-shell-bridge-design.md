@@ -119,7 +119,9 @@ lumen-core (node.exe + mevcut .cjs modülleri, Electron'suz)
 - **Yaşam döngüsü:**
   - Rust çekirdeği başlatır, `ready` mesajını bekler.
   - Çekirdek çökerse arayüze bugünkü `fatal` olayı gönderilir, bir kez yeniden başlatma denenir.
-  - Pencere kapanırken çekirdeğe `shutdown` gönderilir, 5 sn içinde kapanmazsa süreç sonlandırılır.
+  - Pencere kapanırken çekirdeğe `shutdown` gönderilir, 5 sn içinde kapanmazsa süreç sonlandırılır. Bu yüzden `core-host` motorun kapanışını 4 sn ile sınırlar (`core.stop({cap:4000})`; Electron'da 8 sn kalır): `cancel`/`unload`/`clearOnExit` bu sürede biter ya da motor sonlandırılır, `core.lock` süreç çıkmadan önce bırakılır.
+  - Platform istek kimlikleri süreç başına rastgele bir önek taşır (`p<nonce>-<n>`); Rust her isteği gönderen çekirdeğin kuşağıyla (generation) yanıtlar ve ölmüş bir çekirdeğin isteğine verilen yanıtı yeni çekirdeğe hiç yazmaz. Çekirdek ölünce tarayıcı paneli ve gizli işleyici kapatılır, proxy oturumu silinir; yeni çekirdek kendi proxy'siyle temiz başlar.
+  - Veri klasörü başka bir çalışan Lumen'deyse `core-host` 3 koduyla çıkar; kabuk yeniden başlatmaz, nedeni hemen yerel bir hata kutusunda gösterir (Electron: `dialog.showErrorBox`) ve çıkar.
   - Çekirdek, Windows Job Object ile kabuğa bağlanır; kabuk ölürse çekirdek de ölür. `lumen-host` bugün de Job Object kullanıyor.
 
 ### 5.4 Electron özelliklerinin Tauri karşılıkları
@@ -169,7 +171,7 @@ lumen-core (node.exe + mevcut .cjs modülleri, Electron'suz)
 
 ## 7. Veri uyumluluğu
 
-- Veri klasörü aynı kalır: `%LOCALAPPDATA%\lumen.cpp`. Dosya biçimleri değişmez. İki kabuk aynı klasörü kullanabilir, ama **aynı anda değil**. *(Benim kararım)* Ortak kilit çekirdekte tutulur: `core.cjs` açılışta veri klasöründe `core.lock` dosyasını PID ile oluşturur (`wx`); dosya varsa ve o PID canlıysa açılmayı reddeder. Kilit iki kabukta da aynı kodla çalışır, Electron'un kendi tek örnek kilidi de yerinde kalır. Electron'a Windows çağrısı eklemek gerekmez.
+- Veri klasörü aynı kalır: `%LOCALAPPDATA%\lumen.cpp`. Dosya biçimleri değişmez. İki kabuk aynı klasörü kullanabilir, ama **aynı anda değil**. *(Benim kararım)* Ortak kilit çekirdekte tutulur: `core.cjs` açılışta veri klasöründe `core.lock` dosyasını PID ile oluşturur (`wx`); dosya varsa ve o PID canlıysa açılmayı reddeder. Windows PID'leri yeniden kullandığı için dosya PID'in yanında süreç adını ve başlama zamanını da tutar; çakışma anında canlı sürecin adı Lumen'inki değilse (`node.exe`, `lumen.cpp.exe`, `lumen.exe`) ya da başlama zamanı tutmuyorsa kilit bayat sayılır. Yalnızca PID içeren eski dosyalar da okunur. Kilit iki kabukta da aynı kodla çalışır, Electron'un kendi tek örnek kilidi de yerinde kalır. Electron'a Windows çağrısı eklemek gerekmez.
 - **Gizli anahtarlar** *(benim kararım)*: Tauri kabuğu yeni bir biçim üretmez, Electron'un biçimini **hem okur hem yazar**.
   - Bugünkü değerler Electron `safeStorage` biçiminde: `v10` önekli AES-256-GCM. Anahtar `%APPDATA%\lumen.cpp\Local State` içindeki `os_crypt.encrypted_key`'de, DPAPI ile korunuyor.
   - Rust bu anahtarı DPAPI ile açar, aynı biçimde şifreler ve çözer. Böylece Electron yapısında **hiçbir değişiklik gerekmez** ve kabuklar arasında geçiş yapmak anahtarları kaybettirmez.

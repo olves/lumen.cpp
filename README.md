@@ -114,6 +114,8 @@ node tests/harness/measure.mjs --shell tauri --out ..\work\measure\tauri.json   
 
 The UI scenarios use a chat model that is already installed (read-only hard link; nothing is downloaded) and local mock servers for downloads, MCP, cloud providers and the image engine. Results of both shells and the Electron/Tauri comparison are in [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md).
 
+The Electron package ships the whole `app/` folder, including files only the Tauri shell or the tests use: `testhook.cjs`, `core-host.cjs`, `webproxy.cjs` and `bridge-tauri.js`. They are inert there: Electron never starts `core-host.cjs`, the proxy or the bridge, and the test overrides of `testhook.cjs` (test files and save folder, the local test host, the download base) take effect only with `--ui-check`, exactly like the existing update overrides (`LUMEN_UPDATE_API`, `LUMEN_UPDATE_KEY`).
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Releases up to and including v1.0.3-beta were published under the MIT License. Third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Downloaded models keep their own licenses.
