@@ -7,7 +7,7 @@ Object.assign(paths,{sliders:'M3 5h7M13 5h2M3 13h2M8 13h7M10 3v4M5 11v4',close:'
 Object.assign(translations,{
  runSettings:['Run settings','Çalıştırma ayarları'],runScope:['This conversation · applies from the next reply','Bu sohbet · bir sonraki yanıttan itibaren geçerli'],
  runOpen:['Run settings for this conversation','Bu sohbetin çalıştırma ayarları'],runClose:['Close','Kapat'],runCustom:['Changed for this conversation','Bu sohbet için değiştirildi'],
- runResponse:['RESPONSE','YANIT'],runInstructions:['INSTRUCTIONS','TALİMATLAR'],runAdvanced:['Advanced sampling','Gelişmiş örnekleme'],runModel:['MODEL AND MEMORY','MODEL VE BELLEK'],
+ runResponse:['Response','Yanıt'],runInstructions:['Instructions','Talimatlar'],runAdvanced:['Advanced sampling','Gelişmiş örnekleme'],runModel:['Model and memory','Model ve bellek'],
  runTemperature:['Temperature','Sıcaklık'],runTemperatureHint:['Lower is steadier and repeats the likeliest words; higher varies more and can drift.','Düşük değer daha tutarlıdır, en olası kelimeleri seçer; yüksek değer daha çok çeşitlenir ve dağılabilir.'],
  runThinkingHint:['Reason before answering, if the model supports it.','Model destekliyorsa yanıt vermeden önce düşünür.'],
  runInstructionsHint:['The system prompt of this conversation. {{current_date}} becomes today’s date, for example: {date}.','Bu sohbetin sistem talimatı. {{current_date}} bugünün tarihine dönüşür, örneğin: {date}.'],

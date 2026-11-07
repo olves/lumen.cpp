@@ -2,7 +2,7 @@
 // Runtime → Performance (GPU memory, speculative generation, compact context memory) and per-model MTP drafts in the model
 // details. Settings take effect when the model next loads; nothing is checked online until the user clicks.
 Object.assign(translations,{
- performanceLabel:['PERFORMANCE','PERFORMANS'],
+ performanceLabel:['Performance','Performans'],
  gpuMemory:['GPU memory','GPU belleği'],gpuMemoryHint:['Auto fits as much of the model as the GPU can hold and keeps the rest in RAM, including the experts of large MoE models. All on GPU fails over to the CPU when the model does not fit.','Otomatik, modelin GPU’ya sığan kısmını GPU’ya, kalanını RAM’e koyar; büyük MoE modellerinin uzmanları dahil. Hepsi GPU’da seçeneği model sığmazsa CPU’ya düşer.'],
  gpuAuto:['Auto','Otomatik'],gpuAll:['All on GPU','Hepsi GPU’da'],gpuCpu:['CPU only','Yalnızca CPU'],
  fastGeneration:['Faster generation','Hızlı üretim'],fastGenerationHint:['Guesses upcoming text from the conversation and checks several tokens in one step. Answers stay the same. Most useful when the model repeats code or text you gave it.','Gelecek metni sohbetten tahmin eder ve birkaç token’ı tek adımda doğrular. Yanıtlar değişmez. En çok, model verdiğin kodu veya metni tekrar yazarken işe yarar.'],

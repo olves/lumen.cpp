@@ -4,7 +4,7 @@
 // call; a cloud model shows where the conversation goes instead of "Local response".
 Object.assign(paths,{cloud:'M5 14h8a3 3 0 00.4-6A4.5 4.5 0 004.7 6.6 3.2 3.2 0 005 14z',plug:'M7 2v4M11 2v4M5 6h8v3a4 4 0 01-8 0V6zM9 13v3',server:'M3 3h12v5H3zM3 10h12v5H3zM6 5.5h.01M6 12.5h.01'});
 Object.assign(translations,{
- connectionsLabel:['CONNECTIONS','BAĞLANTILAR'],cloudTitle:['Cloud models','Bulut modelleri'],mcpTitle:['MCP servers','MCP sunucuları'],apiTitle:['Local API','Yerel API'],
+ connectionsLabel:['Connections','Bağlantılar'],cloudTitle:['Cloud models','Bulut modelleri'],mcpTitle:['MCP servers','MCP sunucuları'],apiTitle:['Local API','Yerel API'],
  cloudIntro:['Optional. Use models from a provider with your own API key.','İsteğe bağlı. Kendi API anahtarınla bir sağlayıcının modellerini kullan.'],
  cloudPrivacy:['Off by default. Only conversations where you pick a cloud model are sent, and only to that provider: the messages, the conversation’s instructions, selected skills and document excerpts. Photos go as their recognized text. Research, project folders and connected tools always run on local models. Keys are encrypted on this computer.','Varsayılan olarak kapalı. Yalnızca bulut modeli seçtiğin sohbetler, yalnızca o sağlayıcıya gönderilir: mesajlar, sohbetin talimatı, seçili skill’ler ve belge alıntıları. Fotoğraflar tanınan metin olarak gider. Araştırma, proje klasörü ve bağlı araçlar her zaman yerel modellerle çalışır. Anahtarlar bu bilgisayarda şifrelenir.'],
  cloudEnable:['Use cloud models','Bulut modellerini kullan'],cloudEnableHint:['Adds the models you choose below to the model menu.','Aşağıda seçtiğin modelleri model menüsüne ekler.'],

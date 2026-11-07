@@ -20,7 +20,7 @@ Object.assign(translations,{
  pluginOneSkill:['1 skill','1 skill'],pluginSkillsN:['{n} skills','{n} skill'],pluginAssistantNamed:['assistant “{name}”','“{name}” asistanı'],
  pluginOnline:['Uses the internet: {host}','İnternet kullanır: {host}'],pluginOffline:['Works offline','İnternetsiz çalışır'],pluginNeedsImages:['Needs an image model (Settings → Images)','Bir görsel modeli gerekir (Ayarlar → Görseller)'],
  pluginInstalledBadge:['Added','Eklendi'],pluginStartChat:['Start a chat','Sohbet başlat'],pluginAdd:['Add','Ekle'],
- pluginAdvanced:['Install from a folder, file or address','Klasörden, dosyadan veya adresten kur'],pluginAdvancedHint:['For plugins you made or got from someone you trust.','Kendi yaptığın veya güvendiğin birinden aldığın plugin’ler için.'],pluginOthers:['OTHER INSTALLED PLUGINS','DİĞER KURULU PLUGIN’LER'],
+ pluginAdvanced:['Install from a folder, file or address','Klasörden, dosyadan veya adresten kur'],pluginAdvancedHint:['For plugins you made or got from someone you trust.','Kendi yaptığın veya güvendiğin birinden aldığın plugin’ler için.'],pluginOthers:['Other installed plugins','Diğer kurulu plugin’ler'],
 });
 
 // ---------- Settings → Plugins ----------

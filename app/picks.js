@@ -13,7 +13,7 @@ Object.assign(translations,{
  capThinkingAlways:['Always reasons before answering.','Her zaman yanıt vermeden önce düşünür.'],
  capVisionHint:['Can look at photos once its vision file is downloaded (Library → Vision).','Görme dosyası indirildiğinde fotoğraflara bakabilir (Kütüphane → Görme).'],
  capToolsHint:['Its chat template supports tool calls.','Sohbet şablonu araç çağrılarını destekliyor.'],
- capsHeading:['WHAT IT CAN DO','NELER YAPABİLİR'],capYes:['yes','var'],capNo:['no','yok'],capUnknown:['unknown','bilinmiyor'],
+ capsHeading:['What it can do','Neler yapabilir'],capYes:['yes','var'],capNo:['no','yok'],capUnknown:['unknown','bilinmiyor'],
  capsSource:['From the model’s chat template on Hugging Face; after download, from the file.','Hugging Face’teki sohbet şablonundan; indirildikten sonra dosyanın kendisinden.'],
  capsNone:['Not known yet: this repository reports no chat template.','Henüz bilinmiyor: bu depo sohbet şablonu bildirmiyor.'],
 });
