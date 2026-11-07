@@ -34,6 +34,23 @@ function checkUrl(raw,{allowPrivate=false}={}){
 }
 function webError(code,message,extra={}){return Object.assign(new Error(message),{code,...extra});}
 
+// Resolves a host and validates every answer with the same rules as the Electron panel hook (any private answer rejects).
+// Returns the validated addresses so callers can connect to exactly those (no second resolution). `resolver(host)` may be
+// injected (tests); it returns addresses or {address} objects.
+async function resolveHost(hostname,{resolver}={}){
+ const host=String(hostname||'').replace(/^\[|\]$/g,'');
+ if(!host||blockedHostname(host))throw webError('blocked','Local and private network addresses are blocked.');
+ if(net.isIP(host)){if(privateAddress(host))throw webError('blocked','Local and private network addresses are blocked.');return [host];}
+ let answers;
+ try{answers=resolver?await resolver(host):await dns.promises.lookup(host,{all:true,verbatim:true});}catch{throw webError('dns','Could not resolve '+host+'.');}
+ const list=(answers||[]).map(a=>typeof a==='string'?a:a&&a.address).filter(Boolean);
+ if(!list.length)throw webError('dns','Could not resolve '+host+'.');
+ if(!list.every(a=>!privateAddress(a)))throw webError('blocked','Local and private network addresses are blocked.');
+ return list;
+}
+// Rejects (throws) when the host is a local/private name or resolves to a private address.
+async function checkHost(hostname,options){await resolveHost(hostname,options);}
+
 // lookup hook for http(s).request: resolves, rejects private answers and connects to the checked address.
 function guardedLookup(allowPrivate){
  return (hostname,options,callback)=>{
@@ -251,4 +268,4 @@ function createWeb({render}={}){
  return {search,readPage,checkUrl,providerLabel:id=>providers[id]?.label||id,clear(){searchCache.clear();pageCache.clear();},providers:Object.fromEntries(Object.entries(providers).map(([id,p])=>[id,{label:p.label,needsKey:p.needsKey,scope:p.scope}]))};
 }
 
-module.exports={createWeb,checkUrl,privateAddress,blockedHostname,guardedFetch,extractReadable,siteOf};
+module.exports={createWeb,checkUrl,checkHost,resolveHost,privateAddress,blockedHostname,guardedFetch,extractReadable,siteOf};
