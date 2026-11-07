@@ -109,7 +109,9 @@ for (const shell of shells) {
         const { cdp } = app;
         const loaded = (url, ms = 30000) => cdp.waitFor(`(s => s.url === ${JSON.stringify(url)} && !s.loading)(browserState)`, ms);
         await cdp.evaluate(`openBrowser(${JSON.stringify(base + '/page1')}).then(() => 0)`);
-        await loaded(base + '/page1');
+        // Right after openBrowser the Tauri panel can briefly report the new URL as loaded before navigation starts;
+        // the page's own title proves the response arrived.
+        await cdp.waitFor(`(s => s.url === ${JSON.stringify(base + '/page1')} && !s.loading && s.title === '/page1')(browserState)`, 30000);
         assert.ok(requests.some(r => r.path === '/page1' && r.connection === 'close'), 'page1 came through the proxy');
         // A load that never ends, and a settle (browser.waitIdle, 15 s) waiting on it in the shell.
         await cdp.evaluate(`openBrowser(${JSON.stringify(base + '/slow')}); 0`);
