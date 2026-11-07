@@ -87,7 +87,12 @@ function createRpcPlatform({data, assetBase, appDir, updateMode, version, send =
   // browser.configure tells the shell its address, the realm of its challenge and, in test mode only, the test server's host:port
   // (web.cjs allowTestHost). Requests wait for the proxy in the order they were made (then-callbacks of one promise run in order).
   let proxyStart = null;
-  const proxyReady = () => webProxy ? (proxyStart = proxyStart || Promise.resolve().then(webProxy)) : null;
+  // A proxy that failed to start is not kept: the next browser request tries again.
+  const proxyReady = () => {
+    if (!webProxy) return null;
+    if (!proxyStart) { const start = proxyStart = Promise.resolve().then(webProxy); start.catch(() => { if (proxyStart === start) proxyStart = null; }); }
+    return proxyStart;
+  };
   const viaProxy = (name, call) => (...args) => { const ready = proxyReady(); return ready ? ready.then(proxy => call(proxy, ...args)) : call(null, ...args); };
   for (const name of FUNCTIONS.filter(n => n.startsWith('browser.') && !CALLBACK_NAMES.includes(n) && n !== 'browser.render')) set(name, viaProxy(name, (proxy, ...args) => rpc(name, args)));
   set('browser.configure', viaProxy('browser.configure', (proxy, settings) => rpc('browser.configure', proxy ? [settings, {proxy: proxy.url, realm: proxy.realm, testHost: require('./web.cjs').allowedTestHost()}] : [settings])));

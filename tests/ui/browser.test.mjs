@@ -74,6 +74,15 @@ function route(req, res, tls) {
     case '/popup-page': return page('Popup', '<a href="/popup-target" target="_blank" style="font-size:20px">Open popup</a>');
     case '/popup-target': return page('Popup target', '<p>came from a pop-up</p>');
     case '/dialogs': return page('Dialogs', '<p>dialogs</p>');
+    // A site that sends the proxy's mark itself must not be shown as blocked.
+    case '/spoof': res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-lumen-proxy': 'blocked' }); return res.end(html('Spoof', '<p>a normal page</p>'));
+    // Privacy headers beyond the page target: a cross-site frame (https inside an http page: another site, so another process)
+    // with an image and a worker that fetches.
+    case '/xframe': return page('Cross frame', `<iframe src="https://127.0.0.1:${P}/frame-headers"></iframe>`);
+    case '/frame-headers': return page('Frame', '<img src="/frame-img.png">', `new Worker('/worker.js');`);
+    case '/frame-img.png': res.writeHead(200, { 'content-type': 'image/gif' }); return res.end(Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'));
+    case '/worker.js': res.writeHead(200, { 'content-type': 'text/javascript' }); return res.end(`fetch('/worker-fetch').catch(()=>{});`);
+    case '/worker-fetch': res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('ok');
     // Research: a page whose text exists only after its script runs, and whose page world lies about innerText.
     case '/js': return page('Secret page', '<p>' + 'This page loads its content with a script. '.repeat(4) + '</p><div id="root"></div>',
       `fetch('/js-data').then(r=>r.text()).then(t=>{const p=document.createElement('p');p.textContent=t;document.getElementById('root').append(p);});
@@ -124,6 +133,30 @@ async function attachPanel(urlPrefix) {
     await sleep(150);
   }
   throw new Error('panel target not found: ' + (last && last.message));
+}
+
+// Tauri: what a browser webview's page (panel or hidden renderer) can reach of Lumen. Nothing: no bridge, no command, no event
+// listening, no Lumen protocol, native script dialogs that never block.
+async function assertNoBridge(page, what) {
+  const surface = await page.evaluate(`({ global: typeof window.__TAURI__, lumen: typeof window.lumen,
+    natives: [alert, confirm, prompt].map(f => Function.prototype.toString.call(f).includes('[native code]')) })`);
+  assert.equal(surface.global, 'undefined', what + ': no window.__TAURI__');
+  assert.equal(surface.lumen, 'undefined', what + ': no window.lumen');
+  assert.deepEqual(surface.natives, [true, true, true], what + ': alert/confirm/prompt are not replaced by a plugin script');
+  // Script dialogs never block the page (Electron: disableDialogs).
+  const t0 = Date.now();
+  assert.equal(await page.evaluate('confirm("x")'), false);
+  assert.ok(Date.now() - t0 < 3000, what + ': confirm returned at once');
+  const attempt = (cmd, args) => page.evaluate(`(window.__TAURI_INTERNALS__ ? window.__TAURI_INTERNALS__.invoke(${js(cmd)}, ${js(args)}) : Promise.reject(Error('no internals'))).then(v => ({ok: true, v: JSON.stringify(v)}), e => ({ok: false, e: String(e && e.message || e)}))`);
+  for (const [cmd, args] of [['lumen_call', { channel: 'preferences', args: [] }], ['lumen_call', { channel: 'browser', args: ['state'] }], ['window_action', { action: 'minimize' }], ['plugin:event|listen', { event: 'lumen-event', target: { kind: 'Any' }, handler: 1 }]]) {
+    const r = await attempt(cmd, args);
+    assert.equal(r.ok, false, `${what}: ${cmd} must be refused: ${JSON.stringify(r)}`);
+  }
+  // The Lumen protocols answer these webviews 403.
+  for (const url of ['http://lumen.localhost/index.html', 'http://lumen-artifact.localhost/']) {
+    const status = await page.evaluate(`fetch(${js(url)}).then(r => r.status, () => 'refused')`);
+    assert.ok(status === 403 || status === 'refused', `${what}: ${url}: ${status}`);
+  }
 }
 
 describe(`browser panel and renderer (${shell})`, () => {
@@ -263,6 +296,27 @@ describe(`browser panel and renderer (${shell})`, () => {
     await ev(`window.lumen.tools('update', {browser:{privacySignals:true}}).then(()=>0)`);
   });
 
+  test('privacy headers reach cross-site frames and their workers', async () => {
+    const before = requests.length;
+    const want = ['/frame-headers', '/frame-img.png', '/worker.js', '/worker-fetch'];
+    const seen = () => requests.slice(before).filter(r => r.tls && want.includes(r.path));
+    await open(`${base}/xframe`);
+    await loaded(`${base}/xframe`);
+    for (let i = 0; i < 80 && new Set(seen().map(r => r.path)).size < want.length; i++) await sleep(100);
+    assert.deepEqual([...new Set(seen().map(r => r.path))].sort(), [...want].sort(), 'the frame, its image, its worker and the worker fetch were requested over TLS');
+    for (const r of seen()) { assert.equal(r.headers['sec-gpc'], '1', r.path); assert.equal(r.headers.dnt, '1', r.path); }
+  });
+
+  test('a site cannot pose as the proxy', async () => {
+    for (const url of [`${base}/spoof`, `https://127.0.0.1:${P}/spoof`]) {
+      await open(url);
+      await loaded(url);
+      await waitState(`s.title==='Spoof'`);
+      await sleep(300);
+      assert.equal((await browser('state')).error, null, url + ' must not show as blocked');
+    }
+  });
+
   test('download denied', async () => {
     await open(`${base}/download-page`);
     await loaded(`${base}/download-page`);
@@ -295,23 +349,7 @@ describe(`browser panel and renderer (${shell})`, () => {
     await open(`${base}/dialogs`);
     await loaded(`${base}/dialogs`);
     await attachPanel(`${base}/dialogs`);
-    const surface = await panel.evaluate(`({ global: typeof window.__TAURI__, lumen: typeof window.lumen,
-      natives: [alert, confirm, prompt].map(f => Function.prototype.toString.call(f).includes('[native code]')) })`);
-    assert.equal(surface.global, 'undefined', 'no window.__TAURI__');
-    assert.equal(surface.lumen, 'undefined', 'no window.lumen');
-    assert.deepEqual(surface.natives, [true, true, true], 'alert/confirm/prompt are not replaced by a plugin script');
-    // Script dialogs never block the page (Electron: disableDialogs).
-    const t0 = Date.now();
-    assert.equal(await panel.evaluate('confirm("x")'), false);
-    assert.ok(Date.now() - t0 < 3000, 'confirm returned at once');
-    const attempt = (cmd, args) => panel.evaluate(`(window.__TAURI_INTERNALS__ ? window.__TAURI_INTERNALS__.invoke(${js(cmd)}, ${js(args)}) : Promise.reject(Error('no internals'))).then(v => ({ok: true, v: JSON.stringify(v)}), e => ({ok: false, e: String(e && e.message || e)}))`);
-    for (const [cmd, args] of [['lumen_call', { channel: 'preferences', args: [] }], ['lumen_call', { channel: 'browser', args: ['state'] }], ['window_action', { action: 'minimize' }], ['plugin:event|listen', { event: 'lumen-event', target: { kind: 'Any' }, handler: 1 }]]) {
-      const r = await attempt(cmd, args);
-      assert.equal(r.ok, false, `${cmd} must be refused in the panel: ${JSON.stringify(r)}`);
-    }
-    // The Lumen protocols answer the panel 403.
-    const status = await panel.evaluate(`fetch('http://lumen.localhost/index.html').then(r => r.status, () => 'refused')`);
-    assert.ok(status === 403 || status === 'refused', 'lumen protocol: ' + status);
+    await assertNoBridge(panel, 'panel');
   });
 
   test('JavaScript setting recreates the panel at the same address', async () => {
@@ -370,6 +408,16 @@ describe(`browser panel and renderer (${shell})`, () => {
     assert.deepEqual(trapHits, []);
     const reply = await ev("[...document.querySelectorAll('.message.assistant')].at(-1)?.textContent || ''");
     console.log('# the model ' + (/ZEPHYR-4711/i.test(reply) ? 'quoted' : 'did not quote') + ' the secret word');
+  });
+
+  // The hidden renderer stays for a minute after a render, still showing the page it read: the same checks as the panel.
+  test('renderer page has no bridge, no commands and native dialogs', { skip: (shell !== 'tauri' && 'Tauri only') || (!model && 'no installed model') }, async () => {
+    const renderer = await connect(panelPort(), { target: new RegExp('^' + `${base}/js`.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')), timeoutMs: 10000 });
+    try {
+      assert.equal(await renderer.evaluate('document.title'), 'Secret page');
+      assert.equal((await browser('state')).url === `${base}/js`, false, 'this target is the renderer, not the panel');
+      await assertNoBridge(renderer, 'renderer');
+    } finally { renderer.close(); }
   });
 
   // Electron (unchanged, noted in the task report): its hidden renderer window, alive for a minute after the last render, keeps

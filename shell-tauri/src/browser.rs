@@ -367,9 +367,11 @@ struct View {
     page: Arc<Page>,
 }
 
+/// A job of the renderer's queue: a render (url) or clearing the profile (None), which destroys the renderer and so must never
+/// run while a render is in flight.
 struct RenderJob {
     id: String,
-    url: String,
+    url: Option<String>,
 }
 
 pub struct Browser {
@@ -437,7 +439,10 @@ fn start(app: &AppHandle) -> Arc<Browser> {
             }
             match method.as_str() {
                 "browser.render" => {
-                    let _ = b.renders.send(RenderJob { id, url: args[0].as_str().unwrap_or_default().to_string() });
+                    let _ = b.renders.send(RenderJob { id, url: Some(args[0].as_str().unwrap_or_default().to_string()) });
+                }
+                "browser.clearData" => {
+                    let _ = b.renders.send(RenderJob { id, url: None });
                 }
                 // These wait for pages: beside the queue, like Electron's promises.
                 "browser.waitIdle" | "browser.evalIsolated" => {
@@ -457,7 +462,11 @@ fn start(app: &AppHandle) -> Arc<Browser> {
     let b = browser.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(job) = jobs.recv().await {
-            let answer = if b.cancelled.lock().map(|mut c| c.remove(&job.id)).unwrap_or(false) { Err("Cancelled".to_string()) } else { b.render_page(&job.id, &job.url).await };
+            let answer = match &job.url {
+                None => b.clear_data().await.map(|_| Value::Null),
+                Some(_) if b.cancelled.lock().map(|mut c| c.remove(&job.id)).unwrap_or(false) => Err("Cancelled".to_string()),
+                Some(url) => b.render_page(&job.id, url).await,
+            };
             b.answer(job.id, answer);
         }
     });
@@ -672,7 +681,6 @@ impl Browser {
                 .await?;
                 Ok(Value::Bool(true))
             }
-            "browser.clearData" => self.clear_data().await.map(|_| Value::Null),
             _ => Err("Invalid platform arguments.".into()),
         }
     }
@@ -754,10 +762,12 @@ impl Browser {
     }
 
     /// Sec-GPC: 1 and DNT: 1 on every request of the page while Settings → Browser → privacy signals is on (Electron:
-    /// onBeforeSendHeaders). Set through DevTools, so HTTPS requests carry them too.
+    /// onBeforeSendHeaders). Set through DevTools, so HTTPS requests carry them too. DevTools reaches the page target only; the
+    /// WebResourceRequested handler in harden() adds the same headers to frames in other processes and to workers.
     async fn headers(&self, view: &View) -> Result<(), String> {
         let headers = if self.privacy.load(Ordering::SeqCst) { json!({"Sec-GPC": "1", "DNT": "1"}) } else { json!({}) };
-        cdp(&view.handle, "Network.enable", json!({})).await?;
+        // The Network domain is only needed for the headers: keep its event buffers tiny (nothing reads them).
+        cdp(&view.handle, "Network.enable", json!({"maxTotalBufferSize": 1024, "maxResourceBufferSize": 512, "maxPostDataSize": 0})).await?;
         cdp(&view.handle, "Network.setExtraHTTPHeaders", json!({"headers": headers})).await?;
         Ok(())
     }
@@ -1133,7 +1143,9 @@ async fn harden(browser: Arc<Browser>, view: &View, session: Session) -> Result<
                     let mut uri = PWSTR::null();
                     args.Request()?.Uri(&mut uri)?;
                     let uri = take_pwstr(uri);
-                    if p.target.lock().map(|t| *t == uri).unwrap_or(false) {
+                    // Only a plain-http document can carry the proxy's own mark: inside a CONNECT tunnel (https) the header can only
+                    // come from the site, and the proxy strips it from what sites send over http.
+                    if uri.starts_with("http:") && p.target.lock().map(|t| *t == uri).unwrap_or(false) {
                         let headers = args.Response()?.Headers()?;
                         let mut has = BOOL(0);
                         let name = HSTRING::from("X-Lumen-Proxy");
@@ -1151,6 +1163,24 @@ async fn harden(browser: Arc<Browser>, view: &View, session: Session) -> Result<
             }
             Err(_) => ok = false,
         }
+        // Sec-GPC / DNT on every request of every source kind (frames, cross-site frames in their own process, workers): the
+        // DevTools headers (Browser::headers) reach the page target only. This handler only adds headers; it never answers or
+        // blocks a request (the proxy does the filtering).
+        let signals = WebResourceRequestedEventHandler::create(Box::new(|_, args| {
+            let Some(args) = args else { return Ok(()) };
+            if BROWSER.get().map(|b| b.privacy.load(Ordering::SeqCst)).unwrap_or(false) {
+                let headers = args.Request()?.Headers()?;
+                headers.SetHeader(&HSTRING::from("Sec-GPC"), &HSTRING::from("1"))?;
+                headers.SetHeader(&HSTRING::from("DNT"), &HSTRING::from("1"))?;
+            }
+            Ok(())
+        }));
+        let every = HSTRING::from("*");
+        let filtered = match core.cast::<ICoreWebView2_22>() {
+            Ok(core22) => core22.AddWebResourceRequestedFilterWithRequestSourceKinds(&every, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL),
+            Err(_) => core.AddWebResourceRequestedFilter(&every, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL),
+        };
+        ok &= filtered.is_ok() && core.add_WebResourceRequested(&signals, &mut token).is_ok();
         let p = page.clone();
         let completed = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
             let Some(args) = args else { return Ok(()) };

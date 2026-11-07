@@ -314,6 +314,22 @@ describe('core host', () => {
     assert.deepEqual(popups, ['https://c.example/p']);
   });
 
+  test('a proxy that fails to start is tried again on the next browser request', async () => {
+    const require = createRequire(import.meta.url);
+    const { createRpcPlatform } = require(hostScript);
+    const sent = [];
+    let attempts = 0;
+    const webProxy = async () => { attempts++; if (attempts === 1) throw Error('port in use'); return { url: 'http://lumen:t@127.0.0.1:6', realm: 'lumen-x' }; };
+    const { platform } = createRpcPlatform({ data: freshDir('rpc-retry'), assetBase: 'x://', appDir: 'x', updateMode: 'full', version: '1', send: m => sent.push(m), webProxy });
+    await assert.rejects(platform.browser.configure({}), /port in use/);
+    assert.equal(sent.length, 0);
+    platform.browser.configure({});
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(attempts, 2);
+    assert.deepEqual(sent.map(m => m.method), ['browser.configure']);
+    assert.equal(sent[0].args[1].proxy, 'http://lumen:t@127.0.0.1:6');
+  });
+
   test('LUMEN_TEST_ALLOW_HOST takes effect only with --ui-check (core checks, proxy and the testHost given to the shell)', async () => {
     const target = 'http://127.0.0.1:' + 47321 + '/page';
     const run = async extra => {

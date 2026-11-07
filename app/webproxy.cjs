@@ -89,7 +89,8 @@ function startProxy({resolver,__testDial}={}){
    const fail=()=>{upstream.destroy();if(!res.headersSent)reply(res,502,textHeaders('gateway'),'Bad gateway');else res.destroy();};
    out.on('error',fail);
    out.on('response',up=>{
-    const h=without(up.headers);h.connection='close';
+    // X-Lumen-Proxy belongs to the proxy's own replies: a site cannot claim it.
+    const h=without(up.headers);delete h['x-lumen-proxy'];h.connection='close';
     res.writeHead(up.statusCode,up.statusMessage,h);up.pipe(res);up.on('error',fail);
    });
    res.on('close',()=>{out.destroy();upstream.destroy();});

@@ -242,3 +242,15 @@ test('LUMEN_TEST_ALLOW_HOST seam: nothing local passes unless allowTestHost name
  }finally{web.allowTestHost(null);server.close();other.close();}
  assert.equal(web.allowedTestHost(),null);
 });
+
+test('a site cannot claim the proxy mark: X-Lumen-Proxy from upstream is dropped',async()=>{
+ const origin=http.createServer((req,res)=>{res.writeHead(200,{'content-type':'text/plain','X-Lumen-Proxy':'blocked','x-other':'kept'});res.end('spoof');});
+ await new Promise(r=>origin.listen(0,'127.0.0.1',r));
+ const __testDial=()=>({host:'127.0.0.1',port:origin.address().port});
+ try{
+  await withProxy({resolver:publicDns({}),__testDial},async(proxy,{port,auth})=>{
+   const r=await raw(port,getReq('http://example.test/',auth));
+   assert.match(r,/^HTTP\/1\.1 200 /);assert.match(r,/x-other: kept/i);assert.doesNotMatch(r,/x-lumen-proxy/i);
+  });
+ }finally{origin.close();}
+});
