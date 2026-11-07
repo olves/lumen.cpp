@@ -223,6 +223,7 @@ const tries = [
     // (a frame refused by the CSP still fires load with an error page; only the server log proves what was fetched)
     assert.ok(results.open === 'null', 'window.open returned ' + results.open);
     assert.equal(await art.evaluate('location.href'), href, 'the page did not navigate away');
+    assert.equal(await art.evaluate("document.getElementById('net')?.textContent"), 'network', 'the original document is still shown (not replaced by an error page)');
     assert.match(await app.cdp.evaluate('location.href'), MAIN_URL, 'the main window did not navigate');
     assert.equal((await artifactTargets()).length, 1, 'no extra window');
   });
@@ -367,5 +368,42 @@ const load = (tag, attr, url) => new Promise(r => { const e = document.createEle
     assert.deepEqual(hits, [], 'the local server saw: ' + hits.join(', '));
     for (const k of ['fetch', 'img', 'script']) assert.equal(results[k], 'blocked', k);
     if (shell === 'tauri') assert.equal(results.violations, 0, 'no CSP in this run: the request filter did the blocking');
+  });
+});
+
+// Fail closed (Tauri; the seam exists only in --ui-check builds): when the request filter cannot be installed, the open fails, the
+// window is destroyed and the NEXT open builds a fresh, guarded window instead of loading into an unguarded one.
+describe(`artifact fails closed (${shell})`, { skip: shell !== 'tauri' }, () => {
+  const dir = path.join(runDir, 'failclosed');
+  let started;
+  after(async () => { art?.close(); art = null; await started?.stop(); server.close(); server.closeAllConnections?.(); });
+  test('a failed hardening leaves no window and the next open rebuilds', async () => {
+    hits.length = 0;
+    if (!server.listening) { await new Promise(r => server.listen(0, '127.0.0.1', r)); serverPort = server.address().port; }
+    prepareData(path.join(dir, 'data'), null);
+    started = await launch({ shell, dataDir: path.join(dir, 'data'), env: { LUMEN_ARTIFACT_FAIL_HARDEN: '1', LUMEN_ARTIFACT_NO_CSP: '1' } });
+    app = started; activeDataDir = path.join(dir, 'data');
+    await started.cdp.waitFor('state.ready === true', 30000);
+    const open = code => started.cdp.evaluate(`window.lumen.artifact('open', ${JSON.stringify({ code, kind: 'html', title: 'Fail' })}).then(() => 'opened', e => 'rejected: ' + e.message)`);
+    const first = await open(html('<h1>never</h1>'));
+    assert.match(first, /^rejected: .*protected/, first);
+    assert.ok(!windowTitles(path.join(runDir, 'titles.ps1')).some(x => /· preview$/.test(x)), 'the unguarded window was destroyed');
+    const base = `http://127.0.0.1:${serverPort}`;
+    const script = `
+const R = window.__R = { violations: 0 }, base = ${JSON.stringify(base)};
+document.addEventListener('securitypolicyviolation', () => R.violations++);
+(async () => {
+  R.fetch = await fetch(base + '/after-failure').then(() => 'LOADED', () => 'blocked');
+  R.done = true;
+})();`;
+    assert.equal(await open(html('<h1 id="ok">second</h1>', script)), 'opened');
+    await artifactTargets();
+    await attach();
+    await art.waitFor('window.__R && window.__R.done === true', 20000);
+    const results = await art.evaluate('window.__R');
+    assert.equal(results.fetch, 'blocked');
+    assert.equal(results.violations, 0, 'no CSP in this run: the request filter did the blocking');
+    assert.deepEqual(hits, []);
+    assert.equal(await art.evaluate("document.getElementById('ok')?.textContent"), 'second');
   });
 });

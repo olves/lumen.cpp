@@ -4,6 +4,7 @@
 // dialogs or navigation. The document is served by the `lumen-artifact` protocol (http://lumen-artifact.localhost/ on Windows)
 // under a random 32-hex path prefix per document: http://lumen-artifact.localhost/<token>/ (Electron uses the token as host).
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::http::Response;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
@@ -20,15 +21,19 @@ struct Page {
 /// Only the latest document is kept (as in Electron).
 static PAGE: Mutex<Option<Page>> = Mutex::new(None);
 /// open() waits for the document to finish loading.
-static LOAD: Mutex<Option<std::sync::mpsc::Sender<()>>> = Mutex::new(None);
+static LOAD: Mutex<Option<(String, std::sync::mpsc::Sender<Result<(), String>>)>> = Mutex::new(None);
+/// Opens run one at a time.
+static OPEN_TURN: Mutex<()> = Mutex::new(());
+/// True only once every WebView2 handler and the request filter of the window are registered. An unguarded window is never reused.
+static GUARDED: AtomicBool = AtomicBool::new(false);
 const LOAD_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
 /// Test builds only (--ui-check, LUMEN_ARTIFACT_NO_CSP=1): the document is served without its CSP header, so that a test can see
 /// the request filter work on its own. Never set in a production build.
 #[cfg(feature = "ui-check")]
-static NO_CSP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static NO_CSP: AtomicBool = AtomicBool::new(false);
 fn csp_header() -> Option<&'static str> {
     #[cfg(feature = "ui-check")]
-    if NO_CSP.load(std::sync::atomic::Ordering::SeqCst) {
+    if NO_CSP.load(Ordering::SeqCst) {
         return None;
     }
     Some(CSP)
@@ -98,6 +103,9 @@ fn window_title(title: Option<&str>, kind: &str) -> String {
 
 /// Opens the preview, or reuses the open window for a new document.
 pub fn open(app: &AppHandle, html: String, kind: &str, title: Option<&str>, dark: bool) -> Result<Value, String> {
+    // One open at a time: an overlapping open waits its turn instead of racing for the window or for the load signal, so an
+    // earlier open is never failed by a later one (Electron's loadURL of the earlier one would be aborted).
+    let _turn = OPEN_TURN.lock().unwrap_or_else(|e| e.into_inner());
     let shell = app.state::<crate::Shell>();
     // No zero token when the system random source fails.
     let token = crate::platform::try_random_hex(16)?;
@@ -105,20 +113,29 @@ pub fn open(app: &AppHandle, html: String, kind: &str, title: Option<&str>, dark
     let page = Page { token: token.clone(), html: html.into_bytes() };
     let http: tauri::Url = format!("http://{HOST}/{token}/").parse().map_err(|_| "Invalid preview address.".to_string())?;
     #[cfg(feature = "ui-check")]
-    NO_CSP.store(shell.ui_check && std::env::var("LUMEN_ARTIFACT_NO_CSP").as_deref() == Ok("1"), std::sync::atomic::Ordering::SeqCst);
+    NO_CSP.store(shell.ui_check && std::env::var("LUMEN_ARTIFACT_NO_CSP").as_deref() == Ok("1"), Ordering::SeqCst);
+    // A window that is not (or no longer) guarded is never reused: it is destroyed and rebuilt (fail closed).
+    let mut existing = app.get_webview_window(LABEL);
+    if existing.is_some() && !GUARDED.load(Ordering::SeqCst) {
+        discard(app);
+        existing = None;
+    }
     // open() returns when the document has loaded (Electron: loadURL resolves).
     let (tx, rx) = std::sync::mpsc::channel();
-    *LOAD.lock().map_err(|_| "The preview is unavailable.".to_string())? = Some(tx);
-    if let Some(window) = app.get_webview_window(LABEL) {
+    *LOAD.lock().map_err(|_| "The preview is unavailable.".to_string())? = Some((token.clone(), tx));
+    let started = if let Some(window) = existing {
         // Reused window: its handlers are in place.
-        *PAGE.lock().map_err(|_| "The preview is unavailable.".to_string())? = Some(page);
-        window.set_title(&name).map_err(|e| e.to_string())?;
-        let _ = window.set_background_color(Some(bg));
-        window.navigate(http).map_err(|e| e.to_string())?;
-        if !shell.ui_check {
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-        }
+        (|| -> Result<(), String> {
+            *PAGE.lock().map_err(|_| "The preview is unavailable.".to_string())? = Some(page);
+            window.set_title(&name).map_err(|e| e.to_string())?;
+            let _ = window.set_background_color(Some(bg));
+            window.navigate(http).map_err(|e| e.to_string())?;
+            if !shell.ui_check {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+            Ok(())
+        })()
     } else {
         // A fresh window starts without a document (blank, nothing served: PAGE is empty). The document is set and loaded from
         // inside harden(), after every WebView2 handler is registered, so not even the first document runs unguarded.
@@ -140,7 +157,7 @@ pub fn open(app: &AppHandle, html: String, kind: &str, title: Option<&str>, dark
                         // Shown when the page has loaded (Electron: ready-to-show).
                         let _ = window.show();
                     }
-                    loaded();
+                    loaded(payload.url());
                 }
             });
         if let Some(main) = app.get_webview_window(crate::window::MAIN) {
@@ -152,23 +169,60 @@ pub fn open(app: &AppHandle, html: String, kind: &str, title: Option<&str>, dark
         } else {
             builder.visible(false)
         };
-        let window = builder.build().map_err(|e| e.to_string())?;
-        if let Err(e) = harden(&window, page, http) {
-            let _ = window.destroy();
-            return Err(e);
+        match builder.build() {
+            Ok(window) => harden(&window, page, http),
+            Err(e) => Err(e.to_string()),
         }
-    }
-    match rx.recv_timeout(LOAD_LIMIT) {
+    };
+    // Anything but a loaded, guarded document: the window goes and nothing stays served (fail closed).
+    let outcome = started.and_then(|_| match rx.recv_timeout(LOAD_LIMIT) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err("The preview did not load.".to_string()),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err("The preview was interrupted.".to_string()),
+    });
+    match outcome {
         Ok(()) => Ok(json!({"open": true})),
-        Err(_) => Err("The preview did not load.".to_string()),
+        Err(e) => {
+            discard(app);
+            Err(e)
+        }
     }
 }
 
-/// The document has loaded: open() may answer.
-fn loaded() {
+/// Destroys the window (if any) and drops everything served.
+fn discard(app: &AppHandle) {
     if let Ok(mut load) = LOAD.lock() {
-        if let Some(tx) = load.take() {
-            let _ = tx.send(());
+        *load = None;
+    }
+    if let Some(window) = app.get_webview_window(LABEL) {
+        let _ = window.destroy();
+        for _ in 0..40 {
+            if app.get_webview_window(LABEL).is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    closed();
+}
+
+/// The document at `url` has loaded: the waiting open() may answer, if it waits for this very document.
+fn loaded(url: &tauri::Url) {
+    let Some(token) = url.path_segments().and_then(|mut s| s.next()).map(str::to_string) else { return };
+    if let Ok(mut load) = LOAD.lock() {
+        if load.as_ref().map(|(t, _)| *t == token).unwrap_or(false) {
+            if let Some((_, tx)) = load.take() {
+                let _ = tx.send(Ok(()));
+            }
+        }
+    }
+}
+
+/// The preview could not be set up: the waiting open() fails.
+fn failed(message: &str) {
+    if let Ok(mut load) = LOAD.lock() {
+        if let Some((_, tx)) = load.take() {
+            let _ = tx.send(Err(message.to_string()));
         }
     }
 }
@@ -180,10 +234,18 @@ pub fn close(app: &AppHandle) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-/// The window is gone (or starts over): the document is dropped.
+/// The window is gone (or starts over): the document is dropped and the next window must be guarded again.
 pub fn closed() {
+    GUARDED.store(false, Ordering::SeqCst);
     if let Ok(mut page) = PAGE.lock() {
         *page = None;
+    }
+}
+
+/// The Destroyed event of a window: a newer window of the same label (rebuilt in the meantime) keeps its state.
+pub fn destroyed(app: &AppHandle) {
+    if app.get_webview_window(LABEL).is_none() {
+        closed();
     }
 }
 
@@ -203,27 +265,46 @@ fn browser_args(_ui_check: bool) -> String {
 /// A document title other than the address WebView2 reports for a page without <title>.
 fn real_title(title: &str) -> Option<String> {
     let t = title.trim();
-    if t.is_empty() || t.to_ascii_lowercase().starts_with(HOST) || t.to_ascii_lowercase().starts_with("http://") || t.to_ascii_lowercase().starts_with("lumen-artifact:") {
+    let lower = t.to_ascii_lowercase();
+    if t.is_empty() || lower == "about:blank" || lower.starts_with(HOST) || lower.starts_with("http://") || lower.starts_with("lumen-artifact:") {
         None
     } else {
         Some(t.to_string())
     }
 }
 
+/// Test builds only (--ui-check, LUMEN_ARTIFACT_FAIL_HARDEN=<n>): the first n hardening attempts fail, as if WebView2 refused the
+/// request filter. A seam for the fail-closed test; production builds have no such path.
+#[cfg(feature = "ui-check")]
+fn forced_failure() -> bool {
+    static LEFT: std::sync::OnceLock<std::sync::atomic::AtomicU32> = std::sync::OnceLock::new();
+    let left = LEFT.get_or_init(|| std::sync::atomic::AtomicU32::new(std::env::var("LUMEN_ARTIFACT_FAIL_HARDEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0)));
+    left.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
+}
+#[cfg(not(feature = "ui-check"))]
+fn forced_failure() -> bool {
+    false
+}
+
 /// WebView2 rules Tauri does not cover: every request but the current document is answered 403 before it leaves (documents,
-/// workers and frames alike), permissions and downloads are refused, new windows are never opened, script dialogs and context
-/// menus are off, and the window title follows the document's <title> (Electron's behaviour). When everything is registered the
-/// document is made current and loaded.
+/// workers and frames alike), navigations other than to the current document are cancelled (the page stays in place), permissions
+/// and downloads are refused, new windows are never opened, script dialogs and context menus are off, and the window title
+/// follows the document's <title> (Electron's behaviour). Only when everything is registered is the window marked guarded and the
+/// document made current and loaded; any failure before that fails the waiting open() (which destroys the window).
 fn harden(window: &WebviewWindow, page: Page, url: tauri::Url) -> Result<(), String> {
     let titled = window.clone();
     window
         .with_webview(move |webview| unsafe {
             use webview2_com::Microsoft::Web::WebView2::Win32::*;
-            use webview2_com::{take_pwstr, DocumentTitleChangedEventHandler, DownloadStartingEventHandler, NewWindowRequestedEventHandler, PermissionRequestedEventHandler, WebResourceRequestedEventHandler};
+            use webview2_com::{take_pwstr, DocumentTitleChangedEventHandler, DownloadStartingEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler, PermissionRequestedEventHandler, WebResourceRequestedEventHandler};
             use windows::core::{Interface, HSTRING, PWSTR};
-            let Ok(core) = webview.controller().CoreWebView2() else { return };
+            if forced_failure() {
+                return failed("The preview could not be protected (forced).");
+            }
+            let Ok(core) = webview.controller().CoreWebView2() else { return failed("The preview could not be protected.") };
             let env = webview.environment();
             let mut token = 0i64;
+            let mut ok = true;
             if let Ok(settings) = core.Settings() {
                 let _ = settings.SetAreDefaultScriptDialogsEnabled(false);
                 let _ = settings.SetAreDefaultContextMenusEnabled(false);
@@ -238,24 +319,50 @@ fn harden(window: &WebviewWindow, page: Page, url: tauri::Url) -> Result<(), Str
                 }
                 Ok(())
             }));
-            let _ = core.add_PermissionRequested(&denied, &mut token);
+            ok &= core.add_PermissionRequested(&denied, &mut token).is_ok();
             let refused = NewWindowRequestedEventHandler::create(Box::new(|_, args| {
                 if let Some(args) = args {
                     args.SetHandled(true)?;
                 }
                 Ok(())
             }));
-            let _ = core.add_NewWindowRequested(&refused, &mut token);
-            if let Ok(core4) = core.cast::<ICoreWebView2_4>() {
-                let no_download = DownloadStartingEventHandler::create(Box::new(|_, args| {
-                    if let Some(args) = args {
-                        args.SetCancel(true)?;
-                        args.SetHandled(true)?;
-                    }
-                    Ok(())
-                }));
-                let _ = core4.add_DownloadStarting(&no_download, &mut token);
+            ok &= core.add_NewWindowRequested(&refused, &mut token).is_ok();
+            match core.cast::<ICoreWebView2_4>() {
+                Ok(core4) => {
+                    let no_download = DownloadStartingEventHandler::create(Box::new(|_, args| {
+                        if let Some(args) = args {
+                            args.SetCancel(true)?;
+                            args.SetHandled(true)?;
+                        }
+                        Ok(())
+                    }));
+                    ok &= core4.add_DownloadStarting(&no_download, &mut token).is_ok();
+                }
+                Err(_) => ok = false,
             }
+            // Navigations (top level and frames): only the current document, exactly; the page stays where it is.
+            let stay = NavigationStartingEventHandler::create(Box::new(|_, args| {
+                if let Some(args) = args {
+                    let mut uri = PWSTR::null();
+                    args.Uri(&mut uri)?;
+                    if !tauri::Url::parse(&take_pwstr(uri)).map(|u| allows_navigation(&u)).unwrap_or(false) {
+                        args.SetCancel(true)?;
+                    }
+                }
+                Ok(())
+            }));
+            ok &= core.add_NavigationStarting(&stay, &mut token).is_ok();
+            let stay_in_frames = NavigationStartingEventHandler::create(Box::new(|_, args| {
+                if let Some(args) = args {
+                    let mut uri = PWSTR::null();
+                    args.Uri(&mut uri)?;
+                    if !tauri::Url::parse(&take_pwstr(uri)).map(|u| allows_navigation(&u)).unwrap_or(false) {
+                        args.SetCancel(true)?;
+                    }
+                }
+                Ok(())
+            }));
+            ok &= core.add_FrameNavigationStarting(&stay_in_frames, &mut token).is_ok();
             let follow_title = DocumentTitleChangedEventHandler::create(Box::new(move |sender, _| {
                 if let Some(sender) = sender {
                     let mut title = PWSTR::null();
@@ -266,7 +373,7 @@ fn harden(window: &WebviewWindow, page: Page, url: tauri::Url) -> Result<(), Str
                 }
                 Ok(())
             }));
-            let _ = core.add_DocumentTitleChanged(&follow_title, &mut token);
+            ok &= core.add_DocumentTitleChanged(&follow_title, &mut token).is_ok();
             let blocker = WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else { return Ok(()) };
                 let request = args.Request()?;
@@ -286,20 +393,21 @@ fn harden(window: &WebviewWindow, page: Page, url: tauri::Url) -> Result<(), Str
                 Ok(core22) => core22.AddWebResourceRequestedFilterWithRequestSourceKinds(&filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL),
                 Err(_) => core.AddWebResourceRequestedFilter(&filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL),
             };
-            let registered = added.is_ok() && core.add_WebResourceRequested(&blocker, &mut token).is_ok();
-            if !registered {
-                eprintln!("[artifact] the request filter could not be installed; the document is not loaded");
-                return;
+            ok &= added.is_ok() && core.add_WebResourceRequested(&blocker, &mut token).is_ok();
+            if !ok {
+                return failed("The preview could not be protected.");
             }
-            // Only now does the document exist, and it loads.
+            // Guarded: only now does the document exist, and it loads.
+            GUARDED.store(true, Ordering::SeqCst);
             if let Ok(mut current) = PAGE.lock() {
                 *current = Some(page);
             }
-            let _ = core.Navigate(&HSTRING::from(url.as_str()));
+            if core.Navigate(&HSTRING::from(url.as_str())).is_err() {
+                failed("The preview could not be loaded.");
+            }
         })
         .map_err(|e| format!("The preview could not be protected: {e}"))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -376,11 +484,26 @@ mod tests {
 
     #[test]
     fn page_without_title_keeps_the_window_name() {
-        for none in ["", "  ", "lumen-artifact.localhost/0123456789abcdef0123456789abcdef/", "http://lumen-artifact.localhost/x/", "LUMEN-ARTIFACT.LOCALHOST/x"] {
+        for none in ["about:blank", "", "  ", "lumen-artifact.localhost/0123456789abcdef0123456789abcdef/", "http://lumen-artifact.localhost/x/", "LUMEN-ARTIFACT.LOCALHOST/x"] {
             assert_eq!(real_title(none), None, "{none:?}");
         }
         assert_eq!(real_title(" Rapor "), Some("Rapor".into()));
         assert_eq!(real_title("t"), Some("t".into()));
+    }
+
+    // LOAD belongs to this test alone.
+    #[test]
+    fn a_load_signal_belongs_to_its_own_document() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        *LOAD.lock().unwrap() = Some((TOKEN.into(), tx));
+        loaded(&url(&format!("http://lumen-artifact.localhost/{}/", "d".repeat(32))));
+        assert!(rx.try_recv().is_err(), "a late Finished of another document releases nothing");
+        loaded(&url(&format!("http://lumen-artifact.localhost/{TOKEN}/")));
+        assert_eq!(rx.try_recv(), Ok(Ok(())));
+        let (tx, rx) = std::sync::mpsc::channel();
+        *LOAD.lock().unwrap() = Some((TOKEN.into(), tx));
+        failed("nope");
+        assert_eq!(rx.try_recv(), Ok(Err("nope".to_string())));
     }
 
     #[test]

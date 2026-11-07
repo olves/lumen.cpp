@@ -193,7 +193,7 @@ fn main() {
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 if window.label() == artifact::LABEL {
-                    artifact::closed();
+                    artifact::destroyed(window.app_handle());
                 }
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
