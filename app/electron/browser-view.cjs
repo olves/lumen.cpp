@@ -50,7 +50,7 @@ function createBrowserView({getWindow}){
   return web;
  }
 
- function guard(wc,onPopup){
+ function guard(wc,onPopup){wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
   wc.setWindowOpenHandler(({url})=>{try{onPopup?.(checkUrl(url).href);}catch{}return {action:'deny'};});
   const navigation=(event,url)=>{try{checkUrl(url);}catch{event.preventDefault();}};
   wc.on('will-navigate',navigation);wc.on('will-redirect',navigation);wc.on('will-frame-navigate',e=>{if(!/^(https?|about|data|blob):/.test(e.url))e.preventDefault();});

@@ -39,6 +39,7 @@ function createArtifactWindow({BrowserWindow, session, getWindow, icon}) {
         webPreferences: {session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, spellcheck: false, preload: undefined, navigateOnDragDrop: false, safeDialogs: true, disableDialogs: true}});
       view.setMenu(null);
       const wc = view.webContents;
+      wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp'); // STUN is UDP: webRequest cannot stop it
       wc.setWindowOpenHandler(() => ({action: 'deny'}));
       wc.on('will-navigate', (event, url) => { if (url !== current) event.preventDefault(); });
       wc.on('will-redirect', event => event.preventDefault());

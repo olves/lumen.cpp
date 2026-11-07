@@ -203,6 +203,23 @@ describe(`browser panel and renderer (${shell})`, () => {
     if (shell === 'tauri') assert.ok(requests.filter(r => r.path === '/page2').every(r => r.headers.connection === 'close'), 'requests came through the proxy');
   });
 
+  // WebRTC must not reveal the computer's addresses: with disable_non_proxied_udp no UDP (host/srflx) candidate is gathered.
+  test('WebRTC gathers no UDP candidates in the panel', async () => {
+    await attachPanel(`${base}/page2`);
+    const r = await panel.evaluate(`(async () => {
+      const pc = new RTCPeerConnection({ iceServers: [] }); pc.createDataChannel('x');
+      const found = []; pc.onicecandidate = e => { if (e.candidate && e.candidate.candidate) found.push(e.candidate.candidate); };
+      await pc.setLocalDescription(await pc.createOffer());
+      await new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); pc.onicegatheringstatechange = () => pc.iceGatheringState === 'complete' && res(); setTimeout(res, 5000); });
+      pc.close(); return found;
+    })()`);
+    // Electron applies the policy fully. WebView2 (Tauri preview) still gathers an mDNS-obfuscated host candidate (….local),
+    // which carries no address; any UDP candidate with a real IP fails on both shells.
+    const udp = r.filter(c => / udp /i.test(c));
+    if (shell === 'electron') assert.deepEqual(udp, [], 'UDP candidates: ' + JSON.stringify(r));
+    else assert.deepEqual(udp.filter(c => !/ [0-9a-f-]{36}\.local /i.test(c)), [], 'UDP candidates with an address: ' + JSON.stringify(r));
+  });
+
   test('blocks private address', async () => {
     // Typed or opened by the core: refused before anything loads, shown as "blocked".
     await open('http://192.168.1.1/');
