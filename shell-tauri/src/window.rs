@@ -12,7 +12,7 @@ pub const MAIN: &str = "main";
 const SHOW_FALLBACK: Duration = Duration::from_secs(10);
 const BRIDGE: &str = include_str!("../../app/bridge-tauri.js");
 // wry's defaults, which additional_browser_args replaces.
-const DEFAULT_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+pub const DEFAULT_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
 
 pub struct Options {
     pub data: PathBuf,

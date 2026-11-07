@@ -3,6 +3,7 @@
 //   lumen.exe [--ui-check] [--test-data=<dir>] [--remote-debugging-port=<n> (ui-check builds with --ui-check only)]
 //             [--user-data-dir=<dir> (with --ui-check only: Electron's userData of the test, whose Local State holds the secrets key)]
 #![cfg_attr(not(test), windows_subsystem = "windows")]
+mod artifact;
 mod core;
 mod platform;
 mod protocol;
@@ -68,6 +69,7 @@ pub struct Shell {
     pub core: Arc<core::Core>,
     pub app_dir: PathBuf,
     pub data: PathBuf,
+    pub ui_check: bool,
     pub secrets: platform::secrets::Secrets,
     exiting: AtomicBool,
 }
@@ -184,8 +186,16 @@ fn main() {
                 responder.respond(protocol::serve(&shell.core, &shell.app_dir, &shell.data, allowed, &path).await);
             });
         })
+        .register_uri_scheme_protocol("lumen-artifact", |ctx, request| {
+            artifact::serve(ctx.webview_label() == artifact::LABEL && request.method() == tauri::http::Method::GET, request.uri().path())
+        })
         .invoke_handler(tauri::generate_handler![lumen_call, window_action])
         .on_window_event(|window, event| {
+            if let WindowEvent::Destroyed = event {
+                if window.label() == artifact::LABEL {
+                    artifact::closed();
+                }
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == window::MAIN {
                     api.prevent_close();
@@ -227,7 +237,7 @@ fn main() {
                 notify,
             );
             let secrets = platform::secrets::Secrets::new(&args.electron_data);
-            app.manage(Shell { core: core.clone(), app_dir: exe_dir.join("app"), data: data.clone(), secrets, exiting: AtomicBool::new(false) });
+            app.manage(Shell { core: core.clone(), app_dir: exe_dir.join("app"), data: data.clone(), ui_check: args.ui_check, secrets, exiting: AtomicBool::new(false) });
             if let Err(e) = core.spawn() {
                 startup_failed(&handle, &data, &format!("Lumen's core could not be started: {e}"));
                 return Ok(());

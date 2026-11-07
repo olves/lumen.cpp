@@ -1,6 +1,6 @@
 // Platform requests of the core (app/platform.cjs) that the Tauri shell answers, with the same inputs and outputs as Electron's
 // shell (app/shell-electron.cjs). Task 6 adds dialogs, clipboard, images, secrets and openExternal; the browser panel (Task 9)
-// and the preview window (Task 7) are still refused with NOT_IMPLEMENTED (ruling T5-a).
+// is still refused with NOT_IMPLEMENTED (ruling T5-a).
 pub mod clipboard;
 pub mod dialog;
 pub mod image;
@@ -72,6 +72,8 @@ pub enum Service {
     SecretsEncrypt(String),
     SecretsDecrypt(String),
     OpenExternal(String),
+    ArtifactOpen { html: String, kind: String, title: Option<String>, dark: bool },
+    ArtifactClose,
 }
 
 fn arg_str(args: &[Value], i: usize) -> Option<&str> {
@@ -121,6 +123,17 @@ pub fn route(method: &str, args: &[Value]) -> Outcome {
         "secrets.encrypt" => service(text(0).map(Service::SecretsEncrypt)),
         "secrets.decrypt" => service(text(0).map(Service::SecretsDecrypt)),
         "openExternal" => service(text(0).map(Service::OpenExternal)),
+        // artifact.open(html, kind, {title, dark}); the core has built the whole document.
+        "artifact.open" => service(text(0).and_then(|html| {
+            let kind = arg_str(args, 1).filter(|k| matches!(*k, "html" | "svg")).ok_or("Only HTML and SVG can be previewed.")?.to_string();
+            if html.trim().is_empty() || html.len() > 4_000_000 {
+                return Err("Nothing to preview.".to_string());
+            }
+            let options = args.get(2).filter(|v| v.is_object());
+            let title = options.and_then(|o| o["title"].as_str()).map(str::to_string);
+            Ok(Service::ArtifactOpen { html, kind, title, dark: options.map(|o| o["dark"] == true).unwrap_or(false) })
+        })),
+        "artifact.close" => Outcome::Service(Service::ArtifactClose),
         _ => Outcome::Answer(Err(NOT_IMPLEMENTED.into())),
     }
 }
@@ -142,6 +155,8 @@ fn run(app: &AppHandle, service: Service) -> Result<Value, String> {
         Service::SecretsEncrypt(t) => shell.secrets.encrypt(&t).map(Value::String),
         Service::SecretsDecrypt(v) => shell.secrets.decrypt(&v).map(Value::String),
         Service::OpenExternal(url) => opener::open(&url),
+        Service::ArtifactOpen { html, kind, title, dark } => crate::artifact::open(app, html, &kind, title.as_deref(), dark),
+        Service::ArtifactClose => crate::artifact::close(app),
     }
 }
 
@@ -229,9 +244,25 @@ mod tests {
     }
 
     #[test]
-    fn browser_and_artifact_wait_for_their_tasks() {
-        for m in ["browser.render", "browser.create", "browser.onNavigate", "artifact.open", "artifact.close", "unknown"] {
+    fn browser_waits_for_its_task() {
+        for m in ["browser.render", "browser.create", "browser.onNavigate", "unknown"] {
             assert_eq!(routed(m, json!([])), Outcome::Answer(Err(NOT_IMPLEMENTED.to_string())), "{m}");
+        }
+    }
+
+    #[test]
+    fn routes_artifact_requests() {
+        assert_eq!(
+            routed("artifact.open", json!(["<p>x</p>", "html", {"title": "T", "dark": true}])),
+            Outcome::Service(Service::ArtifactOpen { html: "<p>x</p>".into(), kind: "html".into(), title: Some("T".into()), dark: true })
+        );
+        assert_eq!(
+            routed("artifact.open", json!(["<svg/>", "svg"])),
+            Outcome::Service(Service::ArtifactOpen { html: "<svg/>".into(), kind: "svg".into(), title: None, dark: false })
+        );
+        assert_eq!(routed("artifact.close", json!([])), Outcome::Service(Service::ArtifactClose));
+        for a in [json!([]), json!(["<p>x</p>"]), json!(["<p>x</p>", "pdf"]), json!(["  ", "html"]), json!([5, "html"])] {
+            assert!(matches!(routed("artifact.open", a.clone()), Outcome::Answer(Err(_))), "{a}");
         }
     }
 }
