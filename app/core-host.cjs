@@ -19,6 +19,11 @@
 //                                                                  filePath, or body (UTF-8 text: index.html, 'Not found')
 //                  {type:'protocol-error', reason}                 'too-large' | 'invalid-json' | 'invalid-message'
 //
+// Platform request ids are 'p<nonce>-<n>': the nonce is random per process, so an answer meant for a core that has died (the shell
+// restarts it) can never settle a request of the new one; such an answer is logged to stderr and dropped. Exit codes: 0 after
+// shutdown, 1 on a failed start, 3 (EXIT_LOCKED) when another running Lumen holds the data folder's core.lock (the shell shows
+// that instead of restarting).
+//
 // Platform values that are plain data come from the command line (assetBase, appDir, updateMode, app.version). Image buffers go
 // through files under <data>/temp/rpc: image.decodeWebp [inPath, outPath], image.normalize [inPath, outPath, maxSide|null,
 // quality] (maxSide null = no limit; answer null when the image cannot be decoded, else {width, height, original}),
@@ -32,6 +37,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const LINE_LIMIT = 64 * 1024 * 1024;
+const EXIT_LOCKED = 3;
+// The Tauri shell ends the process 5 s after 'shutdown' (shell-tauri/src/core.rs SHUTDOWN_GRACE): the engine gets at most 4 s, so
+// the lock is released and clearOnExit has run before that.
+const STOP_CAP_MS = 4000;
 
 // Nothing but protocol lines on stdout.
 const stdout = process.stdout;
@@ -55,11 +64,11 @@ const CALLBACK_NAMES = ['browser.onNavigate', 'browser.onPopup', 'browser.onStat
 // webProxy() -> Promise<{url, realm}> (optional): starts the browser proxy; given, every browser.* request waits for it, in order.
 function createRpcPlatform({data, assetBase, appDir, updateMode, version, send = emit, webProxy = null}) {
   const {FUNCTIONS} = require('./platform.cjs');
-  const state = {pending: new Map(), callbacks: Object.create(null), gone: false, seq: 0};
+  const state = {pending: new Map(), callbacks: Object.create(null), gone: false, seq: 0, nonce: crypto.randomBytes(8).toString('hex')};
   // Asks the shell to run one platform method. The promise settles with the shell's platform-result.
   function rpc(method, args = []) {
     if (state.gone) return Object.assign(Promise.reject(Error('The shell is gone.')), {id: ''});
-    const id = 'p' + (++state.seq);
+    const id = 'p' + state.nonce + '-' + (++state.seq);
     const promise = new Promise((resolve, reject) => { state.pending.set(id, {resolve, reject}); send({id, type: 'platform', method, args}); });
     promise.id = id;
     return promise;
@@ -152,8 +161,8 @@ async function main() {
   async function shutdown(code, gone = false) {
     if (gone) { state.gone = true; for (const p of state.pending.values()) p.reject(Error('The shell is gone.')); state.pending.clear(); }
     if (stopping) return; stopping = true;
-    // core.stop() caps the engine's shutdown at 8 s; the host process never waits longer than that.
-    try { await core.stop(); } catch (e) { console.error('[core-host] stop failed:', e && e.message); }
+    // The engine's shutdown is capped below the shell's grace period; the lock is released inside stop(), before the exit.
+    try { await core.stop({cap: STOP_CAP_MS}); } catch (e) { console.error('[core-host] stop failed:', e && e.message); }
     try { await proxy?.stop(); } catch {}
     stdout.write('', () => process.exit(code));
   }
@@ -182,7 +191,7 @@ async function main() {
     if (message.type === 'shutdown') return void shutdown(0);
     if (message.type === 'asset') { if (message.id === undefined || typeof message.path !== 'string') return emit({type: 'protocol-error', reason: 'invalid-message'}); return void onAsset(message); }
     if (message.type === 'platform-result') {
-      const p = state.pending.get(message.id); if (!p) return; state.pending.delete(message.id);
+      const p = state.pending.get(message.id); if (!p) return void console.error('[core-host] platform-result for an unknown request: ' + String(message.id).slice(0, 80)); state.pending.delete(message.id);
       return message.ok ? p.resolve(message.value) : p.reject(Error(String(message.error || 'Platform call failed.')));
     }
     if (message.type === 'platform-event') {
@@ -215,9 +224,9 @@ async function main() {
   stdout.on('error', e => { if (e.code === 'EPIPE') shutdown(0, true); });
 
   try { await core.start(); }
-  catch (e) { console.error('[core-host] start failed:', e && e.stack || e); try { await core.stop({now: true}); } catch {} stdout.write('', () => process.exit(1)); return; }
+  catch (e) { console.error('[core-host] start failed:', e && e.stack || e); try { await core.stop({now: true}); } catch {} const code = /^core\.lock: Lumen is already running/.test(String(e && e.message)) ? EXIT_LOCKED : 1; stdout.write('', () => process.exit(code)); return; }
   emit({type: 'ready', channels: core.channels});
 }
 
 if (require.main === module) main().catch(e => { console.error('[core-host] fatal:', e && e.stack || e); process.exit(1); });
-module.exports = {createRpcPlatform};
+module.exports = {createRpcPlatform, EXIT_LOCKED, STOP_CAP_MS};

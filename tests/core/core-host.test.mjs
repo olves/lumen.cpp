@@ -110,7 +110,7 @@ describe('core host', () => {
     const request = shell.platformRequests.find(p => p.method === 'dialog.open');
     assert.ok(request, 'the core asked the shell for dialog.open');
     assert.equal(request.type, 'platform');
-    assert.ok(request.id);
+    assert.match(request.id, /^p[0-9a-f]{16}-\d+$/, 'platform ids carry the per-process nonce');
     assert.deepEqual(request.args[0].properties, ['openFile', 'multiSelections']);
     assert.equal(r.ok, true);
     assert.deepEqual(r.value, []);
@@ -196,7 +196,7 @@ describe('core host', () => {
   test('a second core on the same data folder fails with core.lock', async () => {
     const shell = await launch();
     const second = spawnSync(process.execPath, [hostScript, '--data', shell.dataDir, '--app', appRoot], { encoding: 'utf8', timeout: 20000, input: '' });
-    assert.equal(second.status, 1);
+    assert.equal(second.status, 3, 'EXIT_LOCKED: the shell reports the conflict instead of restarting the core');
     assert.match(second.stderr, /core\.lock: Lumen is already running/);
     assert.equal(second.stdout, '', 'nothing on stdout');
     await shell.shutdown();
@@ -262,6 +262,26 @@ describe('core host', () => {
     await shell.until(() => errors().some(e => e.payload.error.code === -106));
     assert.equal(shell.events.slice(before).filter(e => e.channel === 'browser-event').length, 1, 'only the valid event produced a browser-event');
     assert.equal(shell.exit, null);
+    await shell.shutdown();
+  });
+
+  test('platform request ids differ between processes; a stale answer settles nothing', async () => {
+    const require = createRequire(import.meta.url);
+    const { createRpcPlatform } = require(hostScript);
+    const a = [], b = [];
+    const one = createRpcPlatform({ data: freshDir('rpc-nonce-a'), assetBase: 'x://', appDir: 'x', updateMode: 'full', version: '1', send: m => a.push(m) });
+    const two = createRpcPlatform({ data: freshDir('rpc-nonce-b'), assetBase: 'x://', appDir: 'x', updateMode: 'full', version: '1', send: m => b.push(m) });
+    one.platform.openExternal('https://a.example/').catch(() => {});
+    two.platform.openExternal('https://b.example/').catch(() => {});
+    assert.match(a[0].id, /^p[0-9a-f]{16}-1$/);
+    assert.match(b[0].id, /^p[0-9a-f]{16}-1$/);
+    assert.notEqual(a[0].id, b[0].id, 'the first request of a restarted core does not reuse the old id');
+    assert.equal(two.state.pending.has(a[0].id), false);
+    // Over the wire: an answer with an id this process never issued is logged and dropped; the process keeps working.
+    const shell = await launch();
+    shell.write({ id: a[0].id, type: 'platform-result', ok: true, value: 0 });
+    await shell.until(() => /platform-result for an unknown request/.test(shell.stderr));
+    assert.equal((await shell.call('preferences', [])).ok, true);
     await shell.shutdown();
   });
 
