@@ -27,7 +27,7 @@ function buildEngineSection(){
  const section=document.createElement('div');section.id='engine-update-section';
  section.innerHTML='<div class="settings-label settings-sub" data-i18n="engineLabel"></div>'+
   '<div class="setting-row"><div><h3 data-i18n="engineVersion"></h3><p id="engine-version"></p></div><button id="engine-check" class="secondary" type="button" data-i18n="engineCheck"></button></div>'+
-  '<div id="engine-box" class="update-box" aria-live="polite"><p id="engine-status"></p><div id="engine-progress" class="update-progress" hidden><span id="engine-fill"></span></div><div class="update-actions"><button id="engine-install" class="primary" type="button" data-i18n="engineInstall" hidden></button><button id="engine-cancel" class="text-button" type="button" data-i18n="engineCancel" hidden></button><button id="engine-rollback" class="text-button" type="button" data-i18n="engineRollback" hidden></button></div></div>'+
+  '<div id="engine-box" class="update-box" aria-live="polite"><p id="engine-status"></p><div id="engine-progress" class="update-progress" hidden><span id="engine-fill"></span></div><div class="update-actions"><button id="engine-install" class="primary" type="button" data-i18n="engineInstall" hidden></button><button id="engine-cancel" class="text-button plain" type="button" data-i18n="engineCancel" hidden></button><button id="engine-rollback" class="text-button" type="button" data-i18n="engineRollback" hidden></button></div></div>'+
   '<div class="setting-row"><div><h3 data-i18n="engineAuto"></h3><p data-i18n="engineAutoHint"></p></div><label class="switch"><input id="engine-auto" type="checkbox"><span></span></label></div>'+
   '<p class="quiet" data-i18n="engineNote"></p>';
  anchor.after(section);

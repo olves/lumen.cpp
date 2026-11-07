@@ -442,9 +442,9 @@ describe('core host', () => {
     assert.match(index.body, /<body data-theme="pro" data-mode="light">/, 'index.html carries the saved appearance (studio migrates to pro)');
     assert.match(index.body, /<html lang="en" data-theme="pro" data-mode="light">/);
     assert.equal(index.filePath, undefined);
-    const css = await shell.asset('/style.css');
+    const css = await shell.asset('/ui/c-shell.css');
     assert.equal(css.status, 200);
-    assert.equal(path.resolve(css.filePath), path.join(repoRoot, 'app', 'style.css'));
+    assert.equal(path.resolve(css.filePath), path.join(repoRoot, 'app', 'ui', 'c-shell.css'));
     assert.equal(css.body, undefined);
     for (const p of ['/core.cjs', '/../core.lock', '/photo/' + 'a'.repeat(64) + '.png', '/backend/lumen-host.exe']) {
       const r = await shell.asset(p);

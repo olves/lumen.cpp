@@ -95,7 +95,7 @@
     const style = getComputedStyle(el);
     return (style.getPropertyValue('app-region') || style.getPropertyValue('-webkit-app-region') || style.webkitAppRegion || '').trim();
   };
-  // Fallback when the engine does not report app-region in computed styles: the drag regions of index.html (style.css, design.css).
+  // Fallback when the engine does not report app-region in computed styles: the drag regions of index.html (ui/c-shell.css).
   const FALLBACK_DRAG = '.titlebar, .design-window-bar', FALLBACK_NO_DRAG = '.window-controls, .design-window-bar > div';
   const supported = typeof CSS !== 'undefined' && (CSS.supports('app-region', 'drag') || CSS.supports('-webkit-app-region', 'drag'));
   function draggable(target) {

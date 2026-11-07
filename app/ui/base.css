@@ -14,8 +14,8 @@ code,kbd,pre,samp{font-family:var(--font-mono)}
 body.no-motion *,body.no-motion *::before,body.no-motion *::after{transition:none!important;animation:none!important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 
-/* Old --accent-ink text now maps to --text (an accent shade cannot be guaranteed 4.5:1 on every surface in CSS), so link-like
-   controls keep an underline as their cue and error/warning text uses --danger (4.5:1 on all surfaces). Selected states keep
+/* Link-like text is --text (an accent shade cannot be guaranteed 4.5:1 on every surface in CSS), so link-like controls
+   keep an underline as their cue (neutral text buttons such as Cancel carry .plain and get none) and error/warning text uses --danger (4.5:1 on all surfaces). Selected states keep
    their selection background and border. */
-.text-button,.model-menu .menu-footer,.import-where,.vision-offer .text-button{text-decoration:underline;text-underline-offset:2px;text-decoration-thickness:1px}
+.text-button:not(.plain),.model-menu .menu-footer,.import-where,.vision-offer .text-button{text-decoration:underline;text-underline-offset:2px;text-decoration-thickness:1px}
 .rename-dialog #rename-error,.backend-error,.task-error,.activity-task[data-status=failed] .task-status,.task-ops li[data-status=failed],.activity-note.warning,.tools-status.warning,.skill-budget.warning,.download-pill[data-phase=failed],.download-dock[data-phase=failed] #download-meta{color:var(--danger)}

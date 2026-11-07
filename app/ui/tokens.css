@@ -1,6 +1,6 @@
 /* Token layer. The values here are the fallback before JS runs: the "native" theme (appearance.js THEMES.native), dark,
    and light when <html data-mode=light> is set by the core. At startup design.js sets the resolved tokens of the saved
-   appearance on :root one by one (style.setProperty), which wins over these rules. Components use these tokens only. */
+   appearance on :root one by one (style.setProperty), which wins over these rules. Components use these tokens only; this is the only CSS file with raw colour values. */
 :root{
  --surface-0:#202020;--surface-1:#1b1b1b;--surface-2:#2a2a2a;--surface-3:#333333;
  --text:#e6e6e6;--text-muted:#a8a8a8;--border:#3a3a3a;
@@ -16,24 +16,15 @@
  --selected:var(--surface-3);
  --duration:120ms;
  --ease:cubic-bezier(.22,1,.36,1);
+ --shadow-color:#000000;
+ /* Accent swatch previews in Settings → Appearance: the preset colours themselves. */
+ --swatch-warm:#dbaa87;--swatch-graphite:#c1c2b8;--swatch-ocean:#8fb4d9;--swatch-forest:#9cc49a;
+ --swatch-plum:#c3a6d9;--swatch-rose:#e0a3b0;--swatch-teal:#86c7c0;--swatch-gold:#d9bf7a;
 }
 :root[data-mode=light]{
  --surface-0:#f9f9f9;--surface-1:#f3f3f3;--surface-2:#ffffff;--surface-3:#e8e8e8;
  --text:#1a1a1a;--text-muted:#5c5c5c;--border:#d4d4d4;
  --accent:#005fb8;--accent-text:#ffffff;--danger:#b3261e;--focus:#005fb8;
-}
-
-/* Bridge: the components that Task 3 has not moved yet still read the old variable names. They map onto the tokens, so
-   every theme, mode and override reaches them too. Removed with the old CSS files. */
-:root{
- --bg:var(--surface-0);--rail:var(--surface-1);--surface:var(--surface-2);--panel:var(--surface-2);--panel-soft:var(--surface-1);
- --field:var(--surface-2);--field-focus:var(--surface-2);--dialog-bg:var(--surface-1);--code-bg:var(--surface-1);
- --line:var(--border);--ink:var(--text);--secondary-ink:var(--text-muted);--soft-ink:var(--text-muted);--muted:var(--text-muted);
- --selection:color-mix(in srgb,var(--accent) 16%,var(--surface-0));--selection-line:var(--accent);
- --accent-ink:var(--text);--button-bg:var(--accent);--button-ink:var(--accent-text);
- --mono:var(--font-mono);--chat-size:var(--font-size);
- --radius-s:var(--radius);--radius-m:calc(var(--radius) + 2px);--radius-l:calc(var(--radius) + 6px);
- --ring:0 0 0 2px color-mix(in srgb,var(--focus) 45%,transparent);
- --shadow:0 10px 30px color-mix(in srgb,var(--surface-0) 40%,transparent);
- --hl-string:color-mix(in srgb,var(--accent) 45%,var(--text));--hl-number:color-mix(in srgb,var(--danger) 55%,var(--text));--hl-title:var(--text);
+ --swatch-warm:#a4582d;--swatch-graphite:#414f48;--swatch-ocean:#2f5f8a;--swatch-forest:#3d6a3c;
+ --swatch-plum:#6a4a85;--swatch-rose:#984358;--swatch-teal:#2a6c66;--swatch-gold:#765e1d;
 }
