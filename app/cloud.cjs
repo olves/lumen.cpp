@@ -65,7 +65,9 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
   }
 
   // messages: [{role, content}] (text only). Returns {content, reasoning, usage, finish}.
-  async function chat({provider, model, messages, maxTokens = 1024, temperature, sampling = {}, signal, onChunk, onReasoning}) {
+  // tools (OpenAI function tools) make the reply carry toolCalls [{id, name, arguments (JSON text)}]; streamed calls arrive
+  // in pieces keyed by index and are joined here. reasoningEffort goes to DeepSeek only (other providers reject it).
+  async function chat({provider, model, messages, maxTokens = 1024, temperature, sampling = {}, signal, onChunk, onReasoning, tools, reasoningEffort}) {
     const {base, headers, label} = await target(provider);
     const full = {model, messages, stream: true, stream_options: {include_usage: true}};
     // OpenAI's newer models only take max_completion_tokens; the other providers use max_tokens.
@@ -73,7 +75,10 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
     if (Number.isFinite(temperature)) full.temperature = temperature;
     const map = {topP: 'top_p', presencePenalty: 'presence_penalty', frequencyPenalty: 'frequency_penalty', seed: 'seed'};
     for (const [k, field] of Object.entries(map)) if (Number.isFinite(sampling[k]) && !(k === 'seed' && sampling[k] < 0)) full[field] = sampling[k];
-    const minimal = {model, messages, stream: true, ...(provider === 'openai' ? {max_completion_tokens: maxTokens} : {max_tokens: maxTokens})};
+    const toolFields = Array.isArray(tools) && tools.length ? {tools, tool_choice: 'auto'} : {};
+    Object.assign(full, toolFields);
+    if (reasoningEffort && provider === 'deepseek') full.reasoning_effort = reasoningEffort;
+    const minimal = {model, messages, stream: true, ...(provider === 'openai' ? {max_completion_tokens: maxTokens} : {max_tokens: maxTokens}), ...toolFields};
     let response;
     for (const body of [full, minimal]) {
       response = await fetchImpl(base + '/chat/completions', {method: 'POST', headers, body: JSON.stringify(body), redirect: 'error',
@@ -85,12 +90,16 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
     }
     if (!response.ok) throw await errorFrom(response, label);
     let content = '', reasoning = '', usage = null, finish = null;
+    const calls = [];
+    const addCall = (index, part) => { const c = calls[index] ||= {id: '', name: '', arguments: ''}; if (part.id) c.id = part.id; if (part.function?.name) c.name = part.function.name; if (typeof part.function?.arguments === 'string') c.arguments += part.function.arguments; };
+    const toolCalls = () => calls.filter(Boolean).map((c, i) => ({id: c.id || 'call_' + i, name: c.name, arguments: c.arguments}));
     const type = String(response.headers.get('content-type') || '');
     if (!/event-stream/.test(type)) { // a provider that ignored stream:true
       const j = await response.json(); const choice = j?.choices?.[0];
       content = String(choice?.message?.content || ''); reasoning = String(choice?.message?.reasoning_content || choice?.message?.reasoning || '');
       if (reasoning) onReasoning?.(reasoning); if (content) onChunk?.(content);
-      return {content, reasoning, usage: j?.usage || null, finish: choice?.finish_reason || null};
+      (choice?.message?.tool_calls || []).forEach((t, i) => addCall(i, t));
+      return {content, reasoning, usage: j?.usage || null, finish: choice?.finish_reason || null, toolCalls: toolCalls()};
     }
     await readEvents(response.body, data => {
       let j; try { j = JSON.parse(data); } catch { return; }
@@ -101,9 +110,10 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
       const think = d.reasoning_content || d.reasoning || '';
       if (typeof think === 'string' && think) { reasoning += think; onReasoning?.(think); }
       if (typeof d.content === 'string' && d.content) { content += d.content; onChunk?.(d.content); }
+      if (Array.isArray(d.tool_calls)) for (const t of d.tool_calls) addCall(Number.isInteger(t.index) ? t.index : 0, t);
       if (choice.finish_reason) finish = choice.finish_reason;
     }, {signal});
-    return {content, reasoning, usage, finish};
+    return {content, reasoning, usage, finish, toolCalls: toolCalls()};
   }
   // Images from a provider: Gemini image models ("gemini-…-image") through Gemini's own generateContent; everything else
   // through the OpenAI-compatible /images/generations (gpt-image-1, dall-e-3, Imagen on Gemini's compatible endpoint…).
