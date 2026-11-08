@@ -50,6 +50,8 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
     if (!key && provider !== 'custom') throw cloudError('key', 'Add an API key for ' + connections.providerLabel(provider) + ' in Settings → Cloud models.');
     const headers = {'content-type': 'application/json', accept: 'text/event-stream, application/json', 'user-agent': 'lumen.cpp/' + version};
     if (key) headers.authorization = 'Bearer ' + key;
+    // Anthropic's own endpoints (models) need its key header and an API version; its OpenAI-compatible chat accepts both.
+    if (provider === 'anthropic') { if (key) headers['x-api-key'] = key; headers['anthropic-version'] = '2023-06-01'; }
     if (provider === 'openrouter') { headers['x-title'] = 'lumen.cpp'; headers['http-referer'] = 'https://github.com/olves/lumen.cpp'; }
     return {base, headers, label: connections.providerLabel(provider)};
   }

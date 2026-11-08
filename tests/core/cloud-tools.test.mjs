@@ -70,3 +70,18 @@ test('review #16: arguments sent as an object are kept as JSON text', async () =
   const r = await createCloud({ connections, fetchImpl: f.impl }).chat({ provider: 'custom', model: 'm', messages: [], tools });
   assert.deepEqual(JSON.parse(r.toolCalls[0].arguments), { path: 'a.js' });
 });
+
+test('Anthropic requests carry anthropic-version and x-api-key (user report: "anthropic-version: header is required")', async () => {
+  const seen = [];
+  const impl = async (url, init) => { seen.push({ url, headers: init.headers }); return json({ data: [{ id: 'claude-sonnet-x', type: 'model' }] }); };
+  const models = await createCloud({ connections, fetchImpl: impl }).listModels('anthropic');
+  assert.deepEqual(models, ['claude-sonnet-x']);
+  assert.equal(seen[0].headers['anthropic-version'], '2023-06-01');
+  assert.equal(seen[0].headers['x-api-key'], 'sk-test');
+});
+
+test('DeepSeek is a built-in provider', () => {
+  const { PROVIDERS } = createRequire(import.meta.url)('../../app/connections.cjs');
+  assert.equal(PROVIDERS.deepseek?.base, 'https://api.deepseek.com');
+  assert.equal(PROVIDERS.deepseek.label, 'DeepSeek');
+});

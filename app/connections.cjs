@@ -13,6 +13,7 @@ const PROVIDERS = {
   openrouter: {label: 'OpenRouter', base: 'https://openrouter.ai/api/v1', keyHint: 'sk-or-…', site: 'openrouter.ai'},
   groq: {label: 'Groq', base: 'https://api.groq.com/openai/v1', keyHint: 'gsk_…', site: 'console.groq.com'},
   mistral: {label: 'Mistral', base: 'https://api.mistral.ai/v1', keyHint: '', site: 'console.mistral.ai'},
+  deepseek: {label: 'DeepSeek', base: 'https://api.deepseek.com', keyHint: 'sk-…', site: 'platform.deepseek.com'},
   custom: {label: 'Custom', base: '', keyHint: '', site: ''},
 };
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:\/@+-]{0,127}$/;
