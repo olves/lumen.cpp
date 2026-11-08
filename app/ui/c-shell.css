@@ -29,10 +29,14 @@
 .history-row:hover .history-item,.history-row.active .history-item{color:var(--text)}
 .history-item svg{display:none}
 .history-item span:last-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.history-rename,.history-delete{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--radius);color:var(--text-muted);opacity:0;transition:opacity var(--duration) ease}
+.history-pin,.history-rename,.history-delete{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--radius);color:var(--text-muted);opacity:0;transition:opacity var(--duration) ease}
 .history-delete{margin-right:2px}
-.history-rename svg,.history-delete svg{width:13px;height:13px}
-.history-row:hover :is(.history-rename,.history-delete),.history-row:focus-within :is(.history-rename,.history-delete),.history-row.active :is(.history-rename,.history-delete){opacity:1}
+.history-pin svg,.history-rename svg,.history-delete svg{width:13px;height:13px}
+.history-row:hover :is(.history-pin,.history-rename,.history-delete),.history-row:focus-within :is(.history-pin,.history-rename,.history-delete),.history-row.active :is(.history-pin,.history-rename,.history-delete),.history-row.pinned .history-pin{opacity:1}
+.history-pin:hover{background:var(--surface-3);color:var(--text)}
+.history-row.pinned .history-pin{color:var(--text)}
+.history-pin:disabled{opacity:.35}
+.history-group-label:not(:first-child){margin-top:10px}
 .history-rename:hover{background:var(--surface-3);color:var(--text)}
 .history-delete:hover{background:var(--surface-3);color:var(--danger)}
 .history-delete:disabled{opacity:.35}
