@@ -202,3 +202,9 @@ body.no-motion .message.search-hit{animation:none;outline:1px solid var(--focus)
 
 /* A text/code file dragged over the composer (renderer.js addDroppedFiles). */
 .composer.drop-target{outline:2px dashed var(--accent);outline-offset:3px}
+
+/* Per-reply numbers (regen.js) at the end of the action row, and Continue for a reply cut at the response length. */
+.reply-stats{margin-left:auto;padding:0 4px;font-size:var(--font-size-small);font-variant-numeric:tabular-nums;color:var(--text-muted);white-space:nowrap}
+.reply-continue{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:var(--font-size-small);color:var(--text-muted)}
+.continue-reply{padding:3px 12px;border:1px solid var(--border);border-radius:var(--radius);font-weight:600;color:var(--text);background:var(--surface-2)}
+.continue-reply:hover:not(:disabled){background:var(--hover)}
