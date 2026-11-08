@@ -1,125 +1,218 @@
-# lumen.cpp (Beta)
+<div align="center">
 
-A local AI chat workspace for Windows. Lumen runs open models (GGUF) on your own computer with [llama.cpp](https://github.com/ggml-org/llama.cpp). There is nothing to install besides the app folder: no Python, no Ollama, no npm. Chats, models and settings stay on your machine.
+<img src="app/lumen.svg" alt="Lumen" width="88">
 
-![Lumen, Studio layout, dark](app/previews/studio-dark.png)
+# lumen.cpp
 
-> **Beta.** Lumen is a portable, unsigned Beta. Windows SmartScreen may warn on first launch.
+**Run open AI models on your own Windows PC. Private by default, no setup, no account.**
 
-## Features
+[![Latest release](https://img.shields.io/github/v/release/olves/lumen.cpp?include_prereleases&label=release&color=e8743b)](https://github.com/olves/lumen.cpp/releases)
+[![Downloads](https://img.shields.io/github/downloads/olves/lumen.cpp/total?color=4c8eda)](https://github.com/olves/lumen.cpp/releases)
+[![License](https://img.shields.io/github/license/olves/lumen.cpp?color=6a9955)](LICENSE)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4?logo=windows)
+[![Powered by llama.cpp](https://img.shields.io/badge/powered%20by-llama.cpp-555)](https://github.com/ggml-org/llama.cpp)
+![English · Türkçe](https://img.shields.io/badge/UI-English%20%C2%B7%20T%C3%BCrk%C3%A7e-8a63d2)
 
-- **Chat** with streaming answers, stop, branches, regenerate with versions, local chat search (Ctrl+K), Markdown with highlighted code, tables and math.
-- **Models**: browse Hugging Face GGUF repositories, download with resume and SHA-256 checks, see an estimate of whether a model fits your GPU, RAM or both, and what it can do (thinking, photos, tool calls) before downloading. "For you" is sorted for your computer, with the reason on each row.
-- **GPU setup**: picks CUDA 13 / CUDA 12 / Vulkan / CPU automatically. AMD and Intel GPUs use Vulkan.
-- **llama.cpp engine updates**: checked at startup with Lumen's own update; newer official builds are verified, tested and can be rolled back. The bundled engine stays as a fallback.
-- **Performance**: automatic GPU/RAM placement (large MoE models work on 8 GB GPUs), compact 8-bit context cache, speculative decoding (n-gram and MTP draft models), contexts up to 32K, and an Auto context size per model.
-- **Thinking models** (Qwen3, Gemma 4…): optional reasoning shown in a collapsible block. Lumen detects which models support it.
-- **Photos**: OCR on Windows, and real image input for vision models with a projector (mmproj).
-- **Web research (optional, off by default)**: a planner and sequential subagents search and read pages, then answer with citations. Providers: DuckDuckGo (whole web, no key), Tavily, Brave Search, Wikipedia, or your own SearXNG.
-- **Browser commands in chat**: "open github.com", "search lofi on youtube", "click sign in", "scroll down", or chained ("open discord and press sign in"). Carried out directly in the built-in browser panel. Lumen never types into pages, and asks before buttons that pay, send or delete.
-- **Documents**: add PDF, Word or text files to a conversation; answers cite the page they come from ([D1], [D2]…). Read on your computer; long documents go to the model as the passages that match your question.
-- **Run settings per conversation**: temperature, Top P/K, Min P, penalties, seed, response length, thinking and the conversation's instructions (with `{{current_date}}`), in a panel next to the chat.
-- **Models you already have**: use GGUF files from LM Studio, Ollama, the Hugging Face cache, GPT4All or Jan without downloading them again (no extra disk space on the same drive).
-- **Project folder (read-only)**: let a model list, find, search and read files in a folder, with file citations. It cannot write, delete or run anything.
-- **Skills**: reusable instructions and reference notes you select per conversation.
-- **Assistants**: saved starting points (instructions, model, run settings, skills); starting one copies them into a new conversation.
-- **Connected tools (MCP), optional**: connect MCP servers by address (Streamable HTTP; Lumen never starts programs). Every tool starts off, and each call shows its arguments and waits for your approval unless you choose "Always allow" for that tool.
-- **Cloud models, optional and off by default**: OpenAI, Anthropic, Gemini, OpenRouter, Groq, Mistral or any OpenAI-compatible address with your own key. Only conversations where you pick a cloud model are sent, and only to that provider; research, project folders and tools stay on local models.
-- **Local API, off by default**: an OpenAI-compatible endpoint on 127.0.0.1 with a key, so other programs on your computer can use your local models.
-- **Preview**: HTML and SVG from replies open in a separate window with no network access.
-- **Desk / Studio layouts, light and dark, eight accent colors or your own, English and Turkish.**
+[Download](#-download) · [Features](#-features) · [Engines](#-engines) · [Local API](#-use-it-as-an-api) · [Privacy](#-privacy) · [Build](#-build-from-source) · [Türkçe](#-türkçe)
 
-## Download and run
+<img src="docs/images/hero.png" alt="Lumen chatting with a local model, status line showing model, context, speed and engine" width="900">
 
-From the [Releases](../../releases) page, pick one:
+</div>
 
-- **`lumen-beta-setup.exe`** installs Lumen for your user, with no administrator rights. It adds a Start menu entry and an uninstaller.
-- **`lumen-beta-portable.zip`** can be extracted anywhere. Run `lumen.cpp.exe`.
+---
 
-Requirements: Windows 10/11 x64, .NET Framework 4.8 (built into current Windows). A GPU is optional.
+### ⬇️ Download
 
-Your data lives in `%LOCALAPPDATA%\lumen.cpp` (chats, models, settings). Updating never touches it. Uninstalling asks before deleting it.
+<a href="https://github.com/olves/lumen.cpp/releases"><img src="https://img.shields.io/badge/Windows-Installer%20(.exe)-0078d4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows installer"></a>
+<a href="https://github.com/olves/lumen.cpp/releases"><img src="https://img.shields.io/badge/Windows-Portable%20(.zip)-333?style=for-the-badge&logo=windows&logoColor=white" alt="Windows portable ZIP"></a>
 
-### Updates
+From the [Releases](https://github.com/olves/lumen.cpp/releases) page, pick one:
 
-Lumen checks this repository's releases at most once a day; the check can be turned off in Settings → General. When a newer version exists, Lumen offers it and downloads only when you click.
+- **`lumen-beta-setup.exe`** — installs for your user, no administrator rights. Start menu entry and uninstaller included.
+- **`lumen-beta-portable.zip`** — extract anywhere and run `lumen.cpp.exe`.
 
-Each release includes `lumen-update.json`, signed with an Ed25519 release key, plus its `.sig`. Lumen installs an update only if:
-- the signature matches the public key built into the app;
-- the downloaded file's size and SHA-256 match the manifest.
+There is nothing else to install: no Python, no Ollama, no npm. Choose a model in the app and start talking.
 
-A small updater (`app/backend/LumenUpdater.cs`) then:
-- runs the new setup silently for installed copies;
-- swaps the folder for portable copies, restoring the old one if anything fails.
+> [!NOTE]
+> Lumen is a **Beta** and is not code-signed yet, so Windows SmartScreen may warn on first launch (**More info → Run anyway**).
 
-## Privacy and safety
+---
 
-- The model server listens on loopback only and uses a random key per launch.
-- Your chats stay on your computer unless you choose a cloud model for a conversation (then that conversation goes to that provider only). The only automatic network request is the once-a-day update check (it reads the public release list and can be turned off); downloads happen when you ask. With web research on, search queries go to the provider you chose, and pages are fetched from their own sites. MCP tool calls go to the servers you added, after your approval. API keys and tokens are encrypted with Windows DPAPI.
-- Model output is never executed as HTML. Web pages are read as untrusted data, with private and local network addresses blocked.
-- Project folders are read-only. Keys, `.env` files and similar stay unreadable unless you allow a specific file.
+### ✨ Features
 
-More detail: [docs/USER-GUIDE.md](docs/USER-GUIDE.md). Measurements and test notes: [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md).
+**💬 Chat**
+- Streaming answers with stop, **regenerate with up to 12 versions**, edit & branch, and **pinned conversations**
+- Markdown with highlighted code, tables and math (KaTeX); HTML/SVG from replies opens in an **offline preview window**
+- **Local search** across all conversations (Ctrl+K)
+- **Drop or paste text and code files** into the message; add **PDF, Word and text documents** and get answers that cite the page ([D1], [D2]…)
+- **Photos**: Windows OCR, plus real image input for vision models
+- **Per-conversation run settings**: temperature, Top-P/K, Min-P, penalties, seed, response length, thinking, instructions with `{{current_date}}`
+- **Thinking models** (Qwen3, Gemma 4…): reasoning in a collapsible block; Lumen detects which models support it
 
-## Repository layout
+**🧠 Models**
+- Browse **Hugging Face GGUF** repositories with a **"fits your PC" estimate** (GPU, GPU + RAM, or too large) and capability badges (thinking, vision, tools) before you download
+- **Fast, verified downloads**: multiple connections, resume, SHA-256 check
+- **Reuse models you already have** from LM Studio, Ollama, the Hugging Face cache, GPT4All or Jan, with no extra disk space on the same drive
+- **Speed lab**: measure tokens per second and time to first token on your machine
 
-```text
-app/                 Electron app: main process (*.cjs), renderer (*.js, *.css, index.html), vendored libraries
-app/backend/         LumenCore.cs + LumenHost.cs (local engine process), LumenUpdater.cs, ImageOcr.cs (Windows OCR helper)
-docs/                User guide, measurements, licenses
-scripts/             build-portable.ps1, build-tauri.ps1 and the pinned Electron and Node download manifests
-shell-tauri/         Tauri 2 shell (Rust): preview/development build, see below
-tests/               harness (CDP driver, measurement), core tests (plain Node) and UI scenario tests for both shells
+**⚡ Performance**
+- Automatic **GPU / RAM placement**, so large MoE models run on 8 GB GPUs
+- **Auto context size** per model, compact 8-bit context cache, contexts up to 32K
+- **Faster generation** with speculative decoding (n-gram and MTP draft models)
+- **Live tokens/s** in the status line, and **free memory when idle** (unload the model after 5–60 minutes)
+
+**🧩 Tools & extensions** *(all optional, off by default)*
+- **Web research**: a planner and sub-agents search and read pages, then answer with sources. DuckDuckGo (no key), Brave, Tavily, Wikipedia or your own SearXNG
+- **Built-in browser panel** with chat commands such as "open github.com" or "search lofi on youtube"
+- **Read-only project folder**: the model can list, search and read files, with file citations, but it can never write or run anything
+- **MCP tools** over HTTP; every call shows its arguments and waits for your approval
+- **Skills, assistants and plugins**: reusable instructions, saved personas with their own settings, and one-click bundles
+- **Local image generation** with stable-diffusion.cpp (Z-Image Turbo)
+
+**☁️ Cloud models** *(optional, bring your own key)*
+- OpenAI, Anthropic, Gemini, OpenRouter, Groq, Mistral or any OpenAI-compatible address
+- Only the conversations where you pick a cloud model are sent, and only to that provider. The composer tells you so.
+
+**🎨 Make it yours**
+- Three themes (**Windows, Reading, Pro**), dark and light, preset or custom accent colors, fonts, text size and corner radius
+- Status line under the composer or as a full status bar
+- **English and Turkish** interface
+
+<table>
+<tr>
+<td><img src="docs/images/reading-light.png" alt="Reading theme, light"></td>
+<td><img src="docs/images/appearance.png" alt="Settings, Appearance with the Pro theme"></td>
+</tr>
+<tr>
+<td align="center"><sub>Reading theme, light</sub></td>
+<td align="center"><sub>Settings → Appearance, Pro theme</sub></td>
+</tr>
+</table>
+
+---
+
+### ⚙️ Engines
+
+Lumen bundles official, pinned builds and picks the best one for your hardware. Every engine download is checked against a fixed size and SHA-256 before use.
+
+| Engine | What it runs | Backends |
+|---|---|---|
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | Chat, thinking and vision models (GGUF) | CUDA 13 · CUDA 12 · Vulkan (AMD, Intel, NVIDIA) · CPU |
+| [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) | Local image generation | Vulkan · CUDA 12 · CPU |
+| Windows OCR | Text in photos and screenshots | Built into Windows |
+
+- **CPU and Vulkan are included**; CUDA is an optional download, with no toolkit or driver install.
+- **Engine updates** are checked together with Lumen's own update; newer official builds are verified and tested before use and can be rolled back. The bundled engine always stays as a fallback.
+
+---
+
+### 🔌 Use it as an API
+
+Turn on **Settings → Connections → Local API** and other programs on your PC can use your local models through an OpenAI-compatible endpoint:
+
+```bash
+curl http://127.0.0.1:11500/v1/chat/completions \
+  -H "Authorization: Bearer lumen-YOUR-KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "Qwen2.5 1.5B", "messages": [{"role": "user", "content": "Hello!"}], "stream": true}'
 ```
 
-The UI is plain HTML, CSS and JavaScript with no build step. Renderer scripts share one global scope and load in the order listed in `app/index.html`.
+```python
+from openai import OpenAI
 
-## Building from source
+client = OpenAI(base_url="http://127.0.0.1:11500/v1", api_key="lumen-YOUR-KEY")
+reply = client.chat.completions.create(model="Qwen2.5 1.5B", messages=[{"role": "user", "content": "Hello!"}])
+print(reply.choices[0].message.content)
+```
+
+The server listens on **127.0.0.1 only**, needs the key shown in Settings, and lists only models installed on this PC (`GET /v1/models`).
+
+---
+
+### 🔒 Privacy
+
+- **Everything stays on your PC** unless you pick a cloud model for a conversation. Chats, models and settings live in `%LOCALAPPDATA%\lumen.cpp`.
+- The only automatic network request is a **once-a-day update check** (it can be turned off). Downloads happen only when you ask.
+- The model server listens on loopback with a random key per launch. API keys and tokens are encrypted with Windows DPAPI.
+- Web pages are treated as untrusted data; private and local network addresses are blocked. Model output is never run as HTML.
+- **Signed updates**: each release carries an Ed25519-signed manifest, and an update installs only if the signature and the file's size and SHA-256 match.
+
+---
+
+### 🛠️ Build from source
+
+Requirements: Windows 10/11 x64 and PowerShell. The script downloads its own pinned Electron and llama.cpp builds.
 
 ```powershell
 .\scripts\build-portable.ps1
 ```
 
-The script downloads Electron 44.5.1 and the official llama.cpp b11438 CPU and Vulkan builds, each checked against a pinned SHA-256. It then copies `app/` into place and compiles `lumen-host.exe`, `lumen-image-ocr.exe` and `lumen-updater.exe` with the .NET Framework compiler included in Windows. Everything in the release is built from this repository or taken unchanged from those pinned upstream releases.
+It downloads Electron and the official llama.cpp CPU and Vulkan builds (each checked against a pinned SHA-256), copies `app/` into place and compiles `lumen-host.exe`, `lumen-image-ocr.exe` and `lumen-updater.exe` with the .NET Framework compiler included in Windows.
 
-Making a release (maintainers): set `app/package.json` to the new version (for example `1.0.5-beta`) and raise its `build` number by one, build the portable folder, then run:
+<details>
+<summary><b>Repository layout, tests and releases</b></summary>
 
-```powershell
-.\scripts\release.ps1 -AppDir <portable folder> -OutDir <folder> -NotesEn "..." -NotesTr "..."
+```text
+app/            Electron app: core (*.cjs), interface (*.js, *.css, index.html), vendored libraries
+app/backend/    LumenCore.cs + LumenHost.cs (local engine host), LumenUpdater.cs, ImageOcr.cs
+docs/           User guide, measurements, design notes
+scripts/        build-portable.ps1, build-tauri.ps1, release.ps1 and pinned download manifests
+shell-tauri/    Tauri 2 shell (Rust): development preview, not shipped
+tests/          CDP harness, core tests and UI scenario tests for both shells
 ```
 
-It produces the portable ZIP, the Inno Setup installer (`scripts/lumen.iss`), and the signed `lumen-update.json` with its `.sig`. Upload all four files to a new pre-release. The signing key stays outside the repository (`%USERPROFILE%\.lumen-release`).
-
-## Development: Tauri preview
-
-The same `app/` UI and core also run inside a Tauri 2 shell (Rust, WebView2) instead of Electron. This is a **preview and development build only**: it is not part of any release, it has no installer, and its updates section only checks for new versions (it never replaces files). Electron stays the shipped shell.
+The interface is plain HTML, CSS and JavaScript with no build step. Tests need Node 22 and no npm packages; test data goes to `..\work\`, and the real `%LOCALAPPDATA%\lumen.cpp` is only read.
 
 ```powershell
-.\scripts\build-portable.ps1                      # once: the Electron dev copy that also supplies lumen-host.exe and the engines
-.\scripts\build-tauri.ps1 -Features ui-check      # test build into ..\work\tauri-build (needed by the UI tests)
-.\scripts\build-tauri.ps1                         # production build (no debugging code path), e.g. for size checks
+node --test "tests/core/*.test.mjs"
+$env:LUMEN_SHELL='electron'; node --test --test-concurrency=1 "tests/ui/*.test.mjs"
+$env:LUMEN_SHELL='tauri';    node --test --test-concurrency=1 "tests/ui/*.test.mjs"
 ```
 
-Needs Rust (MSVC target) and the Visual Studio C++ Build Tools. `build-tauri.ps1` downloads Node.js 22 (`scripts/node-manifest.json`, SHA-256 pinned), which runs the shared core next to the shell. Crates are pinned in `shell-tauri/Cargo.toml`.
+**Tauri preview.** The same `app/` also runs in a Tauri 2 shell (`.\scripts\build-tauri.ps1`, needs Rust with the MSVC target). It is a development build only; Electron is the shipped shell. Measurements: [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md).
 
-Tests need Node 22 and no npm packages. Test data goes to `..\work\` next to the repository; the real `%LOCALAPPDATA%\lumen.cpp` is only read.
+**Releases (maintainers).** Set the version and `build` in `app/package.json`, build the portable folder, then run `.\scripts\release.ps1 -AppDir <folder> -OutDir <folder> -NotesEn "..." -NotesTr "..."`. It produces the ZIP, the Inno Setup installer and the signed `lumen-update.json` + `.sig`. The signing key stays outside the repository.
 
-```powershell
-node --test "tests/core/*.test.mjs"                  # core modules and harness helpers, no UI
-cd shell-tauri; cargo test; cargo test --features ui-check
-$env:LUMEN_SHELL='electron'; node --test --test-concurrency=1 "tests/ui/*.test.mjs"   # UI scenarios through the Chrome DevTools Protocol
-$env:LUMEN_SHELL='tauri';    node --test --test-concurrency=1 "tests/ui/*.test.mjs"   # the same scenarios on the Tauri shell
-node tests/harness/measure.mjs --shell tauri --out ..\work\measure\tauri.json   # startup, idle memory, folder size
-```
-
-The UI scenarios use a chat model that is already installed (read-only hard link; nothing is downloaded) and local mock servers for downloads, MCP, cloud providers and the image engine. Results of both shells and the Electron/Tauri comparison are in [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md).
-
-The Electron package ships the whole `app/` folder, including files only the Tauri shell or the tests use: `testhook.cjs`, `core-host.cjs`, `webproxy.cjs` and `bridge-tauri.js`. They are inert there: Electron never starts `core-host.cjs`, the proxy or the bridge, and the test overrides of `testhook.cjs` (test files and save folder, the local test host, the download base) take effect only with `--ui-check`, exactly like the existing update overrides (`LUMEN_UPDATE_API`, `LUMEN_UPDATE_KEY`).
-
-## License
-
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Releases up to and including v1.0.3-beta were published under the MIT License. Third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Downloaded models keep their own licenses.
+</details>
 
 ---
 
-**Türkçe:** Lumen, Windows'ta yerel yapay zekâ modelleriyle sohbet etmenizi sağlayan, kurulum gerektirmeyen bir uygulamadır (Beta). Releases sayfasından `lumen-beta-portable.zip` dosyasını indirin, bir klasöre çıkarın ve `lumen.cpp.exe`'yi çalıştırın. Arayüz Türkçe kullanılabilir (Ayarlar → Genel → Dil).
+### 💻 System requirements
+
+- **Windows 10 or 11, 64-bit**, with .NET Framework 4.8 (built into current Windows)
+- **8 GB RAM** or more is recommended; small models run on less
+- **GPU optional**: NVIDIA (CUDA or Vulkan), AMD and Intel (Vulkan). Without one, models run on the CPU.
+
+---
+
+### 🩺 Troubleshooting
+
+1. **SmartScreen warning** — Lumen is not code-signed yet: choose **More info → Run anyway**.
+2. **A model does not fit** — pick a smaller quantization (Q4_K_M), lower the context size in Settings → Chat behavior, or set GPU memory to Auto.
+3. **Something else** — the engine log is in `%LOCALAPPDATA%\lumen.cpp\desktop-engine.log`; please attach it to an [issue](https://github.com/olves/lumen.cpp/issues). More help: [docs/USER-GUIDE.md](docs/USER-GUIDE.md).
+
+---
+
+### 📄 License
+
+[Apache License 2.0](LICENSE) — see also [NOTICE](NOTICE). Releases up to and including v1.0.3-beta were published under the MIT License. Third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Downloaded models keep their own licenses.
+
+### 🙏 Acknowledgements
+
+[llama.cpp](https://github.com/ggml-org/llama.cpp) · [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) · [Electron](https://www.electronjs.org/) · [markdown-it](https://github.com/markdown-it/markdown-it) · [highlight.js](https://highlightjs.org/) · [KaTeX](https://katex.org/) · [PDF.js](https://mozilla.github.io/pdf.js/) · and every author who publishes open GGUF models on [Hugging Face](https://huggingface.co/).
+
+---
+
+### 🇹🇷 Türkçe
+
+**Lumen**, açık yapay zekâ modellerini kendi Windows bilgisayarında çalıştırmanı sağlayan, kurulum ve hesap gerektirmeyen bir uygulamadır. Sohbetlerin, modellerin ve ayarların bilgisayarında kalır.
+
+- [Releases](https://github.com/olves/lumen.cpp/releases) sayfasından **`lumen-beta-setup.exe`** (kurulum) veya **`lumen-beta-portable.zip`** (taşınabilir) dosyasını indir.
+- Uygulamada bir model seç ve konuşmaya başla. Arayüz dili: **Ayarlar → Genel → Dil**.
+- GPU şart değil; NVIDIA, AMD ve Intel ekran kartları desteklenir.
+- Web araması, bulut modelleri, araçlar ve yerel API isteğe bağlıdır ve varsayılan olarak kapalıdır.
+
+<div align="center">
+<br>
+<sub>Made for people who want their AI on their own machine.</sub>
+</div>
