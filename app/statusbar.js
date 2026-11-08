@@ -11,6 +11,8 @@ Object.assign(translations,{
  statusContext:['Context','Bağlam'],
  statusVram:['VRAM','VRAM'],
  statusEngine:['Engine','Motor'],
+ statusSpeed:['Speed','Hız'],
+ statusSpeedTitle:['Generation speed of the last response (tokens per second)','Son yanıtın üretim hızı (saniyede token)'],
  statusWebOn:['Web on','Web açık'],
  statusWebOff:['Web off','Web kapalı'],
  statusCloud:['Cloud · {provider}','Bulut · {provider}'],
@@ -26,7 +28,13 @@ Object.assign(translations,{
 function paintPlaceholder(){const prompt=document.getElementById('prompt');if(!prompt)return;const cloud=isCloud();const text=cloud?tf('composerPlaceholderCloud',{provider:providerOf()||t('statusCloudGeneric')}):t('composerPlaceholder');prompt.placeholder=text;prompt.dataset.placeholder=text;}
 
 // The only source the status surface reads. syncStatus() fills it from the app; paintStatus() never reads state.* itself.
-const statusState={ready:false,placement:'composer',model:'',cloud:null,context:null,vram:null,engine:'',web:false,phase:'ready'};
+const statusState={ready:false,placement:'composer',model:'',cloud:null,context:null,vram:null,engine:'',web:false,phase:'ready',speed:null};
+// Generation speed. Chunks are counted while a reply streams (one chunk is about one token in llama.cpp's stream); the
+// final context event replaces the estimate with the engine's exact token count over the same interval. The first chunk
+// only starts the clock, so prompt processing time is never counted as generation.
+const speedRun={first:0,last:0,chunks:0,painted:0};
+let speedClockOverride=null;
+const speedClock=()=>speedClockOverride?speedClockOverride():performance.now();
 
 const statusRoot=el('div','app-status');
 statusRoot.id='app-status';
@@ -43,13 +51,14 @@ const modelItem=statusItem('status-model','status-model','button');
 const contextItem=statusItem('status-context','status-context','button');
 const vramItem=statusItem('status-vram','status-vram');
 const engineItem=statusItem('status-engine','status-engine');
+const speedItem=statusItem('status-speed','status-speed');speedItem.node.hidden=true;
 const phaseDot=el('span','status-dot');phaseDot.dataset.phase='ready';const phaseText=el('span','status-phase');modelItem.node.append(phaseDot,phaseText);
-contextItem.value.classList.add('status-mono');vramItem.value.classList.add('status-mono');
+contextItem.value.classList.add('status-mono');vramItem.value.classList.add('status-mono');speedItem.value.classList.add('status-mono');
 
 const webItem=el('button','status-item status-web');webItem.id='status-web';webItem.type='button';
 const webValue=el('span','status-value');webValue.id='status-web-value';webItem.append(webValue);
 
-statusRoot.append(modelItem.node,contextItem.node,vramItem.node,engineItem.node,webItem);
+statusRoot.append(modelItem.node,contextItem.node,speedItem.node,vramItem.node,engineItem.node,webItem);
 const composerFoot=document.querySelector('.composer-foot');
 const contextWrap=composerFoot?composerFoot.querySelector('.context-wrap'):null;
 // The detailed composer context popover is replaced by the status context item (which opens Settings -> Context). It stays in
@@ -128,6 +137,8 @@ function paintStatus(){
   contextItem.node.title=t('adjustContext');
  }
  contextItem.node.setAttribute('aria-label',`${t('statusContext')}: ${contextItem.value.textContent}`);
+ speedItem.node.hidden=statusState.speed==null;
+ if(statusState.speed!=null){speedItem.label.textContent=t('statusSpeed');speedItem.value.textContent=`${fmt(Math.round(statusState.speed*10)/10)} tok/s`;speedItem.node.title=t('statusSpeedTitle');speedItem.node.setAttribute('aria-label',`${t('statusSpeed')}: ${speedItem.value.textContent}`);}
  const hideVram=cloud||statusState.vram==null;
  vramItem.node.hidden=hideVram;
  if(!hideVram){vramItem.label.textContent=t('statusVram');vramItem.value.textContent=`${fmt(Math.round(statusState.vram*10)/10)} GB`;}
@@ -160,12 +171,26 @@ function refreshStatus(){syncStatus();placeStatus();paintStatus();}
 // listener self-contained (and lets the UI test feed the same event shape without a running model).
 function handleEngineEvent(event){
  if(!event)return;
+ if(event.type==='chunk'){
+  if(state.operation!=='send')return;
+  const now=speedClock();
+  if(!speedRun.chunks){speedRun.first=now;speedRun.painted=now;}
+  speedRun.last=now;speedRun.chunks++;
+  // At most two repaints a second while streaming; the timestamp check replaces a timer.
+  if(speedRun.chunks>2&&now-speedRun.painted>=500){const live=rate(speedRun.chunks);if(live!=null)statusState.speed=live;speedRun.painted=now;paintStatus();}
+  return;
+ }
  if(event.type==='context'){
   if(state.chat&&event.data)state.contexts.set(state.chat.Id,event.data);
+  const generated=Number(event.data?.Generated)||0;
+  if(generated>1&&speedRun.chunks>1&&(event.data.Final||event.data.Counted)){const exact=rate(generated);if(exact!=null)statusState.speed=exact;}
   refreshStatus();return;
  }
  if(event.type==='progress'&&/^Engine · /.test(String(event.data?.label||'')))refreshStatus();
 }
+
+function rate(tokens){const seconds=(speedRun.last-speedRun.first)/1000;return seconds>0.05&&tokens>1?(tokens-1)/seconds:null;}
+function resetSpeed(){speedRun.first=speedRun.last=speedRun.chunks=speedRun.painted=0;}
 
 function openModelMenu(){
  if(state.busy)return;
@@ -199,7 +224,7 @@ webItem.addEventListener('click',()=>{toggleWeb();});
 const statusApplyAppearance=applyAppearance;applyAppearance=function(){const result=statusApplyAppearance.apply(this,arguments);refreshStatus();return result;};
 const statusRenderPickers=renderPickers;renderPickers=function(){statusRenderPickers.apply(this,arguments);refreshStatus();};
 const statusRenderContext=renderContext;renderContext=function(){statusRenderContext.apply(this,arguments);refreshStatus();};
-const statusSetBusy=setBusy;setBusy=function(){statusSetBusy.apply(this,arguments);refreshStatus();};
+const statusSetBusy=setBusy;setBusy=function(){const wasBusy=!!state.busy;statusSetBusy.apply(this,arguments);if(!wasBusy&&state.busy&&state.operation==='send')resetSpeed();refreshStatus();};
 const statusPaintTools=paintToolSettings;paintToolSettings=function(){statusPaintTools.apply(this,arguments);refreshStatus();};
 const statusRenderBackend=renderBackend;renderBackend=function(){statusRenderBackend.apply(this,arguments);refreshStatus();};
 const statusLocalize=localize;localize=function(){statusLocalize.apply(this,arguments);refreshStatus();};
@@ -210,4 +235,4 @@ window.addEventListener('lumen-ready',()=>{refreshStatus();if(!toolsConfig&&type
 placeStatus();
 if(state.ready)refreshStatus();else statusRoot.hidden=true;
 // Test seam only (no window.lumen change): read the state, feed an engine event, or force a repaint.
-globalThis.LumenStatus=Object.freeze({state:statusState,refresh:refreshStatus,event:handleEngineEvent,placement:placeStatus});
+globalThis.LumenStatus=Object.freeze({state:statusState,setClock(fn){speedClockOverride=typeof fn==='function'?fn:null;},refresh:refreshStatus,event:handleEngineEvent,placement:placeStatus});

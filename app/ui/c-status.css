@@ -23,6 +23,7 @@ body.statusbar-window .shell{height:calc(100vh - 36px - var(--statusbar-height))
 button.status-item{cursor:pointer;text-align:left}
 button.status-item:hover:not(:disabled){background:var(--hover);color:var(--text)}
 button.status-item:disabled{opacity:.55;cursor:default}
+.status-speed{flex:none}
 .status-web{flex:none;color:var(--text)}
 .status-web[aria-pressed=false]{color:var(--text-muted)}
 .status-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--text-muted)}
@@ -35,6 +36,7 @@ button.status-item:disabled{opacity:.55;cursor:default}
 @media (max-width:900px){
  .app-status[data-placement=composer]{gap:9px}
  .app-status[data-placement=composer] .status-model .status-value{max-width:120px}
+ .app-status[data-placement=composer] .status-speed .status-label{display:none}
 }
 /* .app-status clips overflow; keep the focus ring inside the item so it is never cut off. */
 .status-item:focus-visible{outline-offset:-2px}

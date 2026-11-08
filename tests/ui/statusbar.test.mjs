@@ -116,6 +116,25 @@ describe(`status bar (${shell})`, () => {
     await ev("setPage('chat'); 0");
   });
 
+  test('tokens per second: live estimate while streaming, exact count when the reply ends', async () => {
+    // A fake clock and the engine's own event shapes: no model is needed. The first chunk only starts the clock.
+    await ev("window.__now = 1000; LumenStatus.setClock(() => window.__now); state.operation = 'send'; 0");
+    await ev("LumenStatus.event({type:'chunk',data:'a'}); 0");
+    assert.equal(await ev("document.getElementById('status-speed').hidden"), true, 'hidden before a measurement');
+    // 21 chunks over 1 s -> 20 tok/s, painted once the 500 ms throttle has passed.
+    await ev("for (let i = 1; i <= 20; i++) { window.__now = 1000 + i * 50; LumenStatus.event({type:'chunk',data:'b'}); } 0");
+    assert.equal(await ev("document.getElementById('status-speed').hidden"), false);
+    assert.equal(await ev("document.getElementById('status-speed-value').textContent"), '20 tok/s');
+    // The engine counted 31 tokens in the same second: the exact value replaces the estimate.
+    await ev("LumenStatus.event({type:'context',data:{Prompt:100,Generated:31,Capacity:4096,ModelCapacity:32768,OmittedMessages:0,Final:true}}); 0");
+    assert.equal(await ev("document.getElementById('status-speed-value').textContent"), '30 tok/s');
+    assert.match(await ev("document.getElementById('status-speed').title"), /token/);
+    // Chunks from other operations (speed lab) are not counted.
+    await ev("state.operation = 'bench'; window.__now = 9000; LumenStatus.event({type:'chunk',data:'x'}); 0");
+    assert.equal(await ev("document.getElementById('status-speed-value').textContent"), '30 tok/s');
+    await ev("state.operation = null; LumenStatus.setClock(null); 0");
+  });
+
   test('web item toggles the existing search setting', async () => {
     await ev("setPage('chat'); 0");
     await ev("updateTools({ search: { enabled: true } }).then(() => 0)");
