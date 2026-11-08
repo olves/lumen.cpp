@@ -3,6 +3,7 @@
 //   $env:LUMEN_SHELL='electron'; node --test tests/ui/dropfiles.test.mjs
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { launch, workRoot } from '../harness/launch.mjs';
 import { prepareData } from './data.mjs';
@@ -25,6 +26,19 @@ const drop = (files, type = 'drop') => ev(`(() => {
 })()`);
 const chips = () => ev("[...document.querySelectorAll('#attachments .attachment-chip span')].map(s => s.textContent)");
 const lastToast = () => ev("document.getElementById('toast').textContent");
+// A one-page PDF with real text (same shape as documents.test.mjs).
+function pdf(text) {
+  const stream = `BT /F1 18 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`];
+  let out = '%PDF-1.4\n'; const offsets = [];
+  objects.forEach((o, i) => { offsets.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` + offsets.map(n => String(n).padStart(10, '0') + ' 00000 n \n').join('');
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
 const reset = () => ev("clearDraftFiles(); document.getElementById('toast').textContent = ''; document.getElementById('toast').hidden = true; 0");
 
 describe(`composer file drop (${shell})`, () => {
@@ -49,9 +63,9 @@ describe(`composer file drop (${shell})`, () => {
 
   test('unsupported, binary and too many files are refused with a message', async () => {
     await reset();
-    await drop([['photo.png', [137, 80, 78, 71]]]);
+    await drop([['movie.mp4', 'x']]);
     await app.cdp.waitFor("document.getElementById('toast').textContent.length > 0", 5000);
-    assert.match(await lastToast(), /photo\.png/);
+    assert.match(await lastToast(), /movie\.mp4/);
     assert.deepEqual(await chips(), []);
     await reset();
     await drop([['data.txt', [104, 105, 0, 1]]]);
@@ -76,8 +90,42 @@ describe(`composer file drop (${shell})`, () => {
     await ev("(async () => { state.prefs = await api.preferences({ ...state.prefs, language: 'tr' }); localize(); return 0; })()");
     await drop([['clip.mp4', 'x']]);
     await app.cdp.waitFor("document.getElementById('toast').textContent.length > 0", 5000);
-    assert.match(await lastToast(), /bırakılarak eklenemez/);
+    assert.match(await lastToast(), /“clip.mp4” eklenemez/);
     await ev("(async () => { state.prefs = await api.preferences({ ...state.prefs, language: 'en' }); localize(); return 0; })()");
+  });
+
+  test('a dropped PNG becomes a photo of the draft', async () => {
+    await reset();
+    // A real PNG made in the page (canvas), dropped like a file from the desktop.
+    await ev(`(async () => {
+      const c = document.createElement('canvas'); c.width = 64; c.height = 32; const g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, 64, 32); g.fillStyle = '#000'; g.fillText('Hi', 10, 20);
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      const dt = new DataTransfer(); dt.items.add(new File([blob], 'shot.png', { type: 'image/png' }));
+      document.querySelector('.composer').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+      return 0; })()`);
+    await app.cdp.waitFor("document.querySelectorAll('#photo-attachments .photo-card').length === 1", 30000);
+    assert.equal(await ev('draftPhotos.length'), 1);
+    assert.deepEqual(await chips(), [], 'not added as a text file');
+  });
+
+  // The first toast of a document drop is the "Reading <name>…" progress line; the result replaces it.
+  const readDone = "(t => t.length > 0 && !/…$/.test(t))(document.getElementById('toast').textContent)";
+  test('a dropped PDF is read as a document of the conversation; the temporary copy is removed', async () => {
+    await reset();
+    await drop([['takvim.pdf', [...pdf('The library opens at eight on Tuesday.')]]]);
+    await app.cdp.waitFor(readDone, 30000);
+    const names = () => ev("api.documents('list', { chatId: state.chat.Id }).then(l => l.map(d => d.name))");
+    assert.match(await lastToast(), /added|eklendi/i, await lastToast());
+    assert.deepEqual(await names(), ['takvim.pdf']);
+    const tempDrop = path.join(dataDir, 'temp', 'drop');
+    assert.deepEqual(fs.existsSync(tempDrop) ? fs.readdirSync(tempDrop) : [], [], 'no temporary copy left');
+    // A file that only claims to be a PDF is reported, not attached.
+    await reset();
+    await drop([['bozuk.pdf', 'not a pdf']]);
+    await app.cdp.waitFor(readDone, 30000);
+    assert.deepEqual(await names(), ['takvim.pdf']);
+    assert.deepEqual(fs.existsSync(tempDrop) ? fs.readdirSync(tempDrop) : [], []);
   });
 
   test('nothing is added while a reply runs', async () => {

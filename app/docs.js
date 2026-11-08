@@ -24,6 +24,17 @@ const docsDialog=el('dialog','project-dialog docs-dialog');docsDialog.id='docs-d
  $('attach-files').after(button);button.onclick=addDocuments;
 })();
 async function loadDocs(){const id=state.chat?.Id;if(!id)return;chatDocsId=id;try{const list=await api.documents('list',{chatId:id});if(state.chat?.Id===id){chatDocs=list;renderToolChips();}}catch{}}
+// Dropped PDF and Word files (renderer.js addDroppedFiles): the core writes each to a temporary file for the same reader as
+// the + menu and removes it afterwards. 25 MB each here; larger documents are added from the + menu.
+async function addDroppedDocuments(files){
+ if(!state.chat)return;const id=state.chat.Id;const msgs=[];let added=0;
+ for(const file of files.slice(0,10)){
+  if(file.size>25*1024*1024){msgs.push(tf('dropDocTooLarge',{name:file.name}));continue;}
+  try{const r=await api.documents('drop',{chatId:id,name:file.name,data:await fileBase64(file)});if(state.chat?.Id===id)chatDocs=r.documents;added+=r.added.length;for(const f of r.failed){const key='docFail_'+String(f.reason).replace(/-/g,'_');msgs.push(translations[key]?tf(key,{name:f.name}):f.name+': '+f.reason);}}
+  catch(e){msgs.push(cleanError(e));}
+ }
+ renderToolChips();if(added)msgs.unshift(tf('docsAdded',{n:fmt(added)}));if(msgs.length)toast(msgs.join(' '));if(docsDialog.open)paintDocsDialog();
+}
 async function addDocuments(){
  closeComposerMenus();if(!state.chat)return;const id=state.chat.Id;
  try{
