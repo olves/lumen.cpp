@@ -64,14 +64,14 @@ There is nothing else to install: no Python, no Ollama, no npm. Choose a model i
 **🧩 Tools & extensions** *(all optional, off by default)*
 - **Web research**: a planner and sub-agents search and read pages, then answer with sources. DuckDuckGo (no key), Brave, Tavily, Wikipedia or your own SearXNG
 - **Built-in browser panel** with chat commands such as "open github.com" or "search lofi on youtube"
-- **Read-only project folder**: the model can list, search and read files, with file citations, but it can never write or run anything
+- **Coding agent on a project folder**: the model searches and reads only the lines it needs; with **Allow edits** on it changes and creates files, each change shown as a diff and applied only after you approve it, and the latest task can be undone. Works with local models and cloud models such as DeepSeek, with cache-friendly requests (80–90 % of input served from DeepSeek's cache after the first step), automatic context compaction, a live status (steps, tokens, cache rate, context) and per-task limits. It never runs commands or deletes files
 - **MCP tools** over HTTP; every call shows its arguments and waits for your approval
 - **Skills, assistants and plugins**: reusable instructions, saved personas with their own settings, and one-click bundles
 - **Local image generation** with stable-diffusion.cpp (Z-Image Turbo)
 
 **☁️ Cloud models** *(optional, bring your own key)*
 - OpenAI, Anthropic, Gemini, OpenRouter, Groq, Mistral or any OpenAI-compatible address
-- Only the conversations where you pick a cloud model are sent, and only to that provider. The composer tells you so.
+- Only the conversations where you pick a cloud model are sent, and only to that provider. The composer tells you so. Project folders work with cloud models after a one-time consent per provider; web research and connected tools stay local.
 
 **🎨 Make it yours**
 - Three themes (**Windows, Reading, Pro**), dark and light, preset or custom accent colors, fonts, text size and corner radius
