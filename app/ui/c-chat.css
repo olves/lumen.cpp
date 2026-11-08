@@ -199,3 +199,6 @@ body.no-motion .message.search-hit{animation:none;outline:1px solid var(--focus)
 
 @media (max-width:1000px){.composer-local{display:none}#selected-model-name{max-width:200px}.composer-right{max-width:85%}}
 @media (max-height:700px){.empty{margin-top:40px}.composer textarea{min-height:40px}}
+
+/* A text/code file dragged over the composer (renderer.js addDroppedFiles). */
+.composer.drop-target{outline:2px dashed var(--accent);outline-offset:3px}
