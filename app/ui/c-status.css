@@ -24,6 +24,12 @@ button.status-item{cursor:pointer;text-align:left}
 button.status-item:hover:not(:disabled){background:var(--hover);color:var(--text)}
 button.status-item:disabled{opacity:.55;cursor:default}
 .status-speed{flex:none}
+/* Under the composer the value ("38.6 tok/s") says what it is; the label would push the row past its width in wider fonts. */
+.app-status[data-placement=composer] .status-speed .status-label{display:none}
+/* When the row is short of room the model name gives way first (its full name is in the tooltip), the numbers never
+   shrink, so a context or speed value is never cut to "…". */
+.app-status .status-model{flex-shrink:6}
+.app-status :is(.status-context,.status-speed,.status-vram,.status-engine,.status-web){flex-shrink:0}
 .status-web{flex:none;color:var(--text)}
 .status-web[aria-pressed=false]{color:var(--text-muted)}
 .status-dot{width:6px;height:6px;flex:none;border-radius:50%;background:var(--text-muted)}
@@ -36,7 +42,6 @@ button.status-item:disabled{opacity:.55;cursor:default}
 @media (max-width:900px){
  .app-status[data-placement=composer]{gap:9px}
  .app-status[data-placement=composer] .status-model .status-value{max-width:120px}
- .app-status[data-placement=composer] .status-speed .status-label{display:none}
 }
 /* .app-status clips overflow; keep the focus ring inside the item so it is never cut off. */
 .status-item:focus-visible{outline-offset:-2px}
