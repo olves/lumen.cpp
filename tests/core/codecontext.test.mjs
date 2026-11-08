@@ -90,3 +90,8 @@ test('estimateTokens counts characters / 3 like the agent', () => {
   assert.equal(ctx.estimateTokens([{ role: 'user', content: 'x'.repeat(300) }]), 104);
   assert.equal(ctx.estimateTokens([{ role: 'assistant', content: null, tool_calls: [{ function: { arguments: 'y'.repeat(30) } }] }]) > 10, true);
 });
+
+test('the answer language follows the user message (DeepSeek wrote German for "the user\'s language")', () => {
+  assert.match(ctx.systemText({ projectName: 'p', allowEdits: false, language: 'en' }), /same language as the user's latest message/);
+  assert.match(ctx.systemText({ projectName: 'p', allowEdits: false, language: 'tr' }), /same language as the user's latest message/);
+});
