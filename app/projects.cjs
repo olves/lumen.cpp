@@ -120,4 +120,4 @@ function createProjectStore(data){
   forget(id){this.unbind(id);}
  };
 }
-module.exports={createProjectTools,createProjectStore,gitignoreMatcher,isSensitive,LIMITS};
+module.exports={createProjectTools,createProjectStore,gitignoreMatcher,isSensitive,LIMITS,EXCLUDED_DIRS,realRoot,inside};
