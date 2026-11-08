@@ -78,6 +78,14 @@ değişikliği yap, context'i şişirme" adımlarından gelir; komut çalıştı
 - **Görev sonu:** yanıtın altında özet: değişen dosyalar (tıklanınca fark), **"Bu görevdeki değişiklikleri geri al"**, ve
   maliyet satırı: `Girdi 48.2K (%91 önbellek) · Çıktı 3.1K · ≈ 0,9 ¢` (para birimi fiyat tablosundan; yerel modelde "yerel ·
   ücretsiz").
+- **Canlı durum (görev sürerken):** mevcut durum çubuğu/satırı (`statusbar.js`) kodlama görevi çalışırken şu öğeleri ekler
+  (kullanıcının gösterdiği DeepSeek aracı örnek alındı, 8 Kasım): **mesaj · adım sayısı**, **tok/s** (zaten var), **toplam
+  token · önbellek oranı** (%), ve **context doluluk halkası** (%; sıkıştırmadan sonra düşer). Tutar çubukta değil, görev
+  sonundaki özet satırındadır. Görev bitince öğeler son değerleriyle kalır, yeni görevde sıfırlanır.
+
+  ```
+  Model DeepSeek V4.1 Flash · Bulut   1 mesaj · 20 adım   190 tok/s   682K token · %90 önbellek   ◔ %8
+  ```
 - **Bütçe:** Ayarlar → Kodlama: görev başına üst sınır (varsayılan 0,20 $). Aşılınca ajan durur, "devam etmek için onay"
   kartı gösterir.
 - **Durdur:** mevcut gönder/durdur düğmesi görevi keser; o ana kadar uygulanmış değişiklikler kalır ve geri alınabilir.
