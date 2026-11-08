@@ -8,6 +8,7 @@
 // LUMEN_TEST_SAVE_DIR: a folder. When set, save dialogs return <folder>\<file name of options.defaultPath> instead of asking.
 // LUMEN_TEST_DOWNLOAD_BASE: http://127.0.0.1:<port>. Model downloads then fetch <base>/<repo>/resolve/main/<file> from the UI tests'
 // local server instead of Hugging Face. Any other value is ignored.
+// LUMEN_TEST_IDLE_MS: 100-999999. Replaces the minutes of "Free memory when idle" so the idle unload can be tested.
 // The update/import overrides below are returned only here, so they cannot take effect outside test mode.
 'use strict';
 const fs = require('fs');
@@ -26,6 +27,7 @@ function install({ platform, env = {} }) {
       updateKey: env.LUMEN_UPDATE_KEY ? fs.readFileSync(env.LUMEN_UPDATE_KEY, 'utf8') : undefined,
       importHome: env.LUMEN_IMPORT_HOME || null,
       allowHost: env.LUMEN_TEST_ALLOW_HOST || null,
+      idleMs: /^\d{3,6}$/.test(String(env.LUMEN_TEST_IDLE_MS || '')) ? Number(env.LUMEN_TEST_IDLE_MS) : null,
       downloadBase: /^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(String(env.LUMEN_TEST_DOWNLOAD_BASE || '')) ? env.LUMEN_TEST_DOWNLOAD_BASE : null,
     },
     openDialog: options => files

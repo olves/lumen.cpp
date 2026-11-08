@@ -7,6 +7,7 @@ Object.assign(translations,{
  gpuAuto:['Auto','Otomatik'],gpuAll:['All on GPU','Hepsi GPU’da'],gpuCpu:['CPU only','Yalnızca CPU'],
  fastGeneration:['Faster generation','Hızlı üretim'],fastGenerationHint:['Guesses upcoming text from the conversation and checks several tokens in one step. Answers stay the same. Most useful when the model repeats code or text you gave it.','Gelecek metni sohbetten tahmin eder ve birkaç token’ı tek adımda doğrular. Yanıtlar değişmez. En çok, model verdiğin kodu veya metni tekrar yazarken işe yarar.'],
  compactContext:['Compact context memory','Sıkıştırılmış context belleği'],compactContextHint:['Keeps the context in 8-bit instead of 16-bit: about half the memory, so longer contexts or larger models fit. The quality change is usually very small.','Context’i 16 yerine 8 bit tutar: yaklaşık yarı bellek, böylece daha uzun context veya daha büyük model sığar. Kalite farkı genellikle çok küçüktür.'],
+ idleUnload:['Free memory when idle','Boştayken belleği boşalt'],idleUnloadHint:['Unloads the chat model from RAM and VRAM after it has not been used for this long. The next message loads it again, which takes a few seconds.','Sohbet modeli bu süre kullanılmazsa RAM ve VRAM’den çıkarılır. Sonraki mesaj modeli yeniden yükler; bu birkaç saniye sürer.'],idleNever:['Never','Hiçbir zaman'],idle5:['5 min','5 dk'],idle15:['15 min','15 dk'],idle30:['30 min','30 dk'],idle60:['1 hour','1 saat'],
  performanceNote:['Changes apply when the model next loads. Some models also offer a small draft model for faster replies: open the model in Library.','Değişiklikler model bir sonraki yüklenişinde uygulanır. Bazı modellerin hızlı yanıt için küçük bir taslak modeli de vardır: modeli Library’de aç.'],
  performanceNoHost:['These settings need the engine host (backend/lumen-host.exe). The engine currently uses its defaults.','Bu ayarlar motor host’unu (backend/lumen-host.exe) gerektirir. Motor şu an varsayılanlarını kullanıyor.'],
  contextNeedsHost:['32,768 tokens needs the engine host.','32.768 token motor host’unu gerektirir.'],
@@ -17,9 +18,10 @@ Object.assign(translations,{
  draftCheck:['Check for a draft model','Taslak modeli kontrol et'],draftDownload:['Download draft model · {size}','Taslak modeli indir · {size}'],draftRemove:['Remove','Kaldır'],draftRemoved:['Draft model removed','Taslak model kaldırıldı'],
  draftOff:['Faster generation is off in Runtime, so the draft model is not used.','Runtime’da Hızlı üretim kapalı; taslak model kullanılmıyor.']
 });
-segmentedIds.push('gpu-layers');
+segmentedIds.push('gpu-layers','idle-unload');
 function paintPerformance(){
  const p=state.prefs;$('gpu-layers').value=['auto','gpu','cpu'].includes(p.gpuLayers)?p.gpuLayers:'auto';$('speculative').checked=p.speculative!==false;$('kv-cache').checked=p.kvCache==='q8_0';
+ $('idle-unload').value=String([0,5,15,30,60].includes(Number(p.idleUnload))?Number(p.idleUnload):0);
  const noHost=toolsConfig&&!toolsConfig.hostReady;for(const id of ['gpu-layers','speculative','kv-cache'])$(id).disabled=!!noHost;
  $('performance-note').textContent=t(noHost?'performanceNoHost':'performanceNote');
  const wide=document.querySelector('#context-size option[value="32768"]');if(wide){wide.disabled=!!noHost;wide.title=noHost?t('contextNeedsHost'):'';}
@@ -29,6 +31,9 @@ async function savePerformance(){
  paintPerformance();syncSegmented();
 }
 for(const id of ['gpu-layers','speculative','kv-cache'])$(id).onchange=savePerformance;
+$('idle-unload').onchange=async()=>{try{state.prefs=await api.preferences({...state.prefs,idleUnload:Number($('idle-unload').value)});}catch(e){toast(cleanError(e));}paintPerformance();syncSegmented();};
+// The core unloaded the idle model (prefs.idleUnload): the engine and context shown are no longer in memory.
+api.onEvent(e=>{if(e?.type!=='unloaded')return;state.activeBackend=null;renderBackend();state.contexts.clear();renderContext();});
 const speedOpenSettings=openSettings;openSettings=function(section,animate){speedOpenSettings(section,animate);if(['runtime','agent'].includes(state.setting)){paintPerformance();if(!toolsConfig)loadToolsConfig().then(paintPerformance,()=>{});}};
 const speedLocalize=localize;localize=function(){speedLocalize();if(state.ready)paintPerformance();};
 
