@@ -104,7 +104,7 @@ async function pressTab() {
   await app.cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
   return ev(`(() => { const e = document.activeElement; if (!e) return null; const cs = getComputedStyle(e);
     return { id: e.id || '', text: (e.textContent || '').trim().slice(0, 24), tag: e.tagName, match: e.matches(':focus-visible'),
-      outline: cs.outlineStyle, width: parseFloat(cs.outlineWidth) || 0, shadow: cs.boxShadow }; })()`);
+      outline: cs.outlineStyle, width: parseFloat(cs.outlineWidth) || 0, dpr: devicePixelRatio, shadow: cs.boxShadow }; })()`);
 }
 // Real Tab presses show :focus-visible. Keyboard order must reach the main chat controls, and every button it lands on must
 // draw the 2 px focus ring (text fields intentionally use their own border instead).
@@ -117,7 +117,8 @@ async function checkKeyboard(label) {
   for (const id of ['prompt', 'add-button', 'model-trigger', 'send', 'status-model', 'status-context', 'status-web']) assert.ok(ids.has(id), `${label}: Tab reaches #${id}; saw ${[...ids].filter(Boolean).join(',')}`);
   for (const item of seen) if (item && ['BUTTON', 'A'].includes(item.tag)) {
     assert.equal(item.match, true, `${label}: ${item.id || item.text} is not :focus-visible after Tab`);
-    const outlineRing = item.outline !== 'none' && item.width >= 2;
+    // Chromium snaps outlines to whole device pixels: 2 px at 125 % display scale is 2 device px = 1.6 CSS px.
+    const outlineRing = item.outline !== 'none' && item.width >= Math.floor(2 * item.dpr) / item.dpr - 0.01;
     const shadowRing = item.shadow && item.shadow !== 'none'; // code-copy and similar use a 2 px box-shadow ring
     assert.ok(outlineRing || shadowRing, `${label}: ${item.id || item.text} has no visible focus ring (${item.outline} ${item.width}px, shadow ${item.shadow})`);
   }
@@ -191,7 +192,7 @@ describe(`layout matrix (${shell})`, () => {
     assert.ok(seen.some(item => item?.text === 'Appearance'), `settings nav not reached: ${JSON.stringify(seen)}`);
     for (const item of seen) if (item?.tag === 'BUTTON') {
       assert.equal(item.match, true, `settings: ${item.text} is not :focus-visible after Tab`);
-      assert.ok((item.outline !== 'none' && item.width >= 2) || (item.shadow && item.shadow !== 'none'), `settings: ${item.text} has no visible focus ring`);
+      assert.ok((item.outline !== 'none' && item.width >= Math.floor(2 * item.dpr) / item.dpr - 0.01) || (item.shadow && item.shadow !== 'none'), `settings: ${item.text} has no visible focus ring`);
     }
   });
 
@@ -235,7 +236,7 @@ describe(`layout matrix (${shell})`, () => {
   test('150% Windows scaling: the default window in all themes, modes and languages', { timeout: 180000 }, async () => {
     // 1240x860 at 150% is 827x573 CSS pixels; devicePixelRatio 1.5 also exercises high-DPI text and borders.
     await app.cdp.send('Emulation.setDeviceMetricsOverride', { width: 827, height: 573, deviceScaleFactor: 1.5, mobile: false });
-    await app.cdp.waitFor('window.innerWidth === 827 && window.devicePixelRatio === 1.5', 5000);
+    await app.cdp.waitFor('window.innerWidth === 827 && Math.abs(window.devicePixelRatio - 1.5) < 0.001', 5000);
     for (const lang of ['en', 'tr']) for (const layout of ['native', 'reading', 'pro']) for (const mode of ['dark', 'light']) {
       const label = `150% ${layout}/${mode}/${lang}`;
       await setSelect('language', lang); await setSelect('interface-design', layout); await setSelect('display-mode', mode);
@@ -248,7 +249,7 @@ describe(`layout matrix (${shell})`, () => {
         await ev(`openSettings(${JSON.stringify(s)}, false); 0`);
         await checkCell(`${label} settings/${s}`, layout, mode, lang);
       }
-      assert.equal(await ev('innerHeight'), 573);
+      const height = await ev('innerHeight'); assert.ok(Math.abs(height - 573) <= 1, `innerHeight ${height}`); // 574 when the display itself is at 125 %
     }
     await app.cdp.send('Emulation.clearDeviceMetricsOverride');
     await app.cdp.waitFor('window.innerWidth > 800', 5000);
