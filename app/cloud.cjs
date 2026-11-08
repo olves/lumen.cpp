@@ -91,7 +91,7 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
     if (!response.ok) throw await errorFrom(response, label);
     let content = '', reasoning = '', usage = null, finish = null;
     const calls = [];
-    const addCall = (index, part) => { const c = calls[index] ||= {id: '', name: '', arguments: ''}; if (part.id) c.id = part.id; if (part.function?.name) c.name = part.function.name; if (typeof part.function?.arguments === 'string') c.arguments += part.function.arguments; };
+    const addCall = (index, part) => { const c = calls[index] ||= {id: '', name: '', arguments: ''}; if (part.id) c.id = part.id; if (part.function?.name) c.name = part.function.name; if (typeof part.function?.arguments === 'string') c.arguments += part.function.arguments; else if (part.function?.arguments && typeof part.function.arguments === 'object') c.arguments = JSON.stringify(part.function.arguments); };
     const toolCalls = () => calls.filter(Boolean).map((c, i) => ({id: c.id || 'call_' + i, name: c.name, arguments: c.arguments}));
     const type = String(response.headers.get('content-type') || '');
     if (!/event-stream/.test(type)) { // a provider that ignored stream:true

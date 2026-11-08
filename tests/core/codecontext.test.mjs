@@ -95,3 +95,13 @@ test('the answer language follows the user message (DeepSeek wrote German for "t
   assert.match(ctx.systemText({ projectName: 'p', allowEdits: false, language: 'en' }), /same language as the user's latest message/);
   assert.match(ctx.systemText({ projectName: 'p', allowEdits: false, language: 'tr' }), /same language as the user's latest message/);
 });
+
+test('review #5: compaction keeps the current task steps when an older task is in the transcript', () => {
+  const entries = [{ role: 'user', msg: 0, text: 'old task' }];
+  for (let s = 1; s <= 20; s++) entries.push(...read(s, 'o' + s, `old${s}.js`).map(e => ({ ...e, msg: 0 })));
+  entries.push({ role: 'user', msg: 2, text: 'new task' });
+  for (let s = 1; s <= 3; s++) entries.push(...read(s, 'n' + s, `new${s}.js`).map(e => ({ ...e, msg: 2 })));
+  const tools = ctx.compact(entries, { keepSteps: 8 }).filter(e => e.role === 'tool');
+  for (const t of tools.filter(t => t.msg === 2)) assert.doesNotMatch(t.result, /elided/, 'current task untouched');
+  assert.equal(tools.filter(t => t.msg === 0 && !/elided/.test(t.result)).length, 5, 'the newest 5 old steps fill the rest');
+});

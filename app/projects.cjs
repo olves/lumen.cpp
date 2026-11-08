@@ -102,6 +102,8 @@ function createProjectTools(binding){
    let out=[],chars=0;for(let i=start;i<=end;i++){const line=lines[i-1];if(chars+line.length>LIMITS.readChars){end=i-1;break;}out.push(line);chars+=line.length+1;}
    return {path:file.rel,start,end,totalLines:lines.length,text:out.join('\n'),truncated:end<lines.length&&end<(Number(endLine)||Infinity),mtime:file.stat.mtimeMs};
   },
+  // Why a project-relative path may not be written (same rules as reading), or null.
+  async writeCheck(relPath){await setup();return excluded(String(relPath),false);},
   async sensitiveCheck(input){await setup();const text=String(input||'').replace(/\\/g,'/');const full=path.resolve(rootReal,text);const real=await fsp.realpath(full);if(!inside(real,rootReal))throw Error('That file is outside the project folder.');const r=rel(real);if(!isSensitive(r.split('/').pop()))throw Error('Only files excluded as sensitive need to be allowed.');return r;}
  };
 }

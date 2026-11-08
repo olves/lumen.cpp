@@ -138,3 +138,46 @@ test('checkpoints survive a new writer (undo after restart)', async () => {
   assert.deepEqual((await again.undo('t1')).restored, ['a.txt']);
   assert.equal(p.read('a.txt'), 'one\n');
 });
+
+// ---- Final review fixes ----
+test('review #1: excluded folders cannot be reached by changing letter case', async () => {
+  const p = project({ '.git/hooks/.keep': '', 'node_modules/m/i.js': 'x' });
+  await code(p.w.previewCreate('.GIT/hooks/pre-commit', 'echo pwned'), 'excluded');
+  await code(p.w.previewCreate('Node_Modules/m/new.js', 'x'), 'excluded');
+  await code(p.w.previewCreate('NODE_MODULES/fresh.js', 'x'), 'excluded');
+  assert.equal(fs.existsSync(path.join(p.root, '.git/hooks/pre-commit')), false);
+});
+
+test('review #2: a guard (gitignore, user excludes) is checked on the real path', async () => {
+  const p = project({ 'secret/app.json': '{"a":1}', 'src/a.js': 'x' });
+  const seen = [];
+  const w = createProjectWriter({ root: p.root, checkpointsDir: p.checkpointsDir, guard: async rel => { seen.push(rel); return rel.startsWith('secret/') ? 'gitignore' : null; } });
+  await code(w.previewEdit('SECRET/app.json', [{ old: '"a":1', new: '"a":2' }]), 'excluded');
+  await code(w.previewCreate('secret/new.json', '{}'), 'excluded');
+  await w.previewEdit('src/a.js', [{ old: 'x', new: 'y' }]);
+  assert.ok(seen.includes('secret/app.json'), 'guard sees the real on-disk casing: ' + seen.join(','));
+});
+
+test('review #7: mixed line endings outside the edit are kept byte for byte', async () => {
+  const p = project({ 'm.txt': 'a\r\nb\r\nc\nd\r\ne\r\n' });
+  await p.w.apply(await p.w.previewEdit('m.txt', [{ old: 'a\nb', new: 'A\nB' }]), 't');
+  assert.equal(p.read('m.txt'), 'A\r\nB\r\nc\nd\r\ne\r\n');
+});
+
+test('review #8: Windows reserved names and alternate data streams are refused', async () => {
+  const p = project({ 'a.txt': 'x' });
+  for (const bad of ['NUL', 'con.txt', 'sub/COM1', 'a.txt:hidden', 'trail. ', 'dot.']) await code(p.w.previewCreate(bad, 'x'), 'outside');
+  assert.deepEqual(fs.readdirSync(p.root).sort(), ['a.txt']);
+  assert.equal(p.read('a.txt'), 'x');
+});
+
+test('review #9: undo continues past a file it cannot restore and reports it', async () => {
+  const p = project({ 'a.txt': 'one\n', 'b.txt': 'two\n' });
+  await p.w.apply(await p.w.previewEdit('a.txt', [{ old: 'one', new: '1' }]), 't1');
+  await p.w.apply(await p.w.previewEdit('b.txt', [{ old: 'two', new: '2' }]), 't1');
+  fs.unlinkSync(path.join(p.checkpointsDir, 't1', 'orig-0'));
+  const r = await p.w.undo('t1');
+  assert.deepEqual(r.restored, ['b.txt']);
+  assert.deepEqual(r.skipped.map(s => s.path), ['a.txt']);
+  assert.equal(p.read('b.txt'), 'two\n');
+});

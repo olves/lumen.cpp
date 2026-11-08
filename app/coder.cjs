@@ -47,7 +47,7 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
     const settings = store.settings(), local = !cloudTarget;
     const modelKey = cloudTarget ? `${cloudTarget.provider}/${cloudTarget.model}` : null;
     const project = createProjectTools(binding);
-    const writer = createProjectWriter({ root: binding.root, checkpointsDir, allowSensitive: binding.allow || [], maxCreateBytes: local ? 12 * 1024 : 200 * 1024 });
+    const writer = createProjectWriter({ root: binding.root, checkpointsDir, allowSensitive: binding.allow || [], maxCreateBytes: local ? 12 * 1024 : 200 * 1024, guard: rel => project.writeCheck(rel) });
     const taskId = runId, info = await project.info();
     const tools = ctx.toolDefinitions(allowEdits, { createBytes: local ? 12 * 1024 : 200 * 1024 });
     const system = ctx.systemText({ projectName: info.name, allowEdits, language }) + (systemPrompt.trim() ? '\n\nThe user\'s instructions for this conversation:\n' + short(systemPrompt.trim(), 12000) : '');
@@ -79,7 +79,7 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
         // Compaction: rare and in one go (each one costs one cache miss); fewer kept steps only if 8 still do not fit.
         if (ctx.estimateTokens(render()) >= 0.75 * contextSize) {
           for (let keep = KEEP_STEPS; keep >= 1; keep--) { entries = ctx.compact(entries, { keepSteps: keep }); if (ctx.estimateTokens(render()) < 0.6 * contextSize) break; }
-          status({ compacted: true });
+          seen.clear(); status({ compacted: true });
         }
         const started = Date.now();
         let content = '', calls = [];
@@ -102,7 +102,10 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
         // Parse arguments; a call that cannot be read gets an error result so the model can correct itself.
         for (const c of calls) if (c.args === null) { try { c.args = JSON.parse(c.raw || '{}'); if (!c.args || typeof c.args !== 'object') throw 0; } catch { c.invalid = 'Invalid arguments: send a JSON object that matches the tool.'; c.args = {}; } }
         entries.push({ role: 'assistant', msg: msgIndex, step, text: content, calls: calls.map(c => ({ id: c.id, name: c.name, args: c.args })) });
+        const answeredIds = new Set();
         for (const c of calls) {
+          if (signal.aborted) break;
+          answeredIds.add(c.id);
           const finishing = c.name === 'finish' && !c.invalid;
           if (finishing) { answer = String(c.args.summary || content || '').trim(); entries.push({ role: 'tool', msg: msgIndex, step, id: c.id, name: c.name, args: {}, result: 'finished' }); continue; }
           const result = await callTool(c, step);
@@ -112,8 +115,8 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
             const n = (fails.get(key) || 0) + 1; fails.set(key, n);
             if (n >= MAX_REPEAT_FAIL) { stopReason = language === 'tr' ? `Aynı hatalı adım üç kez tekrarlandığı için durduruldu: ${short(result.text, 200)}` : `Stopped: the same failing step was repeated three times (${short(result.text, 200)}).`; answer = stopReason; }
           }
-          if (signal.aborted) break;
         }
+        for (const c of calls) if (!answeredIds.has(c.id)) entries.push({ role: 'tool', msg: msgIndex, step, id: c.id, name: c.name, args: c.args, result: 'cancelled: the user stopped the task before this call ran' });
         if (signal.aborted) break;
         const over = cost.overBudget(totals, taskCost, settings);
         if (over && answer === null) { budgetStop = over; answer = language === 'tr' ? `Görev sınırına ulaşıldı (${over === 'tokens' ? 'token' : 'tutar'}). Devam etmek için yeni bir mesaj gönder.` : `The task limit was reached (${over}). Send a new message to continue.`; }
@@ -125,6 +128,7 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
     } catch (error) {
       if (signal.aborted || error.cancelled) { task.status = 'cancelled'; send({ type: 'task', task: publicTask() }); return finishRun({ content: '', cancelled: true }); }
       task.status = 'failed'; task.error = short(error.message, 200); send({ type: 'task', task: publicTask() });
+      if (writer.changedFiles(taskId).length) return finishRun({ content: (language === 'tr' ? 'Görev bir hatayla durdu: ' : 'The task stopped with an error: ') + short(error.message, 400), failed: true });
       finishRun({ content: '', failed: true });
       throw error;
     } finally { runs.delete(runId); send({ type: 'end' }); }
@@ -177,6 +181,7 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
       }
       try {
         const done = await writer.apply(change, taskId);
+        for (const key of [...seen.keys()]) if (!key.startsWith('read_file') || key.includes(JSON.stringify(change.path).slice(1, -1))) seen.delete(key);
         send({ type: 'edit-done', callId: c.id, decision: 'applied' });
         op.status = 'done'; send({ type: 'task', task: publicTask() });
         const region = change.after.replace(/\r\n/g, '\n').split('\n');

@@ -64,3 +64,9 @@ test('a 400 retry keeps the tools', async () => {
   assert.equal(f.bodies.length, 2);
   assert.deepEqual(f.bodies[1].tools, tools);
 });
+
+test('review #16: arguments sent as an object are kept as JSON text', async () => {
+  const f = fakeFetch(() => json({ choices: [{ message: { content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'read_file', arguments: { path: 'a.js' } } }] }, finish_reason: 'tool_calls' }] }));
+  const r = await createCloud({ connections, fetchImpl: f.impl }).chat({ provider: 'custom', model: 'm', messages: [], tools });
+  assert.deepEqual(JSON.parse(r.toolCalls[0].arguments), { path: 'a.js' });
+});

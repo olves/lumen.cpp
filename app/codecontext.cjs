@@ -38,7 +38,11 @@ function systemText({ projectName, allowEdits, language }) {
 
 function toChatMessages(system, entries) {
   const out = [{ role: 'system', content: system }];
+  let open = [];
+  const close = () => { for (const id of open) out.push({ role: 'tool', tool_call_id: id, content: 'cancelled: the task stopped before this call ran' }); open = []; };
   for (const e of entries) {
+    if (e.role === 'tool') open = open.filter(id => id !== e.id); else close();
+    if (e.role === 'assistant' && e.calls?.length) open = e.calls.map(c => c.id);
     if (e.role === 'user') out.push({ role: 'user', content: e.text });
     else if (e.role === 'note') out.push({ role: 'user', content: 'NOTE: ' + e.text });
     else if (e.role === 'assistant') out.push(e.calls?.length
@@ -46,6 +50,7 @@ function toChatMessages(system, entries) {
       : { role: 'assistant', content: e.text || '' });
     else if (e.role === 'tool') out.push({ role: 'tool', tool_call_id: e.id, content: (e.error ? 'ERROR: ' : '') + e.result });
   }
+  close();
   return out;
 }
 
@@ -74,11 +79,12 @@ function stub(e) {
   if (e.name === 'list_dir') return `list_dir ${a.path || '.'} — elided`;
   return String(e.result).split('\n')[0].slice(0, 300);
 }
+const stepKey = e => (Number.isInteger(e.msg) ? e.msg : 0) * 100000 + e.step;
 function compact(entries, { keepSteps = 8 } = {}) {
-  const steps = [...new Set(entries.filter(e => Number.isInteger(e.step)).map(e => e.step))].sort((a, b) => a - b);
+  const steps = [...new Set(entries.filter(e => Number.isInteger(e.step)).map(stepKey))].sort((a, b) => a - b);
   const keepFrom = steps.length > keepSteps ? steps[steps.length - keepSteps] : -Infinity;
   return entries.map(e => {
-    if (!Number.isInteger(e.step) || e.step >= keepFrom) return e;
+    if (!Number.isInteger(e.step) || stepKey(e) >= keepFrom) return e;
     if (e.role === 'tool') return { ...e, result: stub(e) };
     if (e.role === 'assistant' && e.calls?.length) return { ...e, calls: e.calls.map(c => c.name === 'create_file' ? { ...c, args: { ...c.args, content: '[elided]' } } : c.name === 'edit_file' ? { ...c, args: { ...c.args, edits: '[elided]' } } : c) };
     return e;

@@ -159,3 +159,50 @@ test('undo restores the latest task and notes it in the transcript', async () =>
   assert.match(s.store.get(chatId).entries.at(-1).text, /undid/);
   await assert.rejects(coder.undo(chatId, 'not-the-latest', { root: s.root, allow: [] }), /latest/);
 });
+
+// ---- Final review fixes ----
+const answered = messages => { const ids = messages.flatMap(m => (m.tool_calls || []).map(c => c.id)); const results = new Set(messages.filter(m => m.role === 'tool').map(m => m.tool_call_id)); return ids.filter(id => !results.has(id)); };
+
+test('review #2: gitignored files are not edited', async () => {
+  const s = setup({ files: { '.gitignore': 'local.json\n', 'local.json': '{"a":1}\n', 'src/app.js': 'x\n' } });
+  await s.make(n => n === 0 ? { calls: [{ name: 'edit_file', args: { path: 'local.json', edits: [{ old: '"a":1', new: '"a":2' }] } }] } : { calls: [{ name: 'finish', args: { summary: 'x' } }] }).run(s.options());
+  assert.equal(s.read('local.json'), '{"a":1}\n');
+  assert.match(s.requests[1].messages.at(-1).content, /^ERROR: .*excluded/);
+  assert.equal(s.events.filter(e => e.type === 'edit-approval').length, 0);
+});
+
+test('review #3: stopping during the first of two calls answers both, so the next cloud task is valid', async () => {
+  const s = setup({ decide: () => null });
+  const coder = s.make(n => n === 0 ? { calls: [fixCall, { name: 'read_file', args: { path: 'src/app.js' } }] } : { calls: [{ name: 'finish', args: { summary: 'next' } }] });
+  const options = s.options();
+  const running = coder.run(options);
+  while (!s.events.some(e => e.type === 'edit-approval')) await new Promise(r => setTimeout(r, 5));
+  coder.cancel(options.runId);
+  await running;
+  await coder.run(s.options({ prompt: 'again', msgIndex: 2 }));
+  assert.deepEqual(answered(s.requests.at(-1).messages), [], 'every tool_call has a result');
+});
+
+test('review #4: re-reading a file after editing it returns the new content', async () => {
+  const s = setup();
+  const read = { name: 'read_file', args: { path: 'src/app.js' } };
+  await s.make(n => n === 0 ? { calls: [read] } : n === 1 ? { calls: [fixCall] } : n === 2 ? { calls: [read] } : { calls: [{ name: 'finish', args: { summary: 'x' } }] }).run(s.options());
+  const last = s.requests[3].messages.at(-1).content;
+  assert.doesNotMatch(last, /already did that/);
+  assert.match(last, /return a \+ b;/);
+});
+
+test('review #6: a task that changed files and then failed returns its files instead of throwing', async () => {
+  const s = setup();
+  const coder = s.make(n => { if (n === 0) return { calls: [fixCall] }; throw Object.assign(Error('Insufficient balance'), { code: 'request' }); });
+  const r = await coder.run(s.options());
+  assert.equal(r.failed, true);
+  assert.deepEqual(r.files, ['src/app.js']);
+  assert.match(r.content, /Insufficient balance/);
+  assert.equal(s.store.get(chatId).tasks.at(-1).files[0], 'src/app.js');
+});
+
+test('a task that failed without changes still throws', async () => {
+  const s = setup();
+  await assert.rejects(s.make(() => { throw Error('network down'); }).run(s.options()), /network down/);
+});
