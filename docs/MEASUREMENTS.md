@@ -446,3 +446,27 @@ How to read it:
 - **Not measured:** battery/CPU while idle, startup with a window visible to a person (first paint), memory while a model is loaded (the engine processes are the same in both shells and excluded by definition), long-running growth, and WebView2 versions other than the one on this machine.
 
 Conclusion for this task: the Tauri preview shell **reduces the download size** and **does not reduce memory or startup time** on this machine. Electron stays the shipped shell.
+
+## Coding agent with DeepSeek (2026-11-08)
+
+Script: `work/coding-deepseek/run.mjs` (no UI; `coder.cjs` with the real `cloud.cjs`, changes auto-approved). Project: a small
+CommonJS package with a bug in `mean()` (loop starts at 1) and failing tests. Two tasks in one session:
+1. "The tests fail. Find the bug in src/stats.js and fix it. Do not change the tests."
+2. "Add median(values) in the same style, export it, and add tests for odd and even lengths."
+After each task the project's own tests were run independently (`node --test`).
+
+| Model | Task | Time | Steps | Input tokens | From cache | Output tokens | Project tests |
+|---|---|---|---|---|---|---|---|
+| deepseek-flash (V4.1 Flash 1017) | 1 | 6 s | 3 | 5,215 | 63.8 % | 590 | pass |
+| deepseek-flash | 2 | 7 s | 4 | 11,073 | 89.0 % | 787 | pass |
+| deepseek-v4-pro | 1 | 8 s | 3 | 5,492 | 65.3 % | 477 | pass |
+| deepseek-v4-pro | 2 | 13 s | 3 | 8,996 | 79.7 % | 945 | pass |
+
+- The first request of a session cannot hit the cache; from then on the stable start (system text + tools + append-only
+  transcript) is served from DeepSeek's cache, which is why the second task is at 80–89 %.
+- Edits are search/replace: output stayed under 1,000 tokens per task even when a function and tests were added.
+- Found and fixed by these runs: "answer in the user's language" made deepseek-flash answer in German (now: the language of
+  the user's latest message); with Qwen2.5 Coder 7B (local, `tests/ui/coding-real.test.mjs`) a rename also changed the export
+  shape until the system text said to keep names/exports/formatting unchanged.
+- Money: DeepSeek's pricing pages give no numbers to a plain fetch, so Lumen ships without default prices; with prices entered
+  in the project dialog the summary shows the amount.
