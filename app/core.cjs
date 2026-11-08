@@ -40,11 +40,16 @@ async function cloudSend(args){
  try{
   const base=await coreRequest('save',{chat});emit({type:'saved',data:base});
   const p=prefs(),run=runSettings.effective(chat.Id,p),req=runSettings.request(run),vars=promptVariables(p);
-  const system=String(chat.SystemPrompt||'').replace(/\{\{\s*(current_date|current_time)\s*\}\}/g,(m,k)=>vars[k]);
+  // Providers cache the start of a request (DeepSeek, OpenAI, …): a prompt that begins the same way is billed far lower. A time in
+  // the system prompt would change that start every minute, so the variables there name a note instead, and the real date/time
+  // rides on the latest user message of this request only (the saved conversation is unchanged).
+  const timed=/\{\{\s*(current_date|current_time)\s*\}\}/.test(String(chat.SystemPrompt||''));
+  const system=String(chat.SystemPrompt||'').replace(/\{\{\s*(current_date|current_time)\s*\}\}/g,(m,k)=>k==='current_date'?'(the date given with the latest message)':'(the time given with the latest message)');
   const lastUser=[...chat.Messages].reverse().find(m=>m.Role==='user');const docContext=documents.context(chat.Id,String(lastUser?.DisplayText||lastUser?.Content||''),60000);
   const guidance=[skillStore.guidance(skillStore.idsFor(chat.Id)).text,docContext?.guidance].filter(Boolean).join('\n\n');
   let history=chat.Messages.filter(m=>m.Content).map(m=>({role:m.Role==='assistant'?'assistant':'user',content:String(m.Content)}));
   let total=history.reduce((n,m)=>n+m.content.length,0),omitted=0;while(total>300000&&history.length>1){total-=history[0].content.length;history.shift();omitted++;}
+  if(timed&&history.length&&history.at(-1).role==='user')history[history.length-1]={...history.at(-1),content:history.at(-1).content+`\n\n[${vars.current_date}, ${vars.current_time}]`};
   const messages=[...([system,guidance].filter(Boolean).length?[{role:'system',content:[system,guidance].filter(Boolean).join('\n\n')}]:[]),...history];
   const result=await cloud.chat({provider:target.provider,model:target.model,messages,maxTokens:run.responseTokens,temperature:req.temperature,sampling:req.sampling,signal:controller.signal,
    onChunk:t=>{if(!firstText)firstText=Date.now();lastText=Date.now();streamed+=t;emit({type:'chunk',data:t});},onReasoning:t=>{if(!firstThought)firstThought=Date.now();reasoning+=t;emit({type:'reasoning',data:t});}});

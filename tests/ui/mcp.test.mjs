@@ -184,6 +184,32 @@ describe(`cloud model (${shell})`, () => {
     assert.equal(await ev(`${lastAssistant}.querySelector('.message-body').textContent.trim()`), cloud.reply);
   });
 
+  test('date/time variables keep the request start stable for provider caching; reply numbers are kept', async () => {
+    // A conversation whose instructions use {{current_date}} and {{current_time}}.
+    await ev(`(async () => { state.chat.SystemPrompt = 'Be brief. Today is {{current_date}}, now {{current_time}}.'; upsert(await api.request('save', { chat: state.chat })); return 0; })()`);
+    const before = cloud.requests.filter(r => r.path === '/v1/chat/completions').length;
+    for (const text of ['Birinci soru', 'İkinci soru']) {
+      const n = await ev("document.querySelectorAll('.message.assistant').length");
+      await app.cdp.type('#prompt', text);
+      await app.cdp.click('#send');
+      await app.cdp.waitFor(`document.querySelectorAll('.message.assistant').length > ${n} && state.busy === false`, 60000);
+    }
+    const sent = cloud.requests.filter(r => r.path === '/v1/chat/completions').slice(before).map(r => r.body.messages);
+    assert.equal(sent.length, 2);
+    const [first, second] = sent;
+    assert.equal(first[0].role, 'system');
+    assert.equal(first[0].content, second[0].content, 'same system message in both requests');
+    assert.match(first[0].content, /Today is \(the date given with the latest message\), now \(the time given with the latest message\)\./);
+    assert.doesNotMatch(first[0].content, /\d{1,2}:\d{2}/, 'no clock time in the system message');
+    // The note rides only on the newest user message; the earlier one is sent as it was typed.
+    assert.match(first.at(-1).content, /^Birinci soru\n\n\[.+, \d{1,2}[:.]\d{2}\]$/);
+    assert.match(second.at(-1).content, /^İkinci soru\n\n\[.+, \d{1,2}[:.]\d{2}\]$/);
+    assert.equal(second.find(m => m.role === 'user' && m.content.startsWith('Birinci')).content, 'Birinci soru');
+    // Saved messages keep what the user typed, and the cloud reply has its numbers (the mock reports 7 tokens).
+    assert.equal(await ev("state.chat.Messages.filter(m => m.Role === 'user').at(-1).Content"), 'İkinci soru');
+    assert.equal(await ev("state.chat.Messages.at(-1).Stats?.tokens"), 7);
+  });
+
   test('research, project and tools are refused for a cloud model (local only)', async () => {
     const msg = await ev(`window.lumen.agent('run', {runId: crypto.randomUUID(), chat: state.chat, prompt: 'x', mode: 'research', context: 4096}).then(() => 'ran', e => e.message)`);
     assert.doesNotMatch(String(msg), /^ran$/);
