@@ -58,6 +58,8 @@ app.whenReady().then(async()=>{
  protocol.handle('lumen',async req=>{const u=new URL(req.url);if(u.hostname!=='app')return new Response('Not found',{status:404});const r=await lumen.asset(u.pathname);return new Response(r.body!==undefined?r.body:fs.readFileSync(r.filePath),{status:r.status,headers:r.headers});});
  const p=await lumen.call('preferences',[]);
  win=new BrowserWindow({width:1240,height:860,minWidth:780,minHeight:580,frame:false,backgroundColor:p.colorMode==='light'?(p.layout==='studio'?'#eef1f1':'#faf8f4'):'#1c1c1b',show:false,title:'lumen.cpp',icon:path.join(__dirname,'lumen.ico'),webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,spellcheck:false,backgroundThrottling:!test}});
+ // Taskbar right-click menu: without relaunch details Windows shows the exe's own name and icon ("Electron").
+ if(process.platform==='win32')win.setAppDetails({appId:'Lumen.Beta.Desktop',appIconPath:path.join(__dirname,'lumen.ico'),appIconIndex:0,relaunchCommand:'"'+process.execPath+'"',relaunchDisplayName:'lumen.cpp'});
  session.defaultSession.setPermissionRequestHandler((wc,permission,callback)=>callback(false));
  win.webContents.on('will-navigate',e=>e.preventDefault());win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
  win.webContents.on('render-process-gone',(_event,details)=>fs.appendFileSync(path.join(data,'desktop-engine.log'),JSON.stringify(details)+'\n'));
