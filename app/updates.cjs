@@ -63,8 +63,33 @@ function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => 
       signal?.addEventListener('abort', () => request.destroy(updateError('aborted', 'Cancelled')), {once: true});
     });
   }
+  // A release file has two addresses: github.com/<repo>/releases/download/… and the API's releases/assets/<id>. They lead to
+  // the same file, but github.com's download path can answer 5xx while the API path works (seen 8 Nov 2026: 504 for every
+  // repository from this network). The download path is tried first; a 5xx or network failure moves to the API address.
+  // Both are https on GitHub; the file is still checked against the signed manifest's size and SHA-256.
+  function assetUrls(remote) {
+    const urls = [remote?.browser_download_url];
+    const viaApi = String(remote?.url || '');
+    if (viaApi.startsWith(`${api}/repos/${REPO}/releases/assets/`) && /\/assets\/\d+$/.test(viaApi)) urls.push(viaApi);
+    return urls.filter(u => typeof u === 'string' && u);
+  }
+  async function openAsset(urls, {headers = {}, signal, max} = {}) {
+    let failure = null;
+    for (let i = 0; i < urls.length; i++) {
+      const last = i === urls.length - 1;
+      try {
+        const response = await get(urls[i], {max, signal, headers: {accept: 'application/octet-stream', ...headers}});
+        if (response.statusCode >= 500 && !last) { response.resume(); log('[update] ' + response.statusCode + ' from the download address; trying the API address'); continue; }
+        return response;
+      } catch (error) {
+        if (error.code === 'aborted' || last) throw error;
+        failure = error; log('[update] download address failed (' + error.message + '); trying the API address');
+      }
+    }
+    throw failure || updateError('network', 'No download address.');
+  }
   async function getBuffer(url, max) {
-    const response = await get(url, {max});
+    const response = Array.isArray(url) ? await openAsset(url, {max}) : await get(url, {max});
     if (response.statusCode === 403 || response.statusCode === 429) { response.resume(); throw updateError('limit', 'GitHub is limiting requests right now. Try again later.'); }
     if (response.statusCode === 404) { response.resume(); throw updateError('missing', 'No releases were found.'); }
     if (response.statusCode !== 200) { response.resume(); throw updateError('network', 'GitHub returned ' + response.statusCode + '.'); }
@@ -83,7 +108,7 @@ function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => 
     const pick = installed ? m.assets.setup : m.assets.zip, remote = assets.find(a => a.name === pick.name);
     if (!remote || remote.size !== pick.size) throw updateError('invalid', 'The release files do not match the manifest.');
     const notes = {en: String(m.notes?.en || '').slice(0, 4000), tr: String(m.notes?.tr || '').slice(0, 4000)};
-    return {build: m.build, version: String(m.version || '').slice(0, 40), published: String(m.published || '').slice(0, 40), notes, asset: {...pick, url: remote.browser_download_url}};
+    return {build: m.build, version: String(m.version || '').slice(0, 40), published: String(m.published || '').slice(0, 40), notes, asset: {...pick, url: remote.browser_download_url, urls: assetUrls(remote)}};
   }
 
   async function check({manual = false} = {}) {
@@ -100,7 +125,7 @@ function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => 
           const manifest = assets.find(a => a.name === MANIFEST), sig = assets.find(a => a.name === MANIFEST + '.sig');
           if (!manifest || !sig) continue;
           try {
-            const info = readManifest(await getBuffer(manifest.browser_download_url, 65536), await getBuffer(sig.browser_download_url, 4096), assets);
+            const info = readManifest(await getBuffer(assetUrls(manifest), 65536), await getBuffer(assetUrls(sig), 4096), assets);
             if (!best || later(info, best)) best = info;
           } catch (error) { rejected = error; log('[update] release ' + (release.tag_name || '?') + ' rejected: ' + error.message); }
         }
@@ -132,7 +157,8 @@ function createUpdater({dataDir, appDir, version, build: ownBuild, emit = () => 
       try {
         await fsp.mkdir(dir, {recursive: true});
         let start = fs.existsSync(partial) ? fs.statSync(partial).size : 0; if (start > latest.asset.size) { await fsp.rm(partial, {force: true}); start = 0; }
-        const response = await get(latest.asset.url, {headers: {accept: 'application/octet-stream', ...(start ? {range: `bytes=${start}-`} : {})}, signal: controller.signal});
+        const urls = Array.isArray(latest.asset.urls) && latest.asset.urls.length ? latest.asset.urls : [latest.asset.url];
+        const response = await openAsset(urls, {headers: start ? {range: `bytes=${start}-`} : {}, signal: controller.signal});
         if (response.statusCode === 200) start = 0; else if (response.statusCode !== 206) { response.resume(); throw updateError('network', 'The download returned ' + response.statusCode + '.'); }
         const out = fs.createWriteStream(partial, {flags: start ? 'a' : 'w'}); download.bytes = start;
         try {

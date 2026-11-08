@@ -27,9 +27,14 @@ before(async () => {
       assets: { zip: { name: 'lumen-beta-portable.zip', size: zip.length, sha256: sha(zip) }, setup: { name: 'lumen-beta-setup.exe', size: 10, sha256: sha('x') } }
     }));
     if (url.pathname === '/repos/olves/lumen.cpp/releases') {
-      const a = (name, size) => ({ name, size, browser_download_url: base + '/dl/' + name });
+      const a = (name, size) => ({ name, size, browser_download_url: base + '/dl/' + name, url: base + '/repos/olves/lumen.cpp/releases/assets/' + names.indexOf(name) });
       return res.end(JSON.stringify([{ tag_name: 'v9.9.9-beta', draft: false, assets: [a('lumen-update.json', manifest.length), a('lumen-update.json.sig', 90), a('lumen-beta-portable.zip', zip.length), a('lumen-beta-setup.exe', 10)] }]));
     }
+    // The API asset address serves the same file (GitHub redirects it to its file CDN).
+    const viaApi = /^\/repos\/olves\/lumen\.cpp\/releases\/assets\/(\d+)$/.exec(url.pathname);
+    if (viaApi) { hits.api++; res.statusCode = 302; res.setHeader('location', '/dl/' + names[viaApi[1]] + '?cdn=1'); return res.end(); }
+    // github.com's download path answering 504 (8 Nov 2026); the CDN behind the API address still works.
+    if (downloadPathDown && url.pathname.startsWith('/dl/') && !url.searchParams.has('cdn')) { hits.down++; res.statusCode = 504; return res.end('Gateway Time-out'); }
     if (url.pathname === '/dl/lumen-update.json') return res.end(manifest);
     if (url.pathname === '/dl/lumen-update.json.sig') return res.end(crypto.sign(null, manifest, privateKey).toString('base64'));
     if (url.pathname === '/dl/lumen-beta-portable.zip') { hits.zip++; return res.end(zip); }
@@ -39,7 +44,9 @@ before(async () => {
   base = 'http://127.0.0.1:' + server.address().port;
 });
 after(() => { server.close(); fs.rmSync(root, { recursive: true, force: true }); });
-const hits = { zip: 0 };
+const hits = { zip: 0, api: 0, down: 0 };
+const names = ['lumen-update.json', 'lumen-update.json.sig', 'lumen-beta-portable.zip', 'lumen-beta-setup.exe'];
+let downloadPathDown = false;
 
 function make(mode, name) {
   const dataDir = path.join(root, name), appDir = path.join(root, name + '-app');
@@ -80,4 +87,19 @@ test('full mode unchanged', async () => {
   for (let i = 0; i < 100 && u.status().download?.phase !== 'ready'; i++) await new Promise(r => setTimeout(r, 50));
   assert.equal(u.status().download?.phase, 'ready');
   assert.equal(hits.zip, 1);
+});
+
+test('a 504 from the download address falls back to the API asset address', async () => {
+  downloadPathDown = true;
+  try {
+    const u = make('full', 'e');
+    const zipsBefore = hits.zip;
+    const s = await u.check({ manual: true });
+    assert.equal(s.available.version, '9.9.9-beta', 'manifest and signature came through the API address');
+    await u.download();
+    for (let i = 0; i < 100 && !['ready', 'failed'].includes(u.status().download?.phase); i++) await new Promise(r => setTimeout(r, 50));
+    assert.equal(u.status().download?.phase, 'ready', u.status().download?.error || '');
+    assert.equal(hits.zip, zipsBefore + 1);
+    assert.ok(hits.down >= 3 && hits.api >= 3, `down ${hits.down}, api ${hits.api}`);
+  } finally { downloadPathDown = false; }
 });
