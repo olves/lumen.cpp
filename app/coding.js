@@ -15,6 +15,9 @@ Object.assign(translations,{
  codingCost:['Input {input} ({rate}% cached) · Output {output}','Girdi {input} (%{rate} önbellek) · Çıktı {output}'],codingLocal:['local · free','yerel · ücretsiz'],
  codingUndo:['Undo these changes','Bu değişiklikleri geri al'],codingUndone:['Undone','Geri alındı'],
  codingUndoDone:['Restored {restored}, removed {removed}.','{restored} dosya geri yüklendi, {removed} dosya silindi.'],codingUndoSkipped:['Left alone because they changed afterwards: {files}','Sonradan değiştikleri için dokunulmadı: {files}'],
+ codingBudget:['The task stopped at its limit ({limit}).','Görev sınırında durdu ({limit}).'],codingLimitTokens:['tokens','token'],codingLimitMoney:['amount','tutar'],codingContinue:['Continue','Devam et'],codingContinuePrompt:['Continue.','Devam et.'],
+ codingSettings:['Coding limits and prices','Kodlama sınırları ve fiyatlar'],codingMoney:['Amount per task (USD, only for models with a price)','Görev başına tutar (USD, yalnızca fiyatı girilen modeller)'],codingTokens:['Tokens per task','Görev başına token'],codingSteps:['Steps per task','Görev başına adım'],
+ codingThink:['Think more during steps (better on hard tasks, costs more)','Adımlarda daha çok düşün (zor işlerde daha iyi, daha pahalı)'],codingPrices:['Prices per million tokens: input · cached input · output','Milyon token başına fiyat: girdi · önbellekli girdi · çıktı'],codingSaved:['Coding settings saved','Kodlama ayarları kaydedildi'],codingSave:['Save','Kaydet'],
  op_p_edit:['Changed {label} · {detail}','Değiştirildi {label} · {detail}'],run_p_edit:['Waiting for your approval: {label}','Onayın bekleniyor: {label}']
 });
 let codingState={chatId:null,allowEdits:false,settings:null};
@@ -33,8 +36,23 @@ const codingPaintDialog=paintProjectDialog;paintProjectDialog=function(status){
  box.type='checkbox';box.id='allow-edits';box.checked=codingState.chatId===state.chat?.Id&&codingState.allowEdits;box.disabled=state.busy;sw.append(box,knob);
  text.append(el('h3','',t('codingAllowEdits')),el('p','quiet',t('codingAllowHint')));row.append(text,sw);rules.before(row);
  box.onchange=async()=>{try{const r=await api.projects('allow-edits',{chatId:state.chat.Id,on:box.checked,language:state.prefs.language});codingState={...codingState,chatId:state.chat.Id,allowEdits:r.allowEdits};renderToolChips();}catch(e){box.checked=!box.checked;toast(cleanError(e));}};
- if(codingState.chatId!==state.chat?.Id)loadCoding().then(()=>{box.checked=codingState.allowEdits;});
+ if(codingState.chatId!==state.chat?.Id)loadCoding().then(()=>{box.checked=codingState.allowEdits;paintCodingSettings();});else paintCodingSettings();
 };
+// Limits, prices and deeper thinking (coding-settings.json), below the switch.
+function paintCodingSettings(){
+ const old=projectDialog.querySelector('.coding-settings');if(old)old.remove();const s=codingState.settings;const anchor=projectDialog.querySelector('.coding-switch');if(!s||!anchor)return;
+ const box=el('details','coding-settings');box.append(el('summary','',t('codingSettings')));
+ const field=(id,label,value,step)=>{const row=el('label','coding-field'),input=el('input');input.type='number';input.id=id;input.min='0';input.step=step;input.value=String(value);row.append(el('span','',label),input);box.append(row);return input;};
+ const money=field('coding-money',t('codingMoney'),s.taskMoney,'0.01'),tokens=field('coding-tokens',t('codingTokens'),s.taskTokens,'1000'),steps=field('coding-steps',t('codingSteps'),s.maxSteps,'1');
+ const thinkRow=el('label','coding-field'),think=el('input');think.type='checkbox';think.id='coding-think';think.checked=!!s.deepThinking;thinkRow.append(think,el('span','',t('codingThink')));box.append(thinkRow);
+ box.append(el('p','quiet',t('codingPrices')));
+ const keys=new Set(Object.keys(s.prices||{}));const current=/^cloud:([a-z]+)\/(.+)$/.exec($('model-picker').value||'');if(current)keys.add(current[1]+'/'+current[2]);
+ for(const key of keys){const p=s.prices?.[key]||{};const row=el('div','coding-price-row');row.dataset.model=key;row.append(el('code','',key));for(const [cls,v] of [['price-input',p.input],['price-cached',p.cachedInput],['price-output',p.output]]){const i=el('input',cls);i.type='number';i.min='0';i.step='0.001';i.value=v==null?'':String(v);i.setAttribute('aria-label',key+' '+cls.slice(6));row.append(i);}box.append(row);}
+ const save=el('button','secondary',t('codingSave'));save.type='button';save.id='coding-save';
+ save.onclick=async()=>{const prices={};for(const row of box.querySelectorAll('.coding-price-row')){const v=c=>row.querySelector(c).value.trim();if(v('.price-input')===''||v('.price-output')==='')continue;prices[row.dataset.model]={input:Number(v('.price-input')),cachedInput:v('.price-cached')===''?Number(v('.price-input')):Number(v('.price-cached')),output:Number(v('.price-output')),currency:'USD'};}
+  try{const r=await api.projects('coding-settings',{chatId:state.chat.Id,patch:{taskMoney:Number(money.value),taskTokens:Number(tokens.value),maxSteps:Number(steps.value),deepThinking:think.checked,prices}});codingState={...codingState,settings:r};toast(t('codingSaved'));}catch(e){toast(cleanError(e));}};
+ box.append(save);anchor.after(box);
+}
 
 // One-time consent before a cloud model receives project files.
 function cloudProviderOf(model){const m=/^cloud:([a-z]+)\//.exec(String(model||''));return m?m[1]:null;}
@@ -90,6 +108,11 @@ const codingMessageNode=messageNode;messageNode=function(m,index,stream=false){
  const totals=c.totals||{input:0,cached:0,output:0},rate=totals.input?Math.round(totals.cached/totals.input*100):0;
  const local=!/^cloud:/.test(state.chat?.Model||'');
  box.append(el('p','coding-cost',[tf('codingCost',{input:tokenText(totals.input),rate:fmt(rate),output:tokenText(totals.output)}),c.cost?moneyText(c.cost):(local?t('codingLocal'):'')].filter(Boolean).join(' · ')));
+ if(c.budgetStop){
+  const note=el('div','coding-budget'),go=el('button','secondary coding-continue',t('codingContinue'));go.type='button';go.disabled=state.busy;
+  go.onclick=()=>{if(state.busy)return;const prompt=$('prompt');prompt.value=t('codingContinuePrompt');prompt.dispatchEvent(new Event('input'));$('send').click();};
+  note.append(el('span','',tf('codingBudget',{limit:t(c.budgetStop==='money'?'codingLimitMoney':'codingLimitTokens')})),go);box.append(note);
+ }
  if(c.undone)box.append(el('p','coding-undone',t('codingUndone')));
  else if(c.canUndo){
   const undo=el('button','secondary coding-undo',t('codingUndo'));undo.type='button';undo.disabled=state.busy;

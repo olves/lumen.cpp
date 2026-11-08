@@ -139,6 +139,58 @@ describe(`coding agent (${shell})`, () => {
     assert.equal(await ev('state.chat.Messages.at(-1).Interrupted'), true);
   });
 
+  test('status shows steps, tokens, cache rate and context while a task runs and keeps them after', async () => {
+    cloud.setScript((body, n) => n < 3 ? { toolCalls: [{ name: 'list_dir', args: { path: '.', depth: n } }], delayMs: 400 } : finish('Listed.'));
+    const before = await send('List the project.');
+    await app.cdp.waitFor("!document.getElementById('status-coding-steps').hidden && /step/.test(document.getElementById('status-coding-steps').textContent)", 20000);
+    await settled(before);
+    const s = await ev("({ steps: document.getElementById('status-coding-steps').textContent, tokens: document.getElementById('status-coding-tokens').textContent, ring: document.getElementById('status-coding-context').getAttribute('aria-valuenow'), hidden: document.getElementById('status-coding-tokens').hidden })");
+    assert.match(s.steps, /^\d+ msgs? · 3 steps$/);
+    assert.match(s.tokens, /^[\d.,]+K tokens · \d+% cached$/);
+    assert.ok(Number(s.ring) >= 0 && Number(s.ring) <= 100);
+    assert.equal(s.hidden, false, 'kept after the task');
+  });
+
+  test('context ring drops after compaction', async () => {
+    await ev("LumenStatus.coding({ type: 'coding-status', runId: 'x', steps: 9, turns: 2, input: 90000, cached: 80000, output: 900, cacheRate: 0.88, contextUsed: 96000, contextSize: 128000 }); 0");
+    assert.equal(await ev("document.getElementById('status-coding-context').getAttribute('aria-valuenow')"), '75');
+    await ev("LumenStatus.coding({ type: 'coding-status', runId: 'x', steps: 10, turns: 2, input: 100000, cached: 85000, output: 950, cacheRate: 0.85, contextUsed: 30000, contextSize: 128000, compacted: true }); 0");
+    assert.equal(await ev("document.getElementById('status-coding-context').getAttribute('aria-valuenow')"), '23');
+  });
+
+  test('budget stop shows a note with Continue', async () => {
+    await ev("api.projects('coding-settings', { chatId: state.chat.Id, patch: { taskTokens: 2500 } }).then(() => 0)");
+    cloud.setScript(() => ({ toolCalls: [{ name: 'list_dir', args: { path: '.' } }] }));
+    const before = await send('Keep listing.');
+    await settled(before);
+    assert.equal(await ev(`!!${LAST}.querySelector('.coding-budget .coding-continue')`), true);
+    await ev("api.projects('coding-settings', { chatId: state.chat.Id, patch: { taskTokens: 3000000 } }).then(() => 0)");
+    cloud.setScript(() => finish('Continued.'));
+    const n = await ev("document.querySelectorAll('.message.assistant').length");
+    await ev(`${LAST}.querySelector('.coding-continue').click(); 0`);
+    await settled(n);
+    assert.equal(await ev("state.chat.Messages.filter(m => m.Role === 'user').at(-1).Content"), 'Continue.');
+    assert.equal(await ev(`${LAST}.querySelector('.message-body').textContent.trim()`), 'Continued.');
+  });
+
+  test('coding settings save and reload limits and prices; a known price shows the amount', async () => {
+    await ev('openProjectDialog().then(() => 0)');
+    await app.cdp.waitFor("!!document.getElementById('coding-money')", 5000);
+    await ev(`(() => { const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input')); };
+      set('coding-money', '0.5'); set('coding-tokens', '200000'); set('coding-steps', '30');
+      const row = document.querySelector('.coding-price-row[data-model="custom/mock-chat"]');
+      row.querySelector('.price-input').value = '1'; row.querySelector('.price-cached').value = '0.1'; row.querySelector('.price-output').value = '2';
+      document.getElementById('coding-save').click(); return 0; })()`);
+    await app.cdp.waitFor("api.projects('coding', {chatId: state.chat.Id}).then(r => r.settings.taskMoney === 0.5)", 5000);
+    const s = await ev("api.projects('coding', {chatId: state.chat.Id}).then(r => r.settings)");
+    assert.deepEqual([s.taskMoney, s.taskTokens, s.maxSteps, s.prices['custom/mock-chat'].output], [0.5, 200000, 30, 2]);
+    await ev("document.getElementById('project-dialog').close(); 0");
+    cloud.setScript(() => finish('Priced.'));
+    const before = await send('One more.');
+    await settled(before);
+    assert.match(await ev(`${LAST}.querySelector('.coding-cost').textContent`), /≈ [\d.,]+ ¢$/);
+  });
+
   test('Turkish strings on the change card and summary', async () => {
     await ev("(async () => { state.prefs = await api.preferences({ ...state.prefs, language: 'tr' }); localize(); return 0; })()");
     cloud.setScript((body, n) => n === 1 ? { toolCalls: [{ name: 'edit_file', args: { path: 'util.js', edits: [{ old: 'x = 1', new: 'x = 5' }] } }] } : finish('Tamam.'));

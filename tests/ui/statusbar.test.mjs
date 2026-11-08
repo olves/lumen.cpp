@@ -135,6 +135,24 @@ describe(`status bar (${shell})`, () => {
     await ev("state.operation = null; LumenStatus.setClock(null); 0");
   });
 
+  test('with coding items shown, only the model name may be shortened, in every theme and language', async () => {
+    const coding = "LumenStatus.coding({ type: 'coding-status', steps: 20, turns: 1, input: 680000, cached: 612000, output: 2400, cacheRate: 0.9, contextUsed: 10000, contextSize: 128000, perSecond: 190 })";
+    for (const theme of ['native', 'reading', 'pro']) for (const language of ['en', 'tr']) {
+      const r = await ev(`(async () => {
+        state.prefs = await api.preferences({ ...state.prefs, language: '${language}', appearance: { theme: '${theme}', mode: 'dark' } }); applyAppearance(); localize();
+        ${coding}; document.getElementById('status-model-value').textContent = 'Qwen2.5 Coder 1.5B Instruct · Q4_K_M';
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const cut = [...document.querySelectorAll('#app-status .status-value, #app-status .status-coding')].filter(v => v.offsetParent && v.id !== 'status-model-value' && v.scrollWidth > v.clientWidth + 1).map(v => v.id);
+        const web = document.getElementById('status-web'), root = document.getElementById('app-status');
+        return { cut, webVisible: web.getBoundingClientRect().right <= root.getBoundingClientRect().right + 1, steps: document.getElementById('status-coding-steps').hidden };
+      })()`);
+      assert.deepEqual(r.cut, [], `${theme}/${language}`);
+      assert.equal(r.webVisible, true, `${theme}/${language}: web toggle not clipped`);
+      assert.equal(r.steps, false);
+    }
+    await ev("(async () => { LumenStatus.state.coding = null; state.prefs = await api.preferences({ ...state.prefs, language: 'en', appearance: { theme: 'native', mode: 'dark' } }); applyAppearance(); localize(); return 0; })()");
+  });
+
   test('with the speed shown, only the model name may be shortened, in every theme and language', async () => {
     // Reading's 13 px status text was 1-2 px short once the speed item appeared, and every value got cut to "…".
     await ev("LumenStatus.state.speed = 38.6; 0");

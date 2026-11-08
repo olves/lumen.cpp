@@ -45,3 +45,7 @@ button.status-item:disabled{opacity:.55;cursor:default}
 }
 /* .app-status clips overflow; keep the focus ring inside the item so it is never cut off. */
 .status-item:focus-visible{outline-offset:-2px}
+
+/* Coding agent items: messages · steps, tokens · cache rate, and the context ring (statusbar.js). */
+.status-coding,.status-ring{flex:none}
+.ring-dial{width:11px;height:11px;flex:none;border-radius:50%;background:conic-gradient(var(--text) var(--ring,0%),var(--border) 0)}

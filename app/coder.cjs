@@ -132,7 +132,7 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
     function finishRun(extra) {
       const files = writer.changedFiles(taskId), taskCost = cost.costOf(modelKey, totals, settings.prices);
       store.replaceEntries(chat.Id, entries);
-      if (totals.steps) store.addTask(chat.Id, { taskId, msg: msgIndex, files, totals, cost: taskCost, summary: short(extra.content, 2000) });
+      if (totals.steps) store.addTask(chat.Id, { taskId, msg: msgIndex, files, totals, cost: taskCost, summary: short(extra.content, 2000), ...(budgetStop ? { budgetStop } : {}) });
       status({ cost: taskCost, done: true });
       const sources = [...readFiles.values()].map((r, i) => ({ id: 'F' + (i + 1), title: r.path, path: r.path, start: r.start, end: r.end, site: (language === 'tr' ? 'satır ' : 'lines ') + r.start + '–' + r.end, url: '', file: true, read: true }));
       return { route: 'project', taskId, files, totals, cost: taskCost, ...(budgetStop ? { budgetStop } : {}), sources, tasks: [publicTask()], ...extra };

@@ -158,3 +158,9 @@ ins.edit-line::before{content:'+ ';color:var(--accent-ink)}
 .coding-undone{margin:0;color:var(--text-muted)}
 .coding-undo{justify-self:start}
 .coding-switch{margin-bottom:10px}
+.coding-budget{display:flex;align-items:center;gap:10px;color:var(--text-muted)}
+.coding-settings{margin:0 0 12px}
+.coding-settings summary{cursor:pointer;font-weight:600}
+.coding-field{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;font-size:var(--font-size-small)}
+.coding-field input[type=number]{width:120px}
+.coding-price-row{display:grid;grid-template-columns:1fr repeat(3,90px);gap:6px;align-items:center;margin-top:6px;font-size:var(--font-size-small)}
