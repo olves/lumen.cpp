@@ -1,6 +1,9 @@
-# Proje 3 — Çekirdeği Rust'a taşımak: karar belgesi (taslak)
+# Proje 3 — Çekirdeği Rust'a taşımak: karar belgesi
 
-Tarih: 8 Kasım 2026 · Durum: taslak, kullanıcı kararı bekliyor · Ölçüm betiği: `work/measure/breakdown.mjs`
+Tarih: 8 Kasım 2026 · Durum: **karar verildi — A** (kullanıcı, 8 Kasım) · Ölçüm betiği: `work/measure/breakdown.mjs`
+
+> **Karar:** Electron ürün kabuğu olarak kalır, çekirdek Rust'a taşınmaz, Tauri önizleme olarak bakımda kalır.
+> Yeniden açma koşulu: indirme boyutu öncelik olursa B (Tauri + Node çekirdeği) yeniden değerlendirilir.
 
 ## 1. Soru
 Tauri kabuğu hazır (Proje 1), ama ölçümde RAM ve açılış kazancı çıkmadı. "Çekirdek de Rust'a geçerse kazanç gelir mi?"
