@@ -14,7 +14,7 @@ Object.assign(translations,{
  cloudTest:['Test','Dene'],cloudTestOk:['{provider} answered: “{reply}”','{provider} yanıt verdi: “{reply}”'],cloudBase:['Address (OpenAI-compatible, ending in /v1)','Adres (OpenAI uyumlu, /v1 ile biten)'],cloudLabel:['Name','Ad'],cloudSaveBase:['Save address','Adresi kaydet'],
  cloudLoaded:['{n} models found. Pick the ones to show in the menu.','{n} model bulundu. Menüde görünecekleri seç.'],cloudFilter:['Filter models','Modelleri süz'],cloudKeyFirst:['Save an API key first.','Önce bir API anahtarı kaydet.'],
  cloudModelTag:['Cloud','Bulut'],cloudReply:['Cloud · {provider}','Bulut · {provider}'],cloudReplyTitle:['This conversation is sent to {provider}.','Bu sohbet {provider} sağlayıcısına gönderilir.'],
- cloudLocalOnly:['Research, project folders and connected tools run on local models. Choose a local model for this message.','Araştırma, proje klasörü ve bağlı araçlar yerel modellerle çalışır. Bu mesaj için yerel bir model seç.'],
+ cloudLocalOnly:['Web research and connected tools run on local models. Choose a local model for this message.','Web araştırması ve bağlı araçlar yerel modellerle çalışır. Bu mesaj için yerel bir model seç.'],
  cloudPhotos:['Cloud models get the recognized text of photos (OCR), not the image.','Bulut modellerine fotoğrafların görüntüsü değil, tanınan metni (OCR) gider.'],
  cloudContext:['Counted by {provider}','{provider} tarafından sayıldı'],cloudContextNone:['{provider} did not report token counts.','{provider} token sayısı bildirmedi.'],
  mcpIntro:['Let local models use tools from MCP servers you connect.','Yerel modellerin bağladığın MCP sunucularındaki araçları kullanmasına izin ver.'],
@@ -184,7 +184,8 @@ const connectRenderChips=renderToolChips;renderToolChips=function(){
 const connectSend=send;send=async function(){
  if(state.busy)return connectSend();
  const model=$('model-picker').value;
- if(isCloudModel(model)&&(toolsMode||(typeof researchMode!=='undefined'&&researchMode)||state.chat?.Project)){toast(t('cloudLocalOnly'));return;}
+ // Project folders work with cloud models (the coding agent); research and connected tools stay local.
+ if(isCloudModel(model)&&(toolsMode||(typeof researchMode!=='undefined'&&researchMode))){toast(t('cloudLocalOnly'));return;}
  if(!toolsMode||isCloudModel(model))return connectSend();
  if(typeof photosAdding!=='undefined'&&photosAdding)return;const text=composeText();if(!text||!state.ready)return;
  const chosen=state.models.find(m=>m.Name===model);if(chosen&&!chosen.Installed&&!await download(chosen.Name))return;

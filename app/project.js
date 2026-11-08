@@ -43,7 +43,7 @@ const projectSend=send;send=async function(){
  if(state.chat.Project.exists===false){toast(t('projectNotFound'));return;}
  if(typeof photosAdding!=='undefined'&&photosAdding)return;const text=composeText();if(!text||!state.ready)return;
  const chosen=state.models.find(m=>m.Name===$('model-picker').value);if(chosen&&!chosen.Installed&&!await download(chosen.Name))return;
- if(!toolsConfig)await loadToolsConfig().catch(()=>{});if(toolsConfig&&!toolsConfig.hostReady){toast(t('toolsUnavailable'));return;}
+ if(!toolsConfig)await loadToolsConfig().catch(()=>{});if(toolsConfig&&!toolsConfig.hostReady&&!/^cloud:/.test($('model-picker').value)){toast(t('toolsUnavailable'));return;}
  return sendWithProject(text);
 };
 const projectUpsert=upsert;upsert=function(chat){projectUpsert(chat);renderToolChips();};

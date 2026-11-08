@@ -138,3 +138,23 @@ body[data-browser-width=wide] .browser-panel{flex-basis:clamp(420px,58%,1000px)}
 .tool-dialog .excerpt{max-height:40vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 /* Browser toggle when open: selection background plus an inset edge, not colour alone. */
 #open-browser[aria-pressed=true]{background:var(--selected);color:var(--text);box-shadow:inset 0 0 0 1px var(--text-muted)}
+
+/* Coding agent (coding.js): change cards with a line diff, and the summary under a coding reply. */
+.edit-head{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px}
+.edit-path{font-family:var(--font-mono);font-size:var(--font-size-small)}
+.edit-counts{font-variant-numeric:tabular-nums;color:var(--text-muted)}
+.edit-diff{max-height:360px;overflow:auto;margin:8px 0;padding:6px 0;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-1);font-family:var(--font-mono);font-size:calc(var(--font-size-small) - 1px);line-height:1.5}
+.edit-line{display:block;padding:0 10px;white-space:pre;text-decoration:none}
+.edit-line.edit-context{color:var(--text-muted)}
+del.edit-line{background:color-mix(in srgb,var(--danger) 14%,transparent);color:var(--text)}
+ins.edit-line{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--text)}
+del.edit-line::before{content:'− ';color:var(--danger)}
+ins.edit-line::before{content:'+ ';color:var(--accent-ink)}
+.edit-line.edit-context::before{content:'  '}
+.edit-hunk{padding:2px 10px;color:var(--text-muted);font-size:calc(var(--font-size-small) - 2px)}
+.coding-summary{display:grid;gap:4px;margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:var(--font-size-small)}
+.coding-files{margin:0;padding-left:18px;font-family:var(--font-mono)}
+.coding-cost{margin:0;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.coding-undone{margin:0;color:var(--text-muted)}
+.coding-undo{justify-self:start}
+.coding-switch{margin-bottom:10px}

@@ -94,6 +94,21 @@ export async function cloudServer({ key = 'sk-mock-key-123', reply = 'Merhaba fr
     if (req.headers.authorization !== 'Bearer ' + key) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'Incorrect API key provided' } })); }
     if (url.pathname === '/v1/models') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ data: [{ id: model }, { id: imageModel }] })); }
     if (url.pathname === '/v1/images/generations') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ data: [{ b64_json: image.toString('base64') }] })); }
+    if (url.pathname === '/v1/chat/completions' && typeof server.script === 'function') {
+      // Scripted turns for the coding agent: script(body, n) -> {content?, toolCalls?: [{name, args}], usage?}. Streams tool
+      // calls in two pieces (name, then arguments) like real providers do.
+      const turn = server.script(body, server.turns = (server.turns || 0) + 1) || { content: 'ok' };
+      const usage = turn.usage || { prompt_tokens: 1200, completion_tokens: 40, prompt_cache_hit_tokens: server.turns > 1 ? 1000 : 0, prompt_cache_miss_tokens: server.turns > 1 ? 200 : 1200 };
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      (turn.toolCalls || []).forEach((c, index) => {
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, id: `call_${server.turns}_${index}`, type: 'function', function: { name: c.name, arguments: '' } }] } }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, function: { arguments: JSON.stringify(c.args) } }] } }] })}\n\n`);
+      });
+      if (turn.content) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: turn.content } }] })}\n\n`);
+      if (turn.delayMs) await sleep(turn.delayMs);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: turn.toolCalls?.length ? 'tool_calls' : 'stop' }], usage })}\n\n`);
+      res.write('data: [DONE]\n\n'); return res.end();
+    }
     if (url.pathname === '/v1/chat/completions') {
       const parts = reply.match(/.{1,8}/g);
       if (body?.stream) {
@@ -108,7 +123,7 @@ export async function cloudServer({ key = 'sk-mock-key-123', reply = 'Merhaba fr
     res.writeHead(404); res.end('nope');
   });
   const port = await listen(server);
-  return { base: `http://127.0.0.1:${port}/v1`, key, model, imageModel, reply, image, requests, close: () => { server.closeAllConnections?.(); server.close(); } };
+  return { base: `http://127.0.0.1:${port}/v1`, key, model, imageModel, reply, image, requests, setScript: fn => { server.script = fn; server.turns = 0; }, close: () => { server.closeAllConnections?.(); server.close(); } };
 }
 
 // ---------- sd-server stand-in ----------

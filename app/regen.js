@@ -19,7 +19,7 @@ Object.assign(translations,{
 let regenerating=false;
 const regenMessageNode=messageNode;messageNode=function(m,index,stream=false){
  const result=regenMessageNode(m,index,stream);
- if(stream||m.Role!=='assistant'||!state.chat)return result;
+ if(stream||m.Role!=='assistant'||!state.chat||m.Coding)return result;
  const last=index===state.chat.Messages.length-1,actions=result.node.querySelector('.message-actions');if(!actions)return result;
  const research=m.Activity?.route==='research';
  const button=el('button','',t(last?'regenerate':'regenerateBranch'));button.type='button';button.disabled=state.busy;button.title=t(last?(research?'regenerateResearchHint':'regenerateHint'):'regenerateBranchHint');button.onclick=()=>regenerate(index);actions.append(button);
