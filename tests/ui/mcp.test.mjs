@@ -210,9 +210,12 @@ describe(`cloud model (${shell})`, () => {
     assert.equal(await ev("state.chat.Messages.at(-1).Stats?.tokens"), 7);
   });
 
-  test('research, project and tools are refused for a cloud model (local only)', async () => {
-    const msg = await ev(`window.lumen.agent('run', {runId: crypto.randomUUID(), chat: state.chat, prompt: 'x', mode: 'research', context: 4096}).then(() => 'ran', e => e.message)`);
-    assert.doesNotMatch(String(msg), /^ran$/);
+  test('research and tools are refused for a cloud model; project mode reaches the coding agent', async () => {
+    const run = mode => ev(`window.lumen.agent('run', {runId: crypto.randomUUID(), chat: state.chat, prompt: 'x', mode: ${js(mode)}, contextSize: 4096}).then(() => 'ran', e => e.message)`);
+    assert.match(await run('research'), /Research and tools run on local models/);
+    assert.match(await run('tools'), /Research and tools run on local models/);
+    // No folder is bound here: the request passes the cloud rule and stops at the project check.
+    assert.match(await run('project'), /No project folder is attached/);
   });
 
   test('turning cloud off removes its models', async () => {
