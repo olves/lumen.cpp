@@ -70,7 +70,7 @@ There is nothing else to install: no Python, no Ollama, no npm. Choose a model i
 - **Local image generation** with stable-diffusion.cpp (Z-Image Turbo)
 
 **☁️ Cloud models** *(optional, bring your own key)*
-- OpenAI, Anthropic, Gemini, OpenRouter, Groq, Mistral or any OpenAI-compatible address
+- OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, Groq, Mistral or any OpenAI-compatible address
 - Only the conversations where you pick a cloud model are sent, and only to that provider. The composer tells you so. Project folders work with cloud models after a one-time consent per provider; web research and connected tools stay local.
 
 **🎨 Make it yours**
