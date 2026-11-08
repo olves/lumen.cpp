@@ -30,7 +30,8 @@ describe(`reply stats and Continue (${shell})`, { skip: model ? false : 'no inst
     prepareData(dataDir, model);
     app = await launch({ shell, dataDir });
     await app.cdp.waitFor('state.ready === true', 30000);
-    await ev("(async () => { state.prefs = await api.preferences({ ...state.prefs, responseTokens: 512, thinking: false }); return 0; })()");
+    // Greedy sampling with a fixed seed: the same reply lengths on every run, so the 512-token cut is reliable.
+    await ev("(async () => { state.prefs = await api.preferences({ ...state.prefs, responseTokens: 512, thinking: false, sampling: { temperature: 0, seed: 42 } }); return 0; })()");
   });
   after(async () => { await app?.stop(); });
 
@@ -45,7 +46,10 @@ describe(`reply stats and Continue (${shell})`, { skip: model ? false : 'no inst
   });
 
   test('a reply cut at the response length offers Continue, which sends a normal message', async () => {
-    await send('Write a detailed essay of at least 1500 words about the history of lighthouses, in many long paragraphs.');
+    // A small model sometimes ends a "long" essay before 512 tokens (sampling is random); a second, longer request follows then.
+    const prompts = ['Write a detailed essay of at least 1500 words about the history of lighthouses, in many long paragraphs.',
+      'Write a very long story of at least 2000 words about a sailor, with dialogue and many chapters. Do not stop early.'];
+    for (const prompt of prompts) { await send(prompt); if (await ev('state.chat.Messages.at(-1).Stats?.cut === true')) break; }
     const s = await ev('state.chat.Messages.at(-1).Stats');
     assert.equal(s?.cut, true, JSON.stringify(s));
     assert.ok(s.tokens >= 512);
@@ -67,6 +71,6 @@ describe(`reply stats and Continue (${shell})`, { skip: model ? false : 'no inst
 
   test('numbers come back from the saved conversation', async () => {
     const saved = await ev("api.request('bootstrap').then(b => b.chats.find(c => c.Id === state.chat.Id).Messages.filter(m => m.Role === 'assistant').map(m => !!m.Stats?.tokens))");
-    assert.deepEqual(saved, [true, true, true]);
+    assert.ok(saved.length >= 3 && saved.every(Boolean), JSON.stringify(saved));
   });
 });
