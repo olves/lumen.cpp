@@ -199,7 +199,7 @@ describe(`coding agent (${shell})`, () => {
     assert.deepEqual(await ev("['.edit-apply', '.edit-skip', '.edit-apply-all'].map(s => document.querySelector('.edit-card ' + s).textContent)"), ['Uygula', 'Atla', 'Bu görevde hepsini uygula']);
     await ev("document.querySelector('.edit-card .edit-apply').click(); 0");
     await settled(before);
-    assert.match(await ev(`${LAST}.querySelector('.coding-cost').textContent`), /Girdi .* önbellek\) · Çıktı/);
+    assert.match(await ev(`${LAST}.querySelector('.coding-cost').textContent`), /Girdi .* önbellekli\) · Çıktı/);
     assert.match(await ev(`${LAST}.querySelector('.coding-undo').textContent`), /geri al/i);
     await ev("(async () => { state.prefs = await api.preferences({ ...state.prefs, language: 'en' }); localize(); return 0; })()");
   });

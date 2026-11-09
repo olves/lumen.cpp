@@ -12,8 +12,8 @@ Object.assign(translations,{
  statusVram:['VRAM','VRAM'],
  statusEngine:['Engine','Motor'],
  statusSpeed:['Speed','Hız'],
- statusCodingContext:['Context used by the coding task','Kodlama görevinin kullandığı context'],
- statusCodingTokensTitle:['Tokens of the coding task; cached tokens are billed far lower by the provider.','Kodlama görevinin token sayısı; önbellekten gelen token’ları sağlayıcı çok daha ucuza sayar.'],
+ statusCodingContext:['Context used by the coding task','Kodlama görevinin kullandığı bağlam'],
+ statusCodingTokensTitle:['Tokens of the coding task; cached tokens are billed far lower by the provider.','Kodlama görevinin token sayısı; sağlayıcı önbellekli token’ları çok daha düşük ücretlendirir.'],
  statusSpeedTitle:['Generation speed of the last response (tokens per second)','Son yanıtın üretim hızı (saniyede token)'],
  statusWebOn:['Web on','Web açık'],
  statusWebOff:['Web off','Web kapalı'],
@@ -151,7 +151,7 @@ function paintStatus(){
  if(coding){
   const k=n=>n>=1000?fmt(Math.round(n/100)/10)+'K':fmt(n),rate=Math.round((coding.cacheRate||0)*100),pct=coding.contextSize?Math.min(100,Math.round(coding.contextUsed/coding.contextSize*100)):0;
   codingSteps.textContent=tr?`${fmt(coding.turns)} mesaj · ${fmt(coding.steps)} adım`:`${fmt(coding.turns)} ${coding.turns===1?'msg':'msgs'} · ${fmt(coding.steps)} ${coding.steps===1?'step':'steps'}`;
-  codingTokens.textContent=tr?`${k(coding.input+coding.output)} token · %${rate} önbellek`:`${k(coding.input+coding.output)} tokens · ${rate}% cached`;codingTokens.title=t('statusCodingTokensTitle');
+  codingTokens.textContent=tr?`${k(coding.input+coding.output)} token · %${rate} önbellekli`:`${k(coding.input+coding.output)} tokens · ${rate}% cached`;codingTokens.title=t('statusCodingTokensTitle');
   codingRing.setAttribute('aria-valuenow',String(pct));codingRing.title=t('statusCodingContext');codingRing.setAttribute('aria-label',`${t('statusCodingContext')}: ${pct}%`);codingRing.style.setProperty('--ring',pct+'%');codingRingText.textContent=tr?`%${pct}`:`${pct}%`;
  }
  // Under the composer there is no room for VRAM and engine next to the coding items; the window bar keeps them.
