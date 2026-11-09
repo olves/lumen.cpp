@@ -8,15 +8,19 @@ export const userData = path.join(process.env.LOCALAPPDATA || '', 'lumen.cpp');
 
 // Gemma 4 E2B if installed, else the smallest chat GGUF. Searches the user's models folder first (read-only), then
 // LUMEN_TEST_MODELS (default <work>/test-models). Never downloads anything.
+// Image-model parts (e.g. a Qwen-Image text encoder named "Qwen-Image-…") are not chat models for the tests.
 function chatGgufs(dir) {
-  try { return fs.readdirSync(dir).filter(f => /[.]gguf$/i.test(f) && !/mmproj|mtp|^img-/i.test(f)).map(f => path.join(dir, f)); } catch { return []; }
+  try { return fs.readdirSync(dir).filter(f => /[.]gguf$/i.test(f) && !/mmproj|mtp|^img-|image|diffusion|vae/i.test(f)).map(f => path.join(dir, f)); } catch { return []; }
 }
+// Preference: LUMEN_TEST_MODEL (a file name), Gemma 4 E2B, Qwen2.5 Coder, then the smallest remaining chat model.
 export function pickModel() {
   const dirs = [path.join(userData, 'models'), process.env.LUMEN_TEST_MODELS || path.join(workRoot, 'test-models')];
   for (const dir of dirs) {
     const files = chatGgufs(dir);
     if (!files.length) continue;
-    return files.find(f => /gemma[-_ ]?4.*e2b/i.test(f)) || files.sort((x, y) => fs.statSync(x).size - fs.statSync(y).size)[0];
+    const named = process.env.LUMEN_TEST_MODEL && files.find(f => path.basename(f).toLowerCase() === process.env.LUMEN_TEST_MODEL.toLowerCase());
+    return named || files.find(f => /gemma[-_ ]?4.*e2b/i.test(f)) || files.find(f => /qwen2\.5-coder/i.test(path.basename(f)))
+      || files.sort((x, y) => fs.statSync(x).size - fs.statSync(y).size)[0];
   }
   return null;
 }
