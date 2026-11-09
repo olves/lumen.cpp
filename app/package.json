@@ -1,8 +1,8 @@
 {
   "name": "lumen-desktop",
   "productName": "lumen.cpp",
-  "version": "1.0.7-beta",
-  "build": 7,
+  "version": "1.0.8-beta",
+  "build": 8,
   "main": "main.cjs",
   "private": true
 }
