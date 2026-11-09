@@ -49,6 +49,14 @@
 .add-menu strong{font-size:12px;font-weight:500;display:block}
 .add-menu small{font-size:var(--font-size-small);color:var(--text-muted);display:block;margin-top:5px}
 .add-menu svg{color:var(--text-muted);width:18px;height:18px}
+/* v1.0.9 layout (addmenu.js): grouped, one line per row, hint in the tooltip, on/off dot for modes */
+.add-menu .menu-hidden{display:none}
+.add-menu>button{padding:8px 10px;gap:10px;min-height:34px}
+.add-menu>button small{display:none}
+.add-menu>.menu-caption{padding:6px 10px 4px;font-size:11px}
+.add-menu>button+.menu-caption{margin-top:6px;padding-top:10px;border-top:1px solid var(--border)}
+.add-menu>button[aria-checked="true"]::after{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);margin-left:auto;flex:none}
+.add-menu>button[aria-checked="true"] strong{color:var(--text)}
 .rename-dialog{width:min(420px,calc(100vw - 40px));padding:23px;border:1px solid var(--border);border-radius:14px;background:var(--surface-2);color:var(--text);box-shadow:0 22px 70px color-mix(in srgb,var(--shadow-color) 33%,transparent)}
 .rename-dialog::backdrop{background:color-mix(in srgb,var(--shadow-color) 53%,transparent)}
 .rename-heading{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:24px}
