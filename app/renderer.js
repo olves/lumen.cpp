@@ -128,7 +128,7 @@ $('model-menu').onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();e.stopProp
 $('browse-models').onclick=()=>{closeComposerMenus();setPage('models');};
 $('add-button').onclick=()=>{if(state.busy)return;const open=$('add-menu').hidden;closeComposerMenus();if(open){$('add-menu').hidden=false;$('add-button').setAttribute('aria-expanded','true');animateMenu($('add-menu'));$('attach-files').focus();}};
 $('add-menu').onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeComposerMenus(true);}else if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();const buttons=[...$('add-menu').querySelectorAll('button')];buttons[(buttons.indexOf(document.activeElement)+1)%buttons.length].focus();}};
-document.addEventListener('pointerdown',e=>{if(!e.target.closest('.model-control')&&!e.target.closest('#add-menu')&&!e.target.closest('#add-button')&&!e.target.closest('#skill-menu')&&!e.target.closest('#skill-chips'))closeComposerMenus();});
+document.addEventListener('pointerdown',e=>{if(!e.target.closest('.model-control')&&!e.target.closest('#add-menu')&&!e.target.closest('#add-button')&&!e.target.closest('#skill-menu')&&!e.target.closest('#skill-chips')&&!e.target.closest('#assistant-menu')&&!e.target.closest('#assistant-toggle'))closeComposerMenus();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeComposerMenus(true);});
 // Inspect the destination, not activeElement during Chromium's blur/focus transition. A null destination also occurs when a native dialog or the window takes focus.
 document.querySelector('.composer').addEventListener('focusout',event=>{if(event.relatedTarget&&!event.currentTarget.contains(event.relatedTarget))closeComposerMenus();});

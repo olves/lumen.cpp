@@ -31,14 +31,17 @@ let assistantList=[],assistantEditing=null,assistantStartResult=null;
  menu.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeAssistantMenu(true);}else if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();const items=[...menu.querySelectorAll('button')];const i=items.indexOf(document.activeElement);items[(i+(e.key==='ArrowDown'?1:items.length-1))%items.length]?.focus();}});
  document.addEventListener('pointerdown',e=>{if(!menu.hidden&&!e.target.closest('#assistant-menu')&&!e.target.closest('#assistant-toggle'))closeAssistantMenu();});
 })();
-function closeAssistantMenu(focus=false){const menu=$('assistant-menu');if(!menu||menu.hidden)return;menu.hidden=true;$('assistant-toggle').setAttribute('aria-expanded','false');if(focus)$('assistant-toggle').focus();}
+// The menu loads the list before it shows; a close in that wait cancels the pending open (it used to pop up later over Send).
+let assistantMenuTicket=0;
+function closeAssistantMenu(focus=false){assistantMenuTicket++;const menu=$('assistant-menu');if(!menu||menu.hidden)return;menu.hidden=true;$('assistant-toggle').setAttribute('aria-expanded','false');if(focus)$('assistant-toggle').focus();}
 const assistantsCloseMenus=closeComposerMenus;closeComposerMenus=function(...args){assistantsCloseMenus(...args);closeAssistantMenu();};
 async function loadAssistants(){try{assistantList=await api.assistants('list');}catch(e){assistantList=[];}return assistantList;}
 async function openAssistantMenu(){
- const menu=$('assistant-menu');await loadAssistants();menu.replaceChildren(el('div','assistant-menu-title',t('assistantMenu')));
+ const menu=$('assistant-menu'),ticket=++assistantMenuTicket;await loadAssistants();if(ticket!==assistantMenuTicket)return;menu.replaceChildren(el('div','assistant-menu-title',t('assistantMenu')));
  const current=state.chat?.Assistant?.id||null;
  const item=(label,detail,chosen,onclick)=>{const b=el('button','assistant-item'+(chosen?' selected':''));b.type='button';b.setAttribute('role','menuitemradio');b.setAttribute('aria-checked',String(!!chosen));const text=el('span');text.append(el('strong','',label),...(detail?[el('small','',detail)]:[]));b.append(text,el('span','model-check',chosen?'✓':''));b.onclick=onclick;return b;};
- if(!state.chat?.Messages.length)menu.append(item(t('assistantNone'),'',!current,()=>{closeAssistantMenu(true);startAssistant(null);}));
+ // "No assistant" is offered on every chat: on one with messages it removes the assistant from that chat.
+ menu.append(item(t('assistantNone'),'',!current,()=>{closeAssistantMenu(true);startAssistant(null);}));
  for(const a of assistantList)menu.append(item(a.name,a.description,a.id===current,()=>{closeAssistantMenu(true);startAssistant(a);}));
  const manage=el('button','assistant-manage',t('assistantManage'));manage.type='button';manage.onclick=()=>{closeAssistantMenu();openSettings('assistants');};menu.append(manage);
  menu.hidden=false;$('assistant-toggle').setAttribute('aria-expanded','true');if(typeof animateMenu==='function')animateMenu(menu);menu.querySelector('button')?.focus();
@@ -46,12 +49,15 @@ async function openAssistantMenu(){
 // On an empty conversation the assistant applies there; otherwise a new conversation starts with it.
 async function startAssistant(a){
  if(state.busy||!state.chat)return;
- const fresh=!state.chat.Messages.length;if(!fresh&&!a)return;
- if(!fresh)$('new-chat').click();
+ const fresh=!state.chat.Messages.length;if(!fresh&&!a&&!state.chat.Assistant)return;
+ if(!fresh&&a)$('new-chat').click();
  const chat=state.chat;
  try{
   const r=await api.assistants('start',{chatId:chat.Id,id:a?.id||null});assistantStartResult=r;
-  if(!r.assistant){delete chat.Assistant;chat.SystemPrompt=fresh_prompt();chat.SkillIds=[];}
+  if(!r.assistant){delete chat.Assistant;chat.SystemPrompt=fresh_prompt();chat.SkillIds=[];
+   // A chat with messages is saved now, so the next reply goes out without the assistant's instructions.
+   if(!fresh){const saved=await api.request('save',{chat});Object.assign(chat,saved);delete chat.Assistant;state.contexts.delete(chat.Id);}
+   if(typeof renderSkillChips==='function')renderSkillChips();}
   else{chat.Assistant=r.assistant;chat.SystemPrompt=r.instructions||'';chat.SkillIds=r.skillIds||[];if(r.model){chat.Model=r.model;$('model-picker').value=r.model;$('model-picker').dispatchEvent(new Event('change'));}}
   upsert(chat);if(typeof renderSkillChips==='function')renderSkillChips();renderToolChips();if(typeof loadRun==='function')loadRun();
   state.contexts.delete(chat.Id);renderContext();

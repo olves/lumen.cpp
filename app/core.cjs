@@ -507,7 +507,7 @@ async function requestNow(action,args={}){
   if(action==='start'){
    const chatId=String(args.chatId||''),a=args.id?assistants.get(String(args.id)):null;if(!/^[a-fA-F0-9]{32}$/.test(chatId))throw Error('Invalid conversation ID.');if(args.id&&!a)throw Error('Assistant not found.');
    if(skillFlight)throw Error('Wait for the current response to finish.');
-   if(!a){runSettings.reset(chatId);assistants.link(chatId,null);return {assistant:null};}
+   if(!a){const had=assistants.linked(chatId);runSettings.reset(chatId);if(had){try{skillStore.select(chatId,[],'');}catch{}}assistants.link(chatId,null);return {assistant:null};}
    runSettings.set(chatId,a.run);const known=new Set(skillStore.list().map(s=>s.id));const skillIds=a.skillIds.filter(id=>known.has(id));
    try{skillStore.select(chatId,skillIds,a.instructions);}catch{}assistants.link(chatId,a.id);
    const models=withCloud(modelInfo.decorate(knownModels));const model=a.model&&models.some(m=>m.Name===a.model&&m.Installed)?a.model:'';
