@@ -173,7 +173,7 @@ function paintApi(){
  const tokCopy=el('button','text-button',t('apiCopy'));tokCopy.type='button';tokCopy.onclick=()=>copy(a.token,tokCopy);
  const renew=el('button','text-button',t('apiNewToken'));renew.type='button';renew.onclick=()=>connAction('api',{newToken:true},t('apiNewTokenDone'));
  const tokRow=el('div','connect-inline');tokRow.append(el('span','connect-subhead',t('apiToken')),tokenCode,show,tokCopy,renew);
- const sample=`curl ${address}/chat/completions -H "Authorization: Bearer $LUMEN_KEY" -H "Content-Type: application/json" -d "{\\"model\\":\\"${state.models.find(m=>m.Installed&&!m.Cloud)?.Name||'model'}\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}"`;
+ const sample=`curl ${address}/chat/completions -H "Authorization: Bearer $LUMEN_KEY" -H "Content-Type: application/json" -d "{\\"model\\":\\"${chatModels().find(m=>m.Installed&&!m.Cloud)?.Name||'model'}\\",\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"Hello\\"}]}"`;
  const example=el('details','connect-example');example.append(el('summary','',t('apiExample')),(()=>{const pre=el('pre');pre.append(el('code','',sample));return pre;})());
  card.append(status,portRow,addrRow,tokRow,example);
  panel.replaceChildren(connHeading('apiTitle','apiIntro'),el('p','connect-rules',t('apiRules')),toggle,card);

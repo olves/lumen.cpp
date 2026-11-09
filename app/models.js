@@ -1,7 +1,7 @@
 'use strict';
 // Model presentation from main's model info (modelinfo.cjs): one display-name source for every screen, memory-fit labels,
 // thinking support of the selected model and the automatic context. Model identity (Name/Repo/File) is never changed here.
-Object.assign(translations,{
+Object.assign(translations,{imageModelTag:['Image model','Görsel modeli'],imageModelNote:['Image-generation model: it is not offered for chat. Image models in the model picker are planned for v1.1.','Görsel üretim modeli: sohbet için sunulmaz. Model seçicide görsel modelleri v1.1 için planlandı.'],
  fit_gpu:['Can fit fully on the GPU','GPU’ya tamamen sığabilir'],fit_hybrid:['Can run with GPU + RAM','GPU + RAM ile hibrit çalışabilir'],fit_cpu:['Runs from RAM on the CPU','CPU ile RAM’den çalışır'],fit_strain:['May strain memory','Bellek açısından zorlayabilir'],fit_unknown:['Not enough information to estimate','Tahmin için yeterli bilgi yok'],
  fitAtContext:['estimate at {n} context','{n} context için tahmin'],fitNoContext:['estimate from file size; context not included','dosya boyutundan tahmin; context dahil değil'],
  fitMoe:['MoE: all {experts} experts stay in memory, {used} run per token','MoE: {experts} uzmanın hepsi bellekte durur, token başına {used} tanesi çalışır'],moeChip:['MoE','MoE'],
@@ -37,7 +37,7 @@ renderModelSelector=function(){
  const selected=modelByName($('model-picker').value);$('selected-model-name').textContent=selected?displayName(selected):t('chooseModel');
  $('selected-model-logo').replaceChildren(...(selected?[modelLogo(selected.Repo,selected.Name)]:[]));$('model-trigger').title=selected?modelDetail(selected):t('chooseModel');
  const list=$('model-options');list.replaceChildren();const query=$('model-filter').value.trim().toLocaleLowerCase();
- const matching=state.models.filter(m=>(displayName(m)+' '+m.Name+' '+m.File).toLocaleLowerCase().includes(query));
+ const matching=chatModels().filter(m=>(displayName(m)+' '+m.Name+' '+m.File).toLocaleLowerCase().includes(query));
  if(!matching.length)list.append(el('p','model-menu-empty',t('noMatch')));
  for(const m of matching){
   const chosen=m.Name===selected?.Name,option=el('button','model-option'+(chosen?' selected':''));option.type='button';option.title=modelDetail(m);option.setAttribute('role','option');option.setAttribute('aria-selected',String(chosen));option.disabled=state.busy;
@@ -53,7 +53,7 @@ const modelsMessageNode=messageNode;messageNode=function(m,index,stream=false){
 };
 renderModels=function(){
  const list=$('model-list');list.replaceChildren();const installed=state.models.filter(m=>m.Installed&&!m.Cloud);
- for(const m of installed){const row=repoRow(m.Repo,displayName(m),modelSize(m.Bytes),true);row.title=modelDetail(m);list.append(row);}
+ for(const m of installed){const row=repoRow(m.Repo,displayName(m),m.Image?modelSize(m.Bytes)+' · '+t('imageModelTag'):modelSize(m.Bytes),true);row.title=modelDetail(m)+(m.Image?'\n'+t('imageModelNote'):'');list.append(row);}
  if(!installed.length){list.append(el('p','library-empty',t('noInstalled')));const button=el('button','text-button',t('browseHf'));button.onclick=()=>openSettings('explore');list.append(button);}
  if($('settings-model-count'))$('settings-model-count').textContent=installed.length;
 };

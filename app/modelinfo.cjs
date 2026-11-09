@@ -93,6 +93,12 @@ function estimate(model,{context,kv='f16',gpu='auto',hardware}){
  return {placement,weights,kv:cache,need,contextIncluded:cache!=null,moe:model.shape?.experts>0,experts:model.shape?.experts||0,expertsUsed:model.shape?.expertsUsed||0};
 }
 
+// Image-generation GGUFs (stable-diffusion.cpp models and the text encoders shipped in the same repositories) are not chat
+// models: llama.cpp cannot load a diffusion model, and a text encoder only looks like a chatbot. Known text-to-image families by
+// repository or file name, and diffusion architectures by the GGUF header when the file is installed.
+const IMAGE_NAME=/(^|[\/_.\s-])(qwen[-_ ]?image|z[-_]?image|flux(\.?\d|[-_]?(dev|schnell|kontext|krea))|stable[-_]?diffusion|sdxl|sd[-_]?3(\.\d)?|sd[-_]?1\.5|hidream|wan[-_]?2\.\d|lumina[-_]?(image|2)|chroma[-_]?\d|pixart|kolors|cogview|hunyuan[-_]?image)([\/_.\s-]|$)/i;
+const IMAGE_ARCH=new Set(['flux','qwen_image','sd1','sd3','sdxl','wan','lumina2','chroma','hidream','z_image']);
+function imageModelOf(m,meta){if(!m||m.Cloud)return false;if(meta?.shape?.arch&&IMAGE_ARCH.has(String(meta.shape.arch).toLowerCase()))return true;return IMAGE_NAME.test(String(m.Repo||''))||IMAGE_NAME.test(String(m.File||m.LocalFile||''));}
 function createModelInfo(data,{log=()=>{}}={}){
  const cacheFile=path.join(data,'model-info.json');let cache=null;let backendHardware=null;let hw=null,hwAt=0,hwLoaded=0;const reading=new Map();
  function load(){if(cache)return cache;try{cache=JSON.parse(fs.readFileSync(cacheFile,'utf8'));if(!cache||typeof cache!=='object'||cache.version!==1)cache={version:1,files:{}};}catch{cache={version:1,files:{}};}return cache;}
@@ -125,7 +131,7 @@ function createModelInfo(data,{log=()=>{}}={}){
   async vramUsed(){const s=await nvidia();return s?s.used:null;},
   quantOf,displayNames,
   // Presentation fields added to backend model lists. Metadata-based fields appear once the file has been read.
-  decorate(models){if(!Array.isArray(models))return models;const names=displayNames(models);return models.map(m=>{const meta=m.Installed?cached(m):null;return {...m,Display:names.get(m.Name),Detail:(m.Repo?m.Repo+' / ':'')+(m.File||''),Quant:quantOf(m.File),Meta:meta?{thinking:meta.thinking,trainedContext:meta.shape?.trainedContext||null,arch:meta.shape?.arch||null,moe:(meta.shape?.experts||0)>0,experts:meta.shape?.experts||0,expertsUsed:meta.shape?.expertsUsed||0,sizeLabel:meta.sizeLabel}:null};});},
+  decorate(models){if(!Array.isArray(models))return models;const names=displayNames(models);return models.map(m=>{const meta=m.Installed?cached(m):null;return {...m,...(imageModelOf(m,meta)?{Image:true}:{}),Display:names.get(m.Name),Detail:(m.Repo?m.Repo+' / ':'')+(m.File||''),Quant:quantOf(m.File),Meta:meta?{thinking:meta.thinking,trainedContext:meta.shape?.trainedContext||null,arch:meta.shape?.arch||null,moe:(meta.shape?.experts||0)>0,experts:meta.shape?.experts||0,expertsUsed:meta.shape?.expertsUsed||0,sizeLabel:meta.sizeLabel}:null};});},
   async read(models){const list=(models||[]).filter(m=>m.Installed);const results=await Promise.all(list.map(metaFor));return results.filter(Boolean).length;},
   meta:cached,
   thinking(m){const meta=m&&cached(m);return meta?meta.thinking:{state:'unknown',reason:'not-read'};},
@@ -150,4 +156,4 @@ function createModelInfo(data,{log=()=>{}}={}){
   }
  };
 }
-module.exports={createModelInfo,displayNames,quantOf,thinkingOf,shapeOf,kvBytes,estimate};
+module.exports={createModelInfo,imageModelOf,displayNames,quantOf,thinkingOf,shapeOf,kvBytes,estimate};

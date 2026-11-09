@@ -103,7 +103,7 @@ function assistantEditor(a){
  const description=el('input');description.maxLength=200;description.value=a.description;description.id='assistant-description';
  const instructions=el('textarea');instructions.rows=7;instructions.maxLength=12000;instructions.value=a.instructions;instructions.id='assistant-instructions';
  const model=el('select');model.id='assistant-model';model.append(new Option(t('assistantModelAny'),''));
- for(const m of state.models.filter(m=>m.Installed))model.append(new Option(typeof displayName==='function'?displayName(m):m.Name,m.Name));
+ for(const m of chatModels().filter(m=>m.Installed))model.append(new Option(typeof displayName==='function'?displayName(m):m.Name,m.Name));
  if(a.model&&![...model.options].some(o=>o.value===a.model))model.append(new Option(a.model,a.model));model.value=a.model||'';
  const temp=el('input');temp.id='assistant-temperature';temp.inputMode='decimal';temp.placeholder=t('assistantDefault');temp.value=a.run?.temperature??'';
  const length=el('select');length.id='assistant-length';length.append(new Option(t('assistantDefault'),''));for(const n of [512,1024,2048,4096])length.append(new Option(fmt(n),String(n)));length.value=a.run?.responseTokens?String(a.run.responseTokens):'';

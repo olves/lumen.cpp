@@ -33,7 +33,7 @@ function createApiServer({getConfig, models, complete, contextFor, cancel = () =
   }
 
   async function chatCompletions(req, res, payload) {
-    const list = (await models()).filter(m => m.Installed && !m.Cloud);
+    const list = (await models()).filter(m => m.Installed && !m.Cloud && !m.Image);
     const model = list.find(m => m.Name === payload.model) || list.find(m => m.File === payload.model) || (payload.model === undefined || payload.model === 'default' ? list[0] : null);
     if (!model) return fail(res, 404, 'Model not found. GET /v1/models lists the downloaded models.', 'invalid_request_error', 'model_not_found');
     if (!Array.isArray(payload.messages) || !payload.messages.length || payload.messages.length > 80) return fail(res, 400, 'messages must be a list of 1–80 messages.');
@@ -87,7 +87,7 @@ function createApiServer({getConfig, models, complete, contextFor, cancel = () =
     if (!sameToken(token, config.token)) return fail(res, 401, 'Missing or wrong API key. Use the token from Lumen → Settings → Connections → Local API.', 'authentication_error', 'invalid_api_key');
     const url = new URL(req.url, 'http://localhost'); stats.requests++; stats.last = new Date().toISOString();
     if (req.method === 'GET' && (url.pathname === '/v1/models' || url.pathname === '/models')) {
-      const list = (await models()).filter(m => m.Installed && !m.Cloud);
+      const list = (await models()).filter(m => m.Installed && !m.Cloud && !m.Image);
       return json(res, 200, {object: 'list', data: list.map(m => ({id: m.Name, object: 'model', created: 0, owned_by: 'lumen', name: m.Display || m.Name, file: m.File}))});
     }
     if (req.method === 'POST' && (url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions')) return chatCompletions(req, res, await body(req));
