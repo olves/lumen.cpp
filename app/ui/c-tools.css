@@ -164,3 +164,11 @@ ins.edit-line::before{content:'+ ';color:var(--accent-ink)}
 .coding-field{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;font-size:var(--font-size-small)}
 .coding-field input[type=number]{width:120px}
 .coding-price-row{display:grid;grid-template-columns:1fr repeat(3,90px);gap:6px;align-items:center;margin-top:6px;font-size:var(--font-size-small)}
+
+/* Drag handle on the browser panel's left edge (tools.js). Hidden where the panel covers the window. */
+@media(min-width:1001px){.browser-panel{position:relative}}
+.browser-resizer{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:3;touch-action:none}
+.browser-resizer::after{content:"";position:absolute;left:3px;top:0;bottom:0;width:2px;background:transparent;transition:background .15s}
+.browser-resizer:hover::after,.browser-resizer:focus-visible::after,.browser-resizing .browser-resizer::after{background:var(--accent)}
+body.browser-resizing{cursor:col-resize;user-select:none}
+@media(max-width:1000px){.browser-resizer{display:none}}

@@ -209,7 +209,7 @@ async function openBrowser(url){
 function closeBrowser(){if($('browser-panel').hidden)return;$('browser-panel').hidden=true;document.body.classList.remove('browser-open');api.browser('close').catch(()=>{});browserState={open:false};}
 function syncBrowserBounds(){
  if(boundsFrame)return;
- boundsFrame=requestAnimationFrame(()=>{boundsFrame=0;const panel=$('browser-panel');const visible=!panel.hidden&&state.page==='chat'&&!document.querySelector('dialog[open]')&&$('welcome').hidden&&!browserState.error;const r=$('browser-viewport').getBoundingClientRect();api.browser('bounds',{rect:visible?{x:r.left,y:r.top,width:r.width,height:r.height}:null}).catch(()=>{});});
+ boundsFrame=requestAnimationFrame(()=>{boundsFrame=0;const panel=$('browser-panel');const visible=!panel.hidden&&state.page==='chat'&&!document.querySelector('dialog[open]')&&$('welcome').hidden&&!browserState.error;const resizing=document.body.classList.contains('browser-resizing');const r=$('browser-viewport').getBoundingClientRect();api.browser('bounds',{rect:visible&&!resizing?{x:r.left,y:r.top,width:r.width,height:r.height}:null}).catch(()=>{});});
 }
 function paintBrowser(){
  const s=browserState;if(document.activeElement!==$('browser-address'))$('browser-address').value=s.url||'';
@@ -225,7 +225,26 @@ $('browser-back').onclick=()=>api.browser('back');$('browser-forward').onclick=(
 $('browser-external').onclick=()=>{if(browserState.url)api.browser('external',{url:browserState.url}).catch(e=>toast(cleanError(e)));};
 $('browser-close').onclick=closeBrowser;$('browser-retry').onclick=()=>{browserState={...browserState,error:null};paintBrowser();api.browser('reload');syncBrowserBounds();};
 $('browser-panel').addEventListener('keydown',event=>{if(event.key==='Escape'&&document.activeElement!==$('browser-address')){event.stopPropagation();closeBrowser();$('prompt').focus();}});
-new ResizeObserver(syncBrowserBounds).observe($('browser-viewport'));window.addEventListener('resize',syncBrowserBounds);
+new ResizeObserver(syncBrowserBounds).observe($('browser-viewport'));window.addEventListener('resize',()=>{applyBrowserWidth();syncBrowserBounds();});
+// Panel width by dragging its left edge (or arrow keys on the handle). The width is saved as browser.panelPx; 0 = the Settings size.
+// While dragging, the page itself is hidden: the native browser view would otherwise take the mouse and end the drag.
+const BROWSER_MIN=320,CHAT_MIN=420;
+function browserWidthLimit(px){return Math.round(Math.max(BROWSER_MIN,Math.min(px,window.innerWidth-CHAT_MIN)));}
+function applyBrowserWidth(px=toolsConfig?.browser?.panelPx||0){$('browser-panel').style.flexBasis=px?browserWidthLimit(px)+'px':'';}
+(function addBrowserResizer(){
+ const panel=$('browser-panel');if(panel.querySelector('.browser-resizer'))return;
+ const grip=el('div','browser-resizer');grip.setAttribute('role','separator');grip.setAttribute('aria-orientation','vertical');grip.tabIndex=0;panel.prepend(grip);
+ const label=()=>{grip.title=t('browserResize');grip.setAttribute('aria-label',t('browserResize'));};label();
+ const save=px=>updateTools({browser:{panelPx:px}});
+ let start=null,keyTimer=0;
+ grip.addEventListener('pointerdown',e=>{if(e.button!==0)return;e.preventDefault();grip.setPointerCapture(e.pointerId);start={x:e.clientX,w:panel.getBoundingClientRect().width};document.body.classList.add('browser-resizing');syncBrowserBounds();});
+ grip.addEventListener('pointermove',e=>{if(!start)return;applyBrowserWidth(start.w+(start.x-e.clientX));});
+ const end=e=>{if(!start)return;start=null;try{grip.releasePointerCapture(e.pointerId);}catch{}document.body.classList.remove('browser-resizing');const px=browserWidthLimit(panel.getBoundingClientRect().width);applyBrowserWidth(px);save(px);syncBrowserBounds();};
+ grip.addEventListener('pointerup',end);grip.addEventListener('pointercancel',end);
+ grip.addEventListener('dblclick',()=>{applyBrowserWidth(0);save(0);});
+ grip.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const px=browserWidthLimit(panel.getBoundingClientRect().width+(e.key==='ArrowLeft'?32:-32));applyBrowserWidth(px);clearTimeout(keyTimer);keyTimer=setTimeout(()=>save(px),300);});
+ const loc=localize;localize=function(...a){loc(...a);label();};
+})();
 const dialogWatcher=new MutationObserver(syncBrowserBounds);document.querySelectorAll('dialog').forEach(dialog=>dialogWatcher.observe(dialog,{attributes:true,attributeFilter:['open']}));dialogWatcher.observe($('welcome'),{attributes:true,attributeFilter:['hidden']});
 const toolsSetPage=setPage;setPage=function(page,animate){toolsSetPage(page,animate);syncBrowserBounds();};
 

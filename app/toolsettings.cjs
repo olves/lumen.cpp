@@ -20,7 +20,7 @@ function createToolSettings(data,secrets){
    // Before DuckDuckGo existed, Wikipedia was the only keyless choice and the default. Settings whose provider was never
    // picked by hand move to general web search; a provider chosen in Settings is kept.
    search:{enabled:s.enabled===true,provider:providers.includes(s.provider)&&!(s.provider==='wikipedia'&&s.providerChosen!==true)?s.provider:'duckduckgo',providerChosen:s.providerChosen===true,results:int(s.results,1,8,5),language:['auto','en','tr'].includes(s.language)?s.language:'auto',endpoint},
-   browser:{render:b.render!==false,panel:b.panel!==false,searchEngine:engines.includes(b.searchEngine)?b.searchEngine:'duckduckgo',homePage:home(b.homePage),javascript:b.javascript!==false,zoom:zooms.includes(Number(b.zoom))?Number(b.zoom):100,privacySignals:b.privacySignals!==false,popups:b.popups==='block'?'block':'panel',panelWidth:['narrow','medium','wide'].includes(b.panelWidth)?b.panelWidth:'medium',clearOnExit:b.clearOnExit===true}
+   browser:{render:b.render!==false,panel:b.panel!==false,searchEngine:engines.includes(b.searchEngine)?b.searchEngine:'duckduckgo',homePage:home(b.homePage),javascript:b.javascript!==false,zoom:zooms.includes(Number(b.zoom))?Number(b.zoom):100,privacySignals:b.privacySignals!==false,popups:b.popups==='block'?'block':'panel',panelWidth:['narrow','medium','wide'].includes(b.panelWidth)?b.panelWidth:'medium',panelPx:Number.isInteger(b.panelPx)&&b.panelPx>=280&&b.panelPx<=4000?b.panelPx:0,clearOnExit:b.clearOnExit===true}
   };
  }
  async function available(){try{return !!(await secrets.available());}catch{return false;}}

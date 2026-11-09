@@ -203,6 +203,30 @@ describe(`browser panel and renderer (${shell})`, () => {
     if (shell === 'tauri') assert.ok(requests.filter(r => r.path === '/page2').every(r => r.headers.connection === 'close'), 'requests came through the proxy');
   });
 
+  test('the panel can be resized by dragging its left edge; double-click returns to the default', async () => {
+    const width = () => ev("Math.round(document.getElementById('browser-panel').getBoundingClientRect().width)");
+    await app.cdp.waitFor("!!document.querySelector('#browser-panel .browser-resizer')", 5000);
+    const before = await width();
+    const h = await ev("(() => { const r = document.querySelector('#browser-panel .browser-resizer').getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; })()");
+    const mouse = (type, x) => app.cdp.send('Input.dispatchMouseEvent', { type, x, y: h.y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
+    await mouse('mousePressed', h.x);
+    for (let i = 1; i <= 5; i++) await mouse('mouseMoved', h.x - i * 30);
+    await mouse('mouseReleased', h.x - 150);
+    await app.cdp.waitFor(`Math.abs(document.getElementById('browser-panel').getBoundingClientRect().width - ${before + 150}) <= 3`, 5000);
+    await app.cdp.waitFor('toolsConfig.browser.panelPx > 0', 5000);
+    assert.ok(Math.abs((await ev('toolsConfig.browser.panelPx')) - (before + 150)) <= 3, 'the width is saved');
+    assert.equal(await ev("document.body.classList.contains('browser-resizing')"), false);
+    // The page follows the panel.
+    await waitState('s.open && !s.error');
+    await panel.waitFor?.(`innerWidth >= ${before + 100}`, 5000);
+    // Keyboard: ArrowRight narrows the panel.
+    await ev("document.querySelector('#browser-panel .browser-resizer').dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true})); 0");
+    await app.cdp.waitFor(`document.getElementById('browser-panel').getBoundingClientRect().width < ${before + 140}`, 5000);
+    // Double-click: back to the default width, and the saved width is cleared.
+    await ev("document.querySelector('#browser-panel .browser-resizer').dispatchEvent(new MouseEvent('dblclick', {bubbles: true})); 0");
+    await app.cdp.waitFor(`Math.abs(document.getElementById('browser-panel').getBoundingClientRect().width - ${before}) <= 3 && !toolsConfig.browser.panelPx`, 5000);
+  });
+
   // WebRTC must not reveal the computer's addresses: with disable_non_proxied_udp no UDP (host/srflx) candidate is gathered.
   test('WebRTC gathers no UDP candidates in the panel', async () => {
     await attachPanel(`${base}/page2`);
