@@ -14,7 +14,10 @@ const dataDir = path.join(runDir, 'data');
 let app;
 const ev = expression => app.cdp.evaluate(expression);
 // A local (or cloud) reply as the status bar sees it, with a fake clock so the speed is defined.
-const reply = (cloud = false) => ev(`(() => {
+// The engine label is set here, in the same evaluation as the reply: the status bar refreshes it from the core (CPU in tests)
+// at its own time, and on Tauri that can land after a separate assignment.
+const reply = (cloud = false, engine = 'CUDA 13.4') => ev(`(() => {
+  statusState.engine = ${JSON.stringify(engine)};
   let now = 0; LumenStatus.setClock(() => now);
   state.operation = 'send';
   handleEngineEvent({ type: 'chunk', data: 'a' }); now = 500; handleEngineEvent({ type: 'chunk', data: 'b' }); now = 1000; handleEngineEvent({ type: 'chunk', data: 'c' });
@@ -26,7 +29,7 @@ describe(`GPU busy warning (${shell})`, () => {
     prepareData(dataDir, null);
     app = await launch({ shell, dataDir, env: { LUMEN_TEST_GPU_BUSY: JSON.stringify([{ name: 'wallpaper64', title: 'Wallpaper Engine', percent: 92 }]) } });
     await app.cdp.waitFor('state.ready === true', 30000);
-    await ev("setPage('chat'); document.getElementById('toast').hidden = true; statusState.engine = 'CUDA 13.4'; 0");
+    await ev("setPage('chat'); document.getElementById('toast').hidden = true; 0");
   });
   after(async () => { await app?.stop(); });
 
@@ -58,8 +61,7 @@ describe(`GPU busy warning (${shell})`, () => {
   test('a cloud reply or the CPU engine does not ask', async () => {
     await ev("statusState.gpuBusy = []; window.__asked = 0; const f = api.modelsInfo; api.modelsInfo = (...a) => { if (a[0] === 'gpu-busy') window.__asked++; return f(...a); }; 0");
     await reply(true);
-    await ev("statusState.engine = 'CPU'; 0");
-    await reply();
+    await reply(false, 'CPU');
     await new Promise(r => setTimeout(r, 300));
     assert.equal(await ev('window.__asked'), 0);
   });
