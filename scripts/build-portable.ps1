@@ -11,7 +11,8 @@
 #   4. Compiles lumen-host.exe, lumen-image-ocr.exe and lumen-updater.exe with the .NET Framework 4.8 compiler that ships with
 #      Windows.
 # Everything in the folder is built from this repository or downloaded from the official, pinned upstream releases.
-# The release build also carries the Lumen icon in the executable's resources; this script does not change the icon.
+#   5. Writes app/lumen.ico into lumen.cpp.exe as its icon (scripts/SetIcon.cs, compiled the same way; not shipped), so
+#      Explorer, the taskbar and Task Manager show Lumen's icon instead of Electron's.
 param(
   [string]$Out = 'dist\Lumen-Beta'
 )
@@ -74,4 +75,12 @@ try {
   & $csc /nologo /target:winexe /out:lumen-updater.exe /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:System.Windows.Forms.dll LumenUpdater.cs
   if ($LASTEXITCODE) { throw 'lumen-updater.exe did not compile.' }
 } finally { Pop-Location }
+
+$tools = Join-Path $cache 'tools'
+New-Item -ItemType Directory -Force $tools | Out-Null
+$setIcon = Join-Path $tools 'SetIcon.exe'
+& $csc /nologo /target:exe "/out:$setIcon" (Join-Path $PSScriptRoot 'SetIcon.cs')
+if ($LASTEXITCODE) { throw 'SetIcon.exe did not compile.' }
+& $setIcon (Join-Path $Out 'lumen.cpp.exe') (Join-Path $app 'lumen.ico')
+if ($LASTEXITCODE) { throw 'The Lumen icon could not be written into lumen.cpp.exe.' }
 Write-Host "Done: $Out\lumen.cpp.exe"
