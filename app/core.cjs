@@ -23,6 +23,9 @@ const {createAgent,createActivityStore,createReasoningStore}=require('./agent.cj
 const activityStore=createActivityStore(data),reasoningStore=createReasoningStore(data),statsStore=require('./stats.cjs').createStatsStore(data),codingStore=require('./codingstore.cjs').createCodingStore(data);
 let coder=null;
 // A response is running: the research/tools agent, or the coding agent.
+const {effortOf}=require('./effort.cjs');
+// The effort to send for this model: the chat's choice when the model offers it, else nothing (the model's default).
+function effortFor(model,choice){const e=effortOf(model);return e.levels.includes(choice)?choice:undefined;}
 function agentBusy(){return !!(agent?.active()||coder?.active());}
 const {createRunSettings,cleanDefaults}=require('./runsettings.cjs'),runSettings=createRunSettings(data);
 const documents=require('./documents.cjs').createDocuments(data);
@@ -42,7 +45,10 @@ async function runCoding(args,chat,runId,prompt,contextSize){
  if(target){if(!connections.summary().cloud.enabled)throw Error(tr?'Bulut modelleri kapalı.':'Cloud models are turned off.');if(!codingStore.settings().consented.includes(target.provider))throw Object.assign(Error(tr?'Proje dosyalarının bu sağlayıcıya gönderilmesine önce izin ver.':'Allow project files to be sent to this provider first.'),{code:'consent'});}
  let systemPrompt=String(chat.SystemPrompt||'').slice(0,12000);try{systemPrompt=skillStore.compile(systemPrompt,Array.isArray(chat.SkillIds)?chat.SkillIds:[]).prompt;}catch{}
  let window=128000;if(!target){const context=await contextFor(chat.Model,contextSize);window=context.value;loaded={model:chat.Model,context:window};}
- return coder.run({runId,chat,msgIndex:chat.Messages.length-1,prompt,model:chat.Model,cloudTarget:target?{provider:target.provider,model:target.model}:null,contextSize:window,language:tr?'tr':'en',binding,allowEdits:codingStore.get(chat.Id).allowEdits,systemPrompt});
+ // Effort for the agent's steps: the chat's choice; otherwise low (cheap steps), or high with "Think more during steps".
+ const levels=effortOf(chat.Model).levels,choice=runSettings.effective(chat.Id,p).effort,deep=codingStore.settings().deepThinking;
+ const reasoningEffort=!levels.length?null:levels.includes(choice)?choice:deep&&levels.includes('high')?'high':levels.includes('low')?'low':null;
+ return coder.run({runId,chat,msgIndex:chat.Messages.length-1,prompt,model:chat.Model,cloudTarget:target?{provider:target.provider,model:target.model}:null,contextSize:window,language:tr?'tr':'en',binding,allowEdits:codingStore.get(chat.Id).allowEdits,systemPrompt,reasoningEffort});
 }
 // Checkpoints of coding tasks older than 30 days are removed at startup.
 function pruneCheckpoints(){const dir=path.join(data,'agent-checkpoints');let names=[];try{names=fs.readdirSync(dir);}catch{return;}const cutoff=Date.now()-30*86400000;for(const n of names){try{const full=path.join(dir,n);if(fs.statSync(full).mtimeMs<cutoff)fs.rmSync(full,{recursive:true,force:true});}catch{}}}
@@ -68,7 +74,7 @@ async function cloudSend(args){
   let total=history.reduce((n,m)=>n+m.content.length,0),omitted=0;while(total>300000&&history.length>1){total-=history[0].content.length;history.shift();omitted++;}
   if(timed&&history.length&&history.at(-1).role==='user')history[history.length-1]={...history.at(-1),content:history.at(-1).content+`\n\n[${vars.current_date}, ${vars.current_time}]`};
   const messages=[...([system,guidance].filter(Boolean).length?[{role:'system',content:[system,guidance].filter(Boolean).join('\n\n')}]:[]),...history];
-  const result=await cloud.chat({provider:target.provider,model:target.model,messages,maxTokens:run.responseTokens,temperature:req.temperature,sampling:req.sampling,signal:controller.signal,
+  const result=await cloud.chat({provider:target.provider,model:target.model,messages,maxTokens:run.responseTokens,temperature:req.temperature,sampling:req.sampling,signal:controller.signal,reasoningEffort:effortFor(chat.Model,run.effort),
    onChunk:t=>{if(!firstText)firstText=Date.now();lastText=Date.now();streamed+=t;emit({type:'chunk',data:t});},onReasoning:t=>{if(!firstThought)firstThought=Date.now();reasoning+=t;emit({type:'reasoning',data:t});}});
   if(!result.content.trim())throw Error(connections.providerLabel(target.provider)+' returned an empty reply'+(result.finish==='length'?' (the response length ran out).':'.'));
   const saved=await coreRequest('save',{chat:{...base,Messages:[...base.Messages,{Role:'assistant',Content:result.content,Interrupted:result.finish==='length'}]}});
@@ -478,7 +484,7 @@ async function requestNow(action,args={}){
  });
  // Run settings of one conversation (Run settings panel). "default" makes this chat's values the defaults for new chats.
  handle('run',async(action,args={})=>{
-  const id=String(args.id||''),p=prefs(),view=()=>{const q=prefs(),cap=args.model?modelInfo.thinking(modelNamed(String(args.model))):{state:'unknown'};return {overrides:/^[a-fA-F0-9]{32}$/.test(id)?runSettings.overrides(id):{},defaults:runSettings.defaults(q),effective:runSettings.effective(id,q),thinking:cap,variables:promptVariables(q)};};
+  const id=String(args.id||''),p=prefs(),view=()=>{const q=prefs(),cap=args.model?modelInfo.thinking(modelNamed(String(args.model))):{state:'unknown'};return {overrides:/^[a-fA-F0-9]{32}$/.test(id)?runSettings.overrides(id):{},defaults:runSettings.defaults(q),effective:runSettings.effective(id,q),thinking:cap,effort:effortOf(String(args.model||'')),variables:promptVariables(q)};};
   if(action==='get')return view();
   if(action==='set'){runSettings.set(id,args.values);return view();}
   if(action==='reset'){runSettings.reset(id);return view();}

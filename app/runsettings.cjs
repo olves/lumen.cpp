@@ -23,6 +23,11 @@ function clean(input) {
     out[key] = integer ? n : Math.round(n * 1000) / 1000;
   }
   if (typeof input.thinking === 'boolean') out.thinking = input.thinking;
+  // Reasoning effort (effort.cjs); unset means the model's own default.
+  if (input.effort !== undefined && input.effort !== null) {
+    if (!['low', 'medium', 'high', 'max'].includes(input.effort)) throw Error('Invalid effort.');
+    out.effort = input.effort;
+  }
   if (input.responseTokens !== undefined && input.responseTokens !== null) {
     if (!RESPONSE_TOKENS.includes(Number(input.responseTokens))) throw Error('Invalid response length.');
     out.responseTokens = Number(input.responseTokens);

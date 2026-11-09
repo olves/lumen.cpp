@@ -79,7 +79,9 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
     for (const [k, field] of Object.entries(map)) if (Number.isFinite(sampling[k]) && !(k === 'seed' && sampling[k] < 0)) full[field] = sampling[k];
     const toolFields = Array.isArray(tools) && tools.length ? {tools, tool_choice: 'auto'} : {};
     Object.assign(full, toolFields);
-    if (reasoningEffort && provider === 'deepseek') full.reasoning_effort = reasoningEffort;
+    // The caller sends an effort only for models that take one (effort.cjs); a provider that still refuses it gets the
+    // minimal body below on a 400.
+    if (reasoningEffort) full.reasoning_effort = reasoningEffort;
     const minimal = {model, messages, stream: true, ...(provider === 'openai' ? {max_completion_tokens: maxTokens} : {max_tokens: maxTokens}), ...toolFields};
     let response;
     for (const body of [full, minimal]) {

@@ -48,13 +48,15 @@ test('no tools: no tool fields are sent and toolCalls is empty', async () => {
   assert.equal('tool_choice' in f.bodies[0], false);
 });
 
-test('reasoning_effort is sent to deepseek and not to openai', async () => {
+test('reasoning_effort is sent whenever the caller gives one (any provider) and never otherwise', async () => {
   const f = fakeFetch(() => json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }));
   const cloud = createCloud({ connections, fetchImpl: f.impl });
   await cloud.chat({ provider: 'deepseek', model: 'deepseek-flash', messages: [], reasoningEffort: 'low' });
   await cloud.chat({ provider: 'openai', model: 'gpt-x', messages: [], reasoningEffort: 'low' });
+  await cloud.chat({ provider: 'openai', model: 'gpt-x', messages: [] });
   assert.equal(f.bodies[0].reasoning_effort, 'low');
-  assert.equal('reasoning_effort' in f.bodies[1], false);
+  assert.equal(f.bodies[1].reasoning_effort, 'low');
+  assert.equal('reasoning_effort' in f.bodies[2], false);
 });
 
 test('a 400 retry keeps the tools', async () => {

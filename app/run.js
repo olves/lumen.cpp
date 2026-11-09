@@ -26,6 +26,9 @@ Object.assign(translations,{
  runDefaultSaved:['These settings are now the defaults for new chats.','Bu ayarlar artık yeni sohbetlerin varsayılanı.'],runResetDone:['This conversation uses the defaults again.','Bu sohbet yeniden varsayılanları kullanıyor.'],
  runThinkingUnsupported:['This model does not support thinking.','Bu model düşünmeyi desteklemiyor.'],runThinkingAlways:['This model always thinks.','Bu model her zaman düşünür.'],
  runToggle:['{temp} · {tokens}','{temp} · {tokens}'],
+ runEffort:['Reasoning effort','Düşünme seviyesi'],runEffortHint:['How long the model thinks before it answers. Higher levels are slower and use more tokens.','Modelin yanıtlamadan önce ne kadar düşüneceği. Yüksek seviyeler daha yavaştır ve daha çok token harcar.'],
+ runEffortDefault:['Model default','Model varsayılanı'],effort_low:['Low','Düşük'],effort_medium:['Medium','Orta'],effort_high:['High','Yüksek'],effort_max:['Max','En yüksek'],
+ runEffortNone:['This model has no effort levels. For local models use Thinking above.','Bu modelin düşünme seviyeleri yok. Yerel modellerde yukarıdaki Düşünme ayarını kullan.'],
 });
 for(const node of document.querySelectorAll('[data-icon="sliders"]'))node.replaceChildren(icon('sliders'));
 
@@ -52,7 +55,8 @@ function paintRunToggle(){
  const button=$('run-toggle');if(!button)return;const e=runView?.effective;const text=button.querySelector('.run-toggle-text');
  if(!e){text.textContent=t('runSettings');button.classList.remove('custom');return;}
  const preset=runPresets.find(p=>p[1]===e.temperature);
- text.textContent=tf('runToggle',{temp:preset?t(preset[2]):String(e.temperature),tokens:fmt(e.responseTokens)});
+ const eff=runView.effort,level=eff?.levels?.length?(eff.levels.includes(e.effort)?e.effort:eff.def):null;
+ text.textContent=tf('runToggle',{temp:preset?t(preset[2]):String(e.temperature),tokens:fmt(e.responseTokens)})+(level?' · '+t('effort_'+level):'');
  const custom=Object.keys(runView.overrides||{}).length>0;button.classList.toggle('custom',custom);button.title=t('runOpen')+(custom?' · '+t('runCustom'):'');
 }
 
@@ -80,6 +84,11 @@ function buildRunPanel(){
  const thinking=el('label','switch');const thinkingInput=el('input');thinkingInput.type='checkbox';thinkingInput.id='run-thinking';thinking.append(thinkingInput,el('span'));
  thinkingInput.onchange=()=>setRunValue('thinking',thinkingInput.checked);
  const thinkingRow=runRow('thinkingSetting','runThinkingHint',thinking,'thinking');thinkingRow.classList.add('run-inline');const thinkingNote=el('p','run-hint run-note');thinkingNote.id='run-thinking-note';thinkingRow.append(thinkingNote);body.append(thinkingRow);
+ // Reasoning effort: only the levels the selected model takes are shown (effort.cjs); none -> disabled with a note.
+ const effort=el('div','segmented run-segmented');effort.id='run-effort';effort.setAttribute('role','radiogroup');effort.setAttribute('aria-label',t('runEffort'));
+ for(const v of ['','low','medium','high','max']){const b=el('button','',v?t('effort_'+v):t('runEffortDefault'));b.type='button';b.dataset.value=v;b.setAttribute('role','radio');b.onclick=()=>setRunValue('effort',v||null);effort.append(b);}
+ effort.onkeydown=e=>segmentedKeys(e,effort);
+ const effortRow=runRow('runEffort','runEffortHint',effort,'effort');const effortNote=el('p','run-hint run-note');effortNote.id='run-effort-note';effortNote.hidden=true;effortRow.append(effortNote);body.append(effortRow);
  const tokens=el('div','segmented run-segmented');tokens.id='run-tokens';tokens.setAttribute('role','radiogroup');tokens.setAttribute('aria-label',t('responseLength'));
  for(const n of [512,1024,2048,4096]){const b=el('button','',fmt(n));b.type='button';b.dataset.value=n;b.setAttribute('role','radio');b.onclick=()=>setRunValue('responseTokens',n);tokens.append(b);}
  tokens.onkeydown=e=>segmentedKeys(e,tokens);
@@ -120,6 +129,9 @@ function paintRunPanel(){
  const cap=runView.thinking||{state:'unknown'},always=cap.state==='supported'&&cap.toggle===false,unsupported=cap.state==='unsupported';
  $('run-thinking').checked=always||(!unsupported&&e.thinking);$('run-thinking').disabled=always||unsupported;
  $('run-thinking-note').textContent=unsupported?t('runThinkingUnsupported'):always?t('runThinkingAlways'):'';$('run-thinking-note').hidden=!unsupported&&!always;
+ const eff=runView.effort||{levels:[]},none=!eff.levels.length;
+ for(const b of $('run-effort').querySelectorAll('button')){const v=b.dataset.value;b.textContent=v?t('effort_'+v):t('runEffortDefault');b.hidden=!!v&&!eff.levels.includes(v);b.disabled=none;const on=(e.effort&&eff.levels.includes(e.effort)?e.effort:'')===v;b.classList.toggle('active',on);b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;}
+ $('run-effort-note').textContent=t('runEffortNone');$('run-effort-note').hidden=!none;
  for(const b of $('run-tokens').querySelectorAll('button')){const on=Number(b.dataset.value)===e.responseTokens;b.classList.toggle('active',on);b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;}
  const setSlider=(key,value,unset)=>{const range=$('run-'+key),number=$('run-'+key+'-value');if(!range)return;range.value=String(value);if(document.activeElement!==number)number.value=unset?'':String(value);number.placeholder=unset?t('runDefaultShort'):'';range.classList.toggle('unset',!!unset);};
  setSlider('temperature',e.temperature,false);

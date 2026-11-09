@@ -28,6 +28,7 @@ function parseLocal(text) {
 
 function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, log = () => {} }) {
   const runs = new Map(), approvals = new Map();
+  const settings0 = () => store.settings();
 
   function waitApproval(runId, callId, signal) {
     return new Promise(resolve => {
@@ -41,6 +42,8 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
 
   async function run(options) {
     const { runId, chat, msgIndex, prompt, model, cloudTarget, contextSize, language = 'en', binding, allowEdits, systemPrompt = '' } = options;
+    // null = the model takes no effort; undefined (older callers, tests) = low, or high with "Think more during steps".
+    const stepEffort = options.reasoningEffort === undefined ? (settings0().deepThinking ? 'high' : 'low') : options.reasoningEffort || undefined;
     if (runs.size) throw Error('Another run is active.');
     const controller = new AbortController(), signal = controller.signal; runs.set(runId, controller);
     const send = event => emit({ runId, ...event });
@@ -90,7 +93,7 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
           if (parsed) calls = [{ id: `s${step}`, name: parsed.name, args: parsed.args, raw: null }]; else content = String(r.content || '');
           perSecond = r.completionTokens && Date.now() > started ? r.completionTokens / ((Date.now() - started) / 1000) : null;
         } else {
-          const r = await cloud.chat({ provider: cloudTarget.provider, model: cloudTarget.model, messages: render(), tools, maxTokens: CLOUD_STEP_TOKENS, temperature: 0.2, reasoningEffort: settings.deepThinking ? 'high' : 'low', signal });
+          const r = await cloud.chat({ provider: cloudTarget.provider, model: cloudTarget.model, messages: render(), tools, maxTokens: CLOUD_STEP_TOKENS, temperature: 0.2, reasoningEffort: stepEffort, signal });
           totals = cost.addUsage(totals, r.usage); lastInput = cost.normalizeUsage(r.usage).input;
           content = String(r.content || ''); calls = (r.toolCalls || []).map(c => ({ id: c.id || crypto.randomUUID(), name: c.name, args: null, raw: c.arguments }));
           const out = cost.normalizeUsage(r.usage).output; perSecond = out && Date.now() > started ? out / ((Date.now() - started) / 1000) : null;
