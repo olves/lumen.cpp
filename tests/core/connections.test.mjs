@@ -56,3 +56,12 @@ test('at most nine custom providers; unknown ids are refused', async () => {
 test('reasoning effort works for models on an added custom provider', () => {
   assert.deepEqual(effortOf('cloud:custom2/deepseek-v4.1-flash').levels, ['low', 'high', 'max']);
 });
+
+test('web research with cloud models is off by default and is saved when turned on', async () => {
+  const c = make();
+  assert.equal(c.summary().cloud.webResearch, false);
+  await c.setCloud({ enabled: true, webResearch: true });
+  assert.equal(c.summary().cloud.webResearch, true);
+  await c.setCloud({ webResearch: false });
+  assert.equal(c.summary().cloud.webResearch, false);
+});

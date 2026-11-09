@@ -6,7 +6,8 @@ Object.assign(paths,{cloud:'M5 14h8a3 3 0 00.4-6A4.5 4.5 0 004.7 6.6 3.2 3.2 0 0
 Object.assign(translations,{
  connectionsLabel:['Connections','Bağlantılar'],cloudTitle:['Cloud models','Bulut modelleri'],mcpTitle:['MCP servers','MCP sunucuları'],apiTitle:['Local API','Yerel API'],
  cloudIntro:['Optional. Use models from a provider with your own API key.','İsteğe bağlı. Kendi API anahtarınla bir sağlayıcının modellerini kullan.'],
- cloudPrivacy:['Off by default. Only conversations where you pick a cloud model are sent, and only to that provider: the messages, the conversation’s instructions, selected skills and document excerpts. Photos go as their recognized text. Research, project folders and connected tools always run on local models. Keys are encrypted on this computer.','Varsayılan olarak kapalı. Yalnızca bulut modeli seçtiğin sohbetler, yalnızca o sağlayıcıya gönderilir: mesajlar, sohbetin talimatı, seçili skill’ler ve belge alıntıları. Fotoğraflar tanınan metin olarak gider. Araştırma, proje klasörü ve bağlı araçlar her zaman yerel modellerle çalışır. Anahtarlar bu bilgisayarda şifrelenir.'],
+ cloudPrivacy:['Off by default. Only conversations where you pick a cloud model are sent, and only to that provider: the messages, the conversation’s instructions, selected skills and document excerpts. Photos go as their recognized text. Web research goes to the provider only if you allow it below. A project folder is sent only after you allow it for that provider. Connected tools always run on local models. Keys are encrypted on this computer.','Varsayılan olarak kapalı. Yalnızca bulut modeli seçtiğin sohbetler, yalnızca o sağlayıcıya gönderilir: mesajlar, sohbetin talimatı, seçili skill’ler ve belge alıntıları. Fotoğraflar tanınan metin olarak gider. Web araştırması yalnızca aşağıda izin verirsen sağlayıcıya gider. Proje klasörü, o sağlayıcı için izin verdikten sonra gönderilir. Bağlı araçlar her zaman yerel modellerle çalışır. Anahtarlar bu bilgisayarda şifrelenir.'],
+ cloudWebResearch:['Allow web research with cloud models','Bulut modelleriyle web araştırmasına izin ver'],cloudWebResearchHint:['Research with a cloud model sends your search queries, the search results and the text of the pages it reads to that provider. Off: research uses local models only.','Bulut modeliyle araştırma; arama sorgularını, arama sonuçlarını ve okunan sayfaların metnini o sağlayıcıya gönderir. Kapalıyken araştırma yalnızca yerel modellerle yapılır.'],
  cloudEnable:['Use cloud models','Bulut modellerini kullan'],cloudEnableHint:['Adds the models you choose below to the model menu.','Aşağıda seçtiğin modelleri model menüsüne ekler.'],
  cloudConsentTitle:['Send conversations to a cloud provider?','Sohbetler bir bulut sağlayıcısına gönderilsin mi?'],cloudConsentYes:['Turn on','Aç'],cloudConsentNo:['Cancel','Vazgeç'],
  cloudKey:['API key','API anahtarı'],cloudKeySaved:['Key saved (encrypted)','Anahtar kayıtlı (şifreli)'],cloudKeyNone:['No key','Anahtar yok'],cloudKeySave:['Save key','Anahtarı kaydet'],cloudKeyRemove:['Remove key','Anahtarı kaldır'],
@@ -72,6 +73,7 @@ function paintCloud(){
  consent.append(el('strong','',t('cloudConsentTitle')),el('p','',t('cloudPrivacy')),(()=>{const a=el('div','dialog-actions');a.append(no,yes);return a;})());
  const toggle=switchRow('cloudEnable','cloudEnableHint',c.enabled,(on,box)=>{if(on&&!c.consented){box.checked=false;consent.hidden=false;yes.focus();return;}connAction('cloud',{enabled:on});},'cloud-enabled');
  yes.onclick=()=>connAction('cloud',{enabled:true,consented:true});no.onclick=()=>{consent.hidden=true;};
+ const research=switchRow('cloudWebResearch','cloudWebResearchHint',!!c.webResearch,on=>connAction('cloud',{webResearch:on}),'cloud-web-research');research.hidden=!c.enabled;
  const providers=el('div','connect-list');
  for(const [id,p] of Object.entries(c.providers))providers.append(providerCard(id,p));
  // More OpenAI-compatible services (custom2 … custom9), each with its own address, key and models.
@@ -79,7 +81,7 @@ function paintCloud(){
  addCustom.onclick=async()=>{addCustom.disabled=true;try{const r=await api.connections('provider-add',{});connectionsState=r;paintConnections();await refreshCloudModels();document.querySelector(`#cloud-panel .connect-card[data-provider="${r.added}"] input`)?.focus();}catch(e){toast(cleanError(e));addCustom.disabled=false;}};
  providers.append(addCustom);
  providers.hidden=!c.enabled;
- panel.replaceChildren(connHeading('cloudTitle','cloudIntro'),el('p','connect-rules',t('cloudPrivacy')),toggle,consent,providers);
+ panel.replaceChildren(connHeading('cloudTitle','cloudIntro'),el('p','connect-rules',t('cloudPrivacy')),toggle,consent,research,providers);
 }
 function providerCard(id,p){
  const card=el('div','connect-card'),head=el('div','connect-card-head');card.dataset.provider=id;
@@ -194,8 +196,8 @@ const connectRenderChips=renderToolChips;renderToolChips=function(){
 const connectSend=send;send=async function(){
  if(state.busy)return connectSend();
  const model=$('model-picker').value;
- // Project folders work with cloud models (the coding agent); research and connected tools stay local.
- if(isCloudModel(model)&&(toolsMode||(typeof researchMode!=='undefined'&&researchMode))){toast(t('cloudLocalOnly'));return;}
+ // Project folders work with cloud models (the coding agent); web research only when allowed in Settings; connected tools stay local.
+ if(isCloudModel(model)&&(toolsMode||(typeof researchMode!=='undefined'&&researchMode&&!connectionsState?.cloud?.webResearch))){toast(t('cloudLocalOnly'));return;}
  if(!toolsMode||isCloudModel(model))return connectSend();
  if(typeof photosAdding!=='undefined'&&photosAdding)return;const text=composeText();if(!text||!state.ready)return;
  const chosen=state.models.find(m=>m.Name===model);if(chosen&&!chosen.Installed&&!await download(chosen.Name))return;

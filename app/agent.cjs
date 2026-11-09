@@ -116,7 +116,9 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
   const setPhase=(name,detail)=>{phase=name;send({type:'phase',phase:name,detail});};
   const publish=task=>send({type:'task',task:publicTask(task)});
   const publicTask=t=>({id:t.id,title:t.title,goal:t.goal,status:t.status,model,ops:t.ops,result:t.result,error:t.error});
-  const call=(args,extra={})=>engine.complete({model,contextSize,signal:extra.signal||signal,...args});
+  // options.complete: another model runner with engine.complete's shape (a cloud model, when the user allowed web research with it).
+  const complete=options.complete||engine.complete;
+  const call=(args,extra={})=>complete({model,contextSize,signal:extra.signal||signal,...args});
   send({type:'start',model,provider,webOn,limits});
   try{
    // 1. Plan. Forced research (user chose Research) may still use one task; auto mode may answer directly.

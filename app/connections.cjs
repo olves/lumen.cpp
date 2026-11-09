@@ -66,7 +66,7 @@ function createConnections(data, secrets) {
     const port = Number(a.port);
     return {
       version: 1,
-      cloud: {enabled: c.enabled === true, consented: c.consented === true, providers, keys},
+      cloud: {enabled: c.enabled === true, consented: c.consented === true, webResearch: c.webResearch === true, providers, keys},
       mcp: {servers},
       api: {enabled: a.enabled === true, port: Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : API_PORT, token: typeof a.token === 'string' && a.token.length < 8192 ? a.token : ''},
     };
@@ -94,7 +94,7 @@ function createConnections(data, secrets) {
     summary() {
       const c = read();
       return {
-        cloud: {enabled: c.cloud.enabled, consented: c.cloud.consented, providers: Object.fromEntries(providerIds(c).map(id => { const p = PROVIDERS[id] || PROVIDERS.custom; return [id, {label: isCustom(id) ? (c.cloud.providers[id]?.label || 'Custom') : p.label, site: p.site, keyHint: p.keyHint,
+        cloud: {enabled: c.cloud.enabled, consented: c.cloud.consented, webResearch: c.cloud.webResearch, providers: Object.fromEntries(providerIds(c).map(id => { const p = PROVIDERS[id] || PROVIDERS.custom; return [id, {label: isCustom(id) ? (c.cloud.providers[id]?.label || 'Custom') : p.label, site: p.site, keyHint: p.keyHint,
           key: !!c.cloud.keys[id], models: c.cloud.providers[id]?.models || [], ...(isCustom(id) ? {base: c.cloud.providers[id]?.base || '', custom: true, removable: id !== 'custom'} : {})}]; }))},
         mcp: {servers: c.mcp.servers.map(s => ({id: s.id, name: s.name, url: s.url, enabled: s.enabled, token: !!s.token, checked: s.checked, serverName: s.serverName, error: s.error,
           tools: s.tools.map(t => ({name: t.name, title: t.title, description: t.description, readOnly: t.readOnly, enabled: t.enabled, ask: t.ask}))}))},
@@ -116,6 +116,8 @@ function createConnections(data, secrets) {
       const c = read();
       if (typeof patch.enabled === 'boolean') c.cloud.enabled = patch.enabled;
       if (patch.consented === true) c.cloud.consented = true;
+      // Web research with cloud models: search results and page text go to the provider, so it is a separate, explicit choice.
+      if (typeof patch.webResearch === 'boolean') c.cloud.webResearch = patch.webResearch;
       cache = sanitize(c); write(); return this.public();
     },
     async setCloudProvider(id, patch) {

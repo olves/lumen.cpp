@@ -37,6 +37,21 @@ function cloudModelEntries(){if(!connections)return [];try{return connections.cl
 function withCloud(models){return Array.isArray(models)?[...models.filter(m=>!m.Cloud),...cloudModelEntries()]:models;}
 // Coding agent run (mode 'project'). Cloud: the provider must be on and the user must have agreed once that project files go
 // to it; the working window is 128K tokens (compaction keeps cost bounded even when the model allows more).
+// Web research with a cloud model: the research agent's model calls go to the provider in engine.complete's shape. Steps that
+// need JSON get the schema in the system message (cloud models have no grammar); the agent validates and retries as for local ones.
+const CLOUD_RESEARCH_CONTEXT=64000;
+function cloudComplete(chat){
+ const target=connections.parseCloud(chat.Model);if(!target)throw Error('Unknown cloud model.');
+ const effort=effortFor(chat.Model,runSettings.effective(chat.Id,prefs()).effort);
+ return async({messages,schema,maxTokens,temperature,sampling,stream,onChunk,onReasoning,signal,timeoutMs})=>{
+  let msgs=messages;
+  if(schema){const rule='\n\nReply with only one JSON object that matches this JSON schema. No other text, no code fence:\n'+JSON.stringify(schema);msgs=messages[0]?.role==='system'?[{...messages[0],content:messages[0].content+rule},...messages.slice(1)]:[{role:'system',content:rule.trim()},...messages];}
+  const s=timeoutMs?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)].filter(Boolean)):signal;
+  const r=await cloud.chat({provider:target.provider,model:target.model,messages:msgs,maxTokens,temperature,sampling,signal:s,reasoningEffort:schema?undefined:effort,onChunk:stream?onChunk:undefined,onReasoning:stream?onReasoning:undefined});
+  let content=String(r.content||'');if(schema)content=content.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
+  return {content,promptTokens:r.usage?.prompt_tokens||0,completionTokens:r.usage?.completion_tokens||0};
+ };
+}
 async function runCoding(args,chat,runId,prompt,contextSize){
  const p=prefs(),tr=p.language==='tr',binding=projectStore.get(chat.Id);
  if(!binding)throw Error(tr?'Bu sohbete bağlı proje yok.':'No project folder is attached to this conversation.');
@@ -370,22 +385,24 @@ async function requestNow(action,args={}){
  });
  handle('agent',async(action,args={})=>{
   if(JSON.stringify(args).length>4000000)throw Error('Invalid request.');
-  if(action==='route'){const config=toolSettings.plain(),prompt=String(args.prompt||'').slice(0,90000);if(/^cloud:/.test(String(args.model||'')))return {route:'chat',reason:'cloud'};if(!hostReady)return {route:'chat',reason:'unavailable'};if(args.mode==='research')return config.search.enabled?{route:'agent'}:{route:'chat',reason:'web-off'};return {route:config.search.enabled&&config.agent.auto&&agent.needsTools(prompt)?'agent':'chat'};}
+  if(action==='route'){const config=toolSettings.plain(),prompt=String(args.prompt||'').slice(0,90000);if(/^cloud:/.test(String(args.model||''))&&!connections.summary().cloud.webResearch)return {route:'chat',reason:'cloud'};if(!hostReady)return {route:'chat',reason:'unavailable'};if(args.mode==='research')return config.search.enabled?{route:'agent'}:{route:'chat',reason:'web-off'};return {route:config.search.enabled&&config.agent.auto&&agent.needsTools(prompt)?'agent':'chat'};}
   if(action==='run'){
    const {runId,chat,prompt,mode,contextSize}=args;
    if(typeof runId!=='string'||!/^[a-f0-9-]{36}$/.test(runId)||!validChat(chat)||typeof prompt!=='string'||!prompt.trim()||prompt.length>90000||!['auto','research','project','tools'].includes(mode)||!contextSizes.includes(contextSize)||!hostReady&&contextSize>16384)throw Error('Invalid research request.');
    if(skillFlight)throw Error('A response is already running.');
    const cloudModel=/^cloud:/.test(chat.Model);
-   if(cloudModel&&(mode!=='project'||args.research))throw Error(prefs().language==='tr'?'Araştırma ve araçlar yerel modellerle çalışır. Bulut modeliyle yalnızca proje klasörü kullanılabilir.':'Research and tools run on local models. With a cloud model only the project folder can be used.');
+   const cloudResearch=cloudModel&&connections.summary().cloud.webResearch&&['auto','research'].includes(mode);
+   if(cloudModel&&!cloudResearch&&(mode!=='project'||args.research))throw Error(prefs().language==='tr'?'Araştırma ve araçlar yerel modellerle çalışır. Bulut modeliyle yalnızca proje klasörü kullanılabilir.':'Research and tools run on local models. With a cloud model only the project folder can be used.');
    // The coding agent (coder.cjs) handles project folders, for local and cloud models; project + web research keeps the
    // read-only research loop of agent.cjs (spec §11a-3).
    if(mode==='project'&&!args.research)return runCoding(args,chat,runId,prompt,contextSize);
    let systemPrompt=String(chat.SystemPrompt||'').slice(0,12000);try{systemPrompt=skillStore.compile(systemPrompt,Array.isArray(chat.SkillIds)?chat.SkillIds:[]).prompt;}catch{}
-   const p=prefs(),context=await contextFor(chat.Model,contextSize);loaded={model:chat.Model,context:context.value};
+   const p=prefs(),context=cloudResearch?{value:CLOUD_RESEARCH_CONTEXT}:await contextFor(chat.Model,contextSize);if(!cloudResearch)loaded={model:chat.Model,context:context.value};
    if(mode==='project'){const binding=projectStore.get(chat.Id);if(!binding)throw Error('No project folder is attached to this conversation.');if(!fs.existsSync(binding.root))throw Error('The project folder was not found: '+binding.root);return agent.runProject({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',project:createProjectTools(binding),research:args.research===true,systemPrompt,...runOptions(chat)});}
    if(mode==='tools'){const tools=[...connections.activeTools(),...imageTools()];return agent.runTools({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',tools,
     callTool:async(serverId,name,toolArgs,signal)=>serverId==='lumen'?imageToolCall(toolArgs,signal):mcpClient.callTool(await connections.server(serverId),name,toolArgs,{signal}),
     allowAlways:(serverId,name)=>{if(serverId==='lumen'){imageGen.setSettings({toolAsk:false});return;}Promise.resolve(connections.updateServer(serverId,{tool:{name,ask:false}})).catch(()=>{});},systemPrompt,...runOptions(chat)});}
+   if(cloudResearch)return agent.run({runId,chat,prompt,model:chat.Model,contextSize:CLOUD_RESEARCH_CONTEXT,language:p.language==='tr'?'tr':'en',mode,systemPrompt,...runOptions(chat),complete:cloudComplete(chat)});
    return agent.run({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',mode,systemPrompt,...runOptions(chat)});
   }
   if(action==='approve'&&coder.approve(String(args.runId||''),String(args.callId||''),String(args.decision||'skip')))return true;
