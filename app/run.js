@@ -157,8 +157,13 @@ function setRunValue(key,value){
  for(const k of Object.keys(runView.effective))if(runView.effective[k]===undefined)delete runView.effective[k];
  paintRunToggle();paintRunPanel();renderContext();
  clearTimeout(runSaveTimer);const id=state.chat.Id,model=state.chat.Model;
- runSaveTimer=setTimeout(async()=>{try{const view=await api.run('set',{id,model,values:o});if(state.chat?.Id===id){runView=view;paintRunToggle();paintRunPanel();}}catch(e){toast(cleanError(e));loadRun();}},250);
+ runSavePending=async()=>{runSavePending=null;try{const view=await api.run('set',{id,model,values:o});if(state.chat?.Id===id){runView=view;paintRunToggle();paintRunPanel();}}catch(e){toast(cleanError(e));loadRun();}};
+ runSaveTimer=setTimeout(()=>runSavePending?.(),250);
 }
+// A message sent within the 250 ms save delay must use the value just picked: save it first.
+let runSavePending=null;
+async function flushRunSave(){if(!runSavePending)return;clearTimeout(runSaveTimer);await runSavePending();}
+const runSend=send;send=async function(...args){await flushRunSave();return runSend(...args);};
 async function saveRunInstructions(){
  if(!state.chat)return;const text=$('run-instructions').value;
  try{const saved=await api.request('save',{chat:{...state.chat,SystemPrompt:text}});upsert(saved);state.contexts.delete(saved.Id);renderContext();toast(t('runInstructionsSaved'));}catch(e){toast(cleanError(e));}
