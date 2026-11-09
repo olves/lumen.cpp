@@ -72,6 +72,9 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
 
     let totals = { input: 0, cached: 0, output: 0, steps: 0 }, answer = null, budgetStop = null, applyAll = false, lastInput = 0, perSecond = null, stopReason = '';
     const fails = new Map(), seen = new Map(), readFiles = new Map();
+    // After a search finds nothing the model is guessing at the text; small models then edit the one line they did find.
+    let emptySearch = false;
+    const relPath = p => String(p || '').replace(/\\/g, '/').replace(/^(\.\/)+/, '');
     const turns = () => entries.filter(e => e.role === 'user').length;
     const status = (extra = {}) => send({ type: 'coding-status', steps: totals.steps, turns: turns(), input: totals.input, cached: totals.cached, output: totals.output, cacheRate: cost.cacheRate(totals), contextUsed: lastInput, contextSize, perSecond, ...extra });
     const render = () => local ? ctx.toJsonStepMessages(system, entries) : ctx.toChatMessages(system, entries);
@@ -159,13 +162,15 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
           let text;
           if (c.name === 'list_dir') { const r = await project.list(a.path || '.', a.depth || 2); text = `list_dir ${r.path}${r.truncated ? ' (truncated)' : ''}:\n${r.entries.join('\n') || '(empty)'}`; op.detail = String(r.entries.length); }
           else if (c.name === 'find_files') { const r = await project.find(a.pattern); text = `find_files "${r.pattern}": ${r.files.length} file(s)${r.truncated ? ' (truncated)' : ''}\n${r.files.join('\n')}`; op.detail = String(r.files.length); }
-          else if (c.name === 'search_text') { const r = await project.search(a.query, { path: a.path || '.', signal }); text = `search_text "${r.query}" in ${r.path}: ${r.matches.length} match(es)${r.truncated ? ' (truncated; narrow the search)' : ''}\n${r.matches.map(m => `${m.path}:${m.line}: ${m.text}`).join('\n')}`; op.detail = String(r.matches.length); }
+          else if (c.name === 'search_text') { const r = await project.search(a.query, { path: a.path || '.', signal }); text = `search_text "${r.query}" in ${r.path}: ${r.matches.length} match(es)${r.truncated ? ' (truncated; narrow the search)' : ''}\n${r.matches.map(m => `${m.path}:${m.line}: ${m.text}`).join('\n')}`; op.detail = String(r.matches.length); if (!r.matches.length) { emptySearch = true; text += '(no matches: the exact text may differ; read the file with read_file before editing it)'; } }
           else { const r = await project.read(a.path, a.start_line || 1, a.end_line); text = `read_file ${r.path} lines ${r.start}-${r.end} of ${r.totalLines}${r.truncated ? ' (more lines follow; read them with start_line)' : ''}:\n${r.text}`; op.label = r.path; op.detail = `${r.start}-${r.end}`; readFiles.set(r.path + ':' + r.start, { path: r.path, start: r.start, end: r.end }); }
           seen.set(key, true); op.status = 'done'; send({ type: 'task', task: publicTask() });
           return { text };
         } catch (error) { op.status = 'failed'; op.detail = short(error.message, 120); send({ type: 'task', task: publicTask() }); return { error: true, text: error.message }; }
       }
       // edit_file / create_file: preview → approval → apply.
+      if (c.name === 'edit_file' && emptySearch && ![...readFiles.values()].some(r => relPath(r.path) === relPath(a.path)))
+        return { error: true, text: `Read ${a.path} with read_file first: a search found nothing, so the edit must be based on the file's real text.` };
       let change;
       try { change = c.name === 'edit_file' ? await writer.previewEdit(a.path, a.edits) : await writer.previewCreate(a.path, a.content); }
       catch (error) { return { error: true, text: error.message }; }

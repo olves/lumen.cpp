@@ -206,3 +206,18 @@ test('a task that failed without changes still throws', async () => {
   const s = setup();
   await assert.rejects(s.make(() => { throw Error('network down'); }).run(s.options()), /network down/);
 });
+
+test('an empty search tells the model to read the file instead of guessing', async () => {
+  const s = setup();
+  await s.make(n => n === 0 ? { calls: [{ name: 'search_text', args: { query: 'function add() {' } }] } : { calls: [{ name: 'finish', args: { summary: 'x' } }] }).run(s.options());
+  assert.match(s.requests[1].messages.at(-1).content, /0 match\(es\)[\s\S]*read_file/);
+});
+
+test('after an empty search, editing a file that was not read is refused until it is read', async () => {
+  const s = setup();
+  const search = { name: 'search_text', args: { query: 'function add() {' } }, read = { name: 'read_file', args: { path: 'src/app.js' } };
+  await s.make(n => [{ calls: [search] }, { calls: [fixCall] }, { calls: [read] }, { calls: [fixCall] }][n] || { calls: [{ name: 'finish', args: { summary: 'x' } }] }).run(s.options());
+  assert.match(s.requests[2].messages.at(-1).content, /read_file/, 'the unread edit came back as a tool error');
+  assert.equal(s.events.filter(e => e.type === 'edit-approval').length, 1, 'only the edit after reading asked for approval');
+  assert.match(s.read('src/app.js'), /return a \+ b;/);
+});
