@@ -47,7 +47,7 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
   async function target(provider) {
     const base = connections.baseOf(provider); if (!base) throw cloudError('setup', 'Set the provider address in Settings → Cloud models.');
     const key = await connections.cloudKey(provider);
-    if (!key && provider !== 'custom') throw cloudError('key', 'Add an API key for ' + connections.providerLabel(provider) + ' in Settings → Cloud models.');
+    if (!key && !connections.isCustom(provider)) throw cloudError('key', 'Add an API key for ' + connections.providerLabel(provider) + ' in Settings → Cloud models.');
     const headers = {'content-type': 'application/json', accept: 'text/event-stream, application/json', 'user-agent': 'lumen.cpp/' + version};
     if (key) headers.authorization = 'Bearer ' + key;
     // Anthropic's own endpoints (models) need its key header and an API version; its OpenAI-compatible chat accepts both.

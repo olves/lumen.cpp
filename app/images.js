@@ -30,12 +30,12 @@ Object.assign(translations,{
 let imagesState=null,imageMode=false,imageOptions={count:1,seed:'',negative:''},imageRun=null;
 async function loadImages(){try{imagesState=await api.images('status');}catch{imagesState=null;}return imagesState;}
 const gb=bytes=>bytes<1073741824?Math.round(bytes/1048576).toLocaleString(state.prefs.language==='tr'?'tr-TR':'en-US')+' MB':(bytes/1073741824).toLocaleString(state.prefs.language==='tr'?'tr-TR':'en-US',{maximumFractionDigits:1})+' GB';
-function imageModelLabel(id){if(!imagesState)return '';if(id.startsWith('local:')){const p=imagesState.packages.find(x=>'local:'+x.id===id);return p?p.name+' · '+p.variant:id;}const m=/^cloud:([a-z]+)\/(.+)$/.exec(id);return m?m[2]+' · '+(connectionsState?.cloud.providers[m[1]]?.label||m[1]):id;}
+function imageModelLabel(id){if(!imagesState)return '';if(id.startsWith('local:')){const p=imagesState.packages.find(x=>'local:'+x.id===id);return p?p.name+' · '+p.variant:id;}const m=/^cloud:([a-z]+[0-9]?)\/(.+)$/.exec(id);return m?m[2]+' · '+(connectionsState?.cloud.providers[m[1]]?.label||m[1]):id;}
 // Models that can be used right now.
 function imageChoices(){
  if(!imagesState)return [];const out=[];const engine=imagesState.engines.some(e=>e.installed);
  for(const p of imagesState.packages)if(p.ready&&engine)out.push({id:'local:'+p.id,label:p.name+' · '+p.variant,local:true});
- const c=connectionsState?.cloud;if(c?.enabled)for(const [prov,list] of Object.entries(imagesState.cloudModels||{}))if(c.providers[prov]?.key||prov==='custom')for(const m of list)out.push({id:'cloud:'+prov+'/'+m,label:m+' · '+c.providers[prov].label,local:false});
+ const c=connectionsState?.cloud;if(c?.enabled)for(const [prov,list] of Object.entries(imagesState.cloudModels||{}))if(c.providers[prov]?.key||c.providers[prov]?.custom)for(const m of list)out.push({id:'cloud:'+prov+'/'+m,label:m+' · '+c.providers[prov].label,local:false});
  return out;
 }
 function currentImageModel(){const choices=imageChoices();const want=imagesState?.settings.model;return choices.find(c=>c.id===want)||choices[0]||null;}
@@ -81,7 +81,7 @@ function paintImages(){
  // Cloud
  const cloudCard=el('div','connect-card');cloudCard.append(el('span','connect-subhead',t('imgCloud')));
  const c=connectionsState?.cloud,examples={openai:'gpt-image-1',gemini:'gemini-2.5-flash-image',openrouter:'',custom:'gpt-image-1'};
- const usable=c?.enabled?Object.entries(c.providers).filter(([id,p])=>(p.key||id==='custom'&&p.base)&&['openai','gemini','custom'].includes(id)):[];
+ const usable=c?.enabled?Object.entries(c.providers).filter(([id,p])=>(p.key||p.custom&&p.base)&&(['openai','gemini'].includes(id)||p.custom)):[];
  if(!usable.length)cloudCard.append(el('small','quiet',t('imgCloudOff')));
  for(const [prov,p] of usable){
   const list=s.cloudModels[prov]||[];const row=el('div','connect-models');row.append(el('strong','',p.label));const chips=el('div','connect-chips');

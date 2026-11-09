@@ -10,7 +10,7 @@ const OPENAI = { levels: ['low', 'medium', 'high'], def: 'medium' };
 const NONE = { levels: [], def: null };
 
 function effortOf(modelName) {
-  const m = /^cloud:([a-z]+)\/(.+)$/.exec(String(modelName || ''));
+  const m = /^cloud:([a-z]+[0-9]?)\/(.+)$/.exec(String(modelName || ''));
   if (!m) return { ...NONE, levels: [] };
   const [, provider, id] = m, name = id.toLowerCase();
   if (provider === 'deepseek' || /(^|\/)deepseek[-/]/.test(name)) return { ...DEEPSEEK, levels: [...DEEPSEEK.levels] };

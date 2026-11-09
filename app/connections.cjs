@@ -17,6 +17,10 @@ const PROVIDERS = {
   custom: {label: 'Custom', base: '', keyHint: '', site: ''},
 };
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:\/@+-]{0,127}$/;
+// Custom (OpenAI-compatible) providers: "custom" (the first, kept for saved chats) and added ones custom2 … custom9.
+const MAX_CUSTOM = 9;
+const isCustom = id => /^custom([2-9])?$/.test(String(id || ''));
+const knownProvider = id => Object.prototype.hasOwnProperty.call(PROVIDERS, id) || isCustom(id);
 const SERVER_ID = /^[a-f0-9]{12}$/;
 const TOOL_NAME = /^[A-Za-z0-9_.\-\/]{1,128}$/;
 const API_PORT = 11500;
@@ -43,12 +47,12 @@ function createConnections(data, secrets) {
     const c = v.cloud || {}, m = v.mcp || {}, a = v.api || {};
     const providers = {};
     for (const [id, p] of Object.entries(c.providers || {})) {
-      if (!PROVIDERS[id] || !p || typeof p !== 'object') continue;
+      if (!knownProvider(id) || !p || typeof p !== 'object') continue;
       const models = (Array.isArray(p.models) ? p.models : []).filter(x => typeof x === 'string' && MODEL_ID.test(x)).slice(0, 24);
-      let base = ''; if (id === 'custom' && p.base) { try { base = endpoint(p.base, 'provider'); } catch {} }
-      providers[id] = {models: [...new Set(models)], ...(id === 'custom' ? {base, label: short(p.label || 'Custom', 40)} : {})};
+      let base = ''; if (isCustom(id) && p.base) { try { base = endpoint(p.base, 'provider'); } catch {} }
+      providers[id] = {models: [...new Set(models)], ...(isCustom(id) ? {base, label: short(p.label || 'Custom', 40)} : {})};
     }
-    const keys = Object.fromEntries(Object.entries(c.keys || {}).filter(([k, x]) => PROVIDERS[k] && typeof x === 'string' && x.length < 8192));
+    const keys = Object.fromEntries(Object.entries(c.keys || {}).filter(([k, x]) => knownProvider(k) && typeof x === 'string' && x.length < 8192));
     const servers = (Array.isArray(m.servers) ? m.servers : []).filter(s => s && SERVER_ID.test(s.id || '')).slice(0, 12).map(s => {
       let url = ''; try { url = endpoint(s.url, 'server'); } catch {}
       const tools = (Array.isArray(s.tools) ? s.tools : []).filter(t => t && TOOL_NAME.test(t.name || '')).slice(0, 64).map(t => ({
@@ -73,12 +77,14 @@ function createConnections(data, secrets) {
 
   // Cloud model names as they appear in the model list and in saved chats: "cloud:<provider>/<model id>".
   const cloudName = (provider, model) => 'cloud:' + provider + '/' + model;
-  function parseCloud(name) { const m = /^cloud:([a-z]+)\/(.+)$/.exec(String(name || '')); return m && PROVIDERS[m[1]] && MODEL_ID.test(m[2]) ? {provider: m[1], model: m[2]} : null; }
-  function providerLabel(id) { const c = read().cloud.providers[id]; return id === 'custom' ? (c?.label || 'Custom') : PROVIDERS[id]?.label || id; }
-  function baseOf(id) { return id === 'custom' ? read().cloud.providers.custom?.base || '' : PROVIDERS[id]?.base || ''; }
+  function parseCloud(name) { const m = /^cloud:([a-z]+[0-9]?)\/(.+)$/.exec(String(name || '')); return m && knownProvider(m[1]) && MODEL_ID.test(m[2]) ? {provider: m[1], model: m[2]} : null; }
+  function providerLabel(id) { const c = read().cloud.providers[id]; return isCustom(id) ? (c?.label || 'Custom') : PROVIDERS[id]?.label || id; }
+  function baseOf(id) { return isCustom(id) ? read().cloud.providers[id]?.base || '' : PROVIDERS[id]?.base || ''; }
+  // Built-in providers in their fixed order, then the added custom ones.
+  function providerIds(c) { return [...Object.keys(PROVIDERS), ...Object.keys(c.cloud.providers).filter(id => isCustom(id) && id !== 'custom').sort((a, b) => Number(a.slice(6)) - Number(b.slice(6)))]; }
 
   return {
-    PROVIDERS, cloudName, parseCloud, providerLabel, baseOf,
+    PROVIDERS, cloudName, parseCloud, providerLabel, baseOf, isCustom,
     // Renderer view: whether secrets exist, never their values (except the local API token, see above).
     async public() {
       const v = this.summary();
@@ -88,8 +94,8 @@ function createConnections(data, secrets) {
     summary() {
       const c = read();
       return {
-        cloud: {enabled: c.cloud.enabled, consented: c.cloud.consented, providers: Object.fromEntries(Object.entries(PROVIDERS).map(([id, p]) => [id, {label: id === 'custom' ? (c.cloud.providers.custom?.label || 'Custom') : p.label, site: p.site, keyHint: p.keyHint,
-          key: !!c.cloud.keys[id], models: c.cloud.providers[id]?.models || [], ...(id === 'custom' ? {base: c.cloud.providers.custom?.base || ''} : {})}]))},
+        cloud: {enabled: c.cloud.enabled, consented: c.cloud.consented, providers: Object.fromEntries(providerIds(c).map(id => { const p = PROVIDERS[id] || PROVIDERS.custom; return [id, {label: isCustom(id) ? (c.cloud.providers[id]?.label || 'Custom') : p.label, site: p.site, keyHint: p.keyHint,
+          key: !!c.cloud.keys[id], models: c.cloud.providers[id]?.models || [], ...(isCustom(id) ? {base: c.cloud.providers[id]?.base || '', custom: true, removable: id !== 'custom'} : {})}]; }))},
         mcp: {servers: c.mcp.servers.map(s => ({id: s.id, name: s.name, url: s.url, enabled: s.enabled, token: !!s.token, checked: s.checked, serverName: s.serverName, error: s.error,
           tools: s.tools.map(t => ({name: t.name, title: t.title, description: t.description, readOnly: t.readOnly, enabled: t.enabled, ask: t.ask}))}))},
         api: {enabled: c.api.enabled, port: c.api.port},
@@ -100,7 +106,7 @@ function createConnections(data, secrets) {
       const c = read(); if (!c.cloud.enabled) return [];
       const out = [];
       for (const [id, p] of Object.entries(c.cloud.providers)) {
-        if (!c.cloud.keys[id] && id !== 'custom') continue; if (id === 'custom' && !p.base) continue;
+        if (!c.cloud.keys[id] && !isCustom(id)) continue; if (isCustom(id) && !p.base) continue;
         for (const model of p.models) out.push({name: cloudName(id, model), provider: id, providerLabel: providerLabel(id), model});
       }
       return out;
@@ -113,7 +119,7 @@ function createConnections(data, secrets) {
       cache = sanitize(c); write(); return this.public();
     },
     async setCloudProvider(id, patch) {
-      if (!PROVIDERS[id]) throw Error('Unknown provider.');
+      if (!knownProvider(id)) throw Error('Unknown provider.');
       const c = read(); const current = c.cloud.providers[id] || {models: []};
       const next = {...current};
       if (Array.isArray(patch.models)) {
@@ -121,7 +127,7 @@ function createConnections(data, secrets) {
         if (bad !== undefined) throw Error('Invalid model ID: ' + short(bad, 60));
         next.models = [...new Set(patch.models.map(x => x.trim()))].slice(0, 24);
       }
-      if (id === 'custom') { if (patch.base !== undefined) next.base = patch.base ? endpoint(patch.base, 'provider') : ''; if (patch.label !== undefined) next.label = short(patch.label, 40) || 'Custom'; }
+      if (isCustom(id)) { if (patch.base !== undefined) next.base = patch.base ? endpoint(patch.base, 'provider') : ''; if (patch.label !== undefined) next.label = short(patch.label, 40) || (id === 'custom' ? 'Custom' : 'Custom ' + id.slice(6)); }
       c.cloud.providers = {...c.cloud.providers, [id]: next};
       if (typeof patch.key === 'string') {
         const key = patch.key.trim();
@@ -129,6 +135,20 @@ function createConnections(data, secrets) {
         else { if (key.length > 1024 || /\s/.test(key)) throw Error('Enter a valid API key.'); c.cloud.keys[id] = await encrypt(key); }
       }
       cache = sanitize(c); write(); return this.public();
+    },
+    // Adds an empty custom provider slot (custom2 … custom9) and returns its id.
+    async addCustomProvider() {
+      const c = read();
+      let n = 2; while (n <= MAX_CUSTOM && c.cloud.providers['custom' + n]) n++;
+      if (n > MAX_CUSTOM) throw Error('You can add up to ' + MAX_CUSTOM + ' custom providers.');
+      const id = 'custom' + n;
+      c.cloud.providers = {...c.cloud.providers, [id]: {models: [], base: '', label: 'Custom ' + n}};
+      cache = sanitize(c); write(); return id;
+    },
+    removeCustomProvider(id) {
+      if (!isCustom(id) || id === 'custom') throw Error('This provider cannot be removed.');
+      const c = read(); const providers = {...c.cloud.providers}; delete providers[id]; c.cloud.providers = providers; delete c.cloud.keys[id];
+      cache = sanitize(c); write();
     },
     // ----- MCP -----
     servers() { return Promise.all(read().mcp.servers.map(async s => ({...s, token: await decrypt(s.token)}))); },

@@ -11,6 +11,8 @@ Object.assign(translations,{
  cloudConsentTitle:['Send conversations to a cloud provider?','Sohbetler bir bulut sağlayıcısına gönderilsin mi?'],cloudConsentYes:['Turn on','Aç'],cloudConsentNo:['Cancel','Vazgeç'],
  cloudKey:['API key','API anahtarı'],cloudKeySaved:['Key saved (encrypted)','Anahtar kayıtlı (şifreli)'],cloudKeyNone:['No key','Anahtar yok'],cloudKeySave:['Save key','Anahtarı kaydet'],cloudKeyRemove:['Remove key','Anahtarı kaldır'],
  cloudModels:['Models in the menu','Menüdeki modeller'],cloudModelsNone:['None yet.','Henüz yok.'],cloudLoad:['Load models','Modelleri getir'],cloudAddModel:['Add','Ekle'],cloudModelId:['Model ID, e.g. gpt-4o-mini','Model kimliği, ör. gpt-4o-mini'],
+ cloudAddCustom:['Add custom provider','Özel sağlayıcı ekle'],cloudAddCustomHint:['Another OpenAI-compatible service with its own address and key.','Kendi adresi ve anahtarı olan başka bir OpenAI uyumlu servis.'],
+ cloudRemoveProvider:['Remove provider','Sağlayıcıyı kaldır'],cloudRemoveConfirm:['Click again to remove','Kaldırmak için tekrar tıkla'],
  cloudTest:['Test','Dene'],cloudTestOk:['{provider} answered: “{reply}”','{provider} yanıt verdi: “{reply}”'],cloudBase:['Address (OpenAI-compatible, ending in /v1)','Adres (OpenAI uyumlu, /v1 ile biten)'],cloudLabel:['Name','Ad'],cloudSaveBase:['Save address','Adresi kaydet'],
  cloudLoaded:['{n} models found. Pick the ones to show in the menu.','{n} model bulundu. Menüde görünecekleri seç.'],cloudFilter:['Filter models','Modelleri süz'],cloudKeyFirst:['Save an API key first.','Önce bir API anahtarı kaydet.'],
  cloudModelTag:['Cloud','Bulut'],cloudReply:['Cloud · {provider}','Bulut · {provider}'],cloudReplyTitle:['This conversation is sent to {provider}.','Bu sohbet {provider} sağlayıcısına gönderilir.'],
@@ -72,16 +74,24 @@ function paintCloud(){
  yes.onclick=()=>connAction('cloud',{enabled:true,consented:true});no.onclick=()=>{consent.hidden=true;};
  const providers=el('div','connect-list');
  for(const [id,p] of Object.entries(c.providers))providers.append(providerCard(id,p));
+ // More OpenAI-compatible services (custom2 … custom9), each with its own address, key and models.
+ const addCustom=el('button','secondary',t('cloudAddCustom'));addCustom.type='button';addCustom.id='cloud-add-custom';addCustom.title=t('cloudAddCustomHint');
+ addCustom.onclick=async()=>{addCustom.disabled=true;try{const r=await api.connections('provider-add',{});connectionsState=r;paintConnections();await refreshCloudModels();document.querySelector(`#cloud-panel .connect-card[data-provider="${r.added}"] input`)?.focus();}catch(e){toast(cleanError(e));addCustom.disabled=false;}};
+ providers.append(addCustom);
  providers.hidden=!c.enabled;
  panel.replaceChildren(connHeading('cloudTitle','cloudIntro'),el('p','connect-rules',t('cloudPrivacy')),toggle,consent,providers);
 }
 function providerCard(id,p){
- const card=el('div','connect-card'),head=el('div','connect-card-head');
- head.append(el('strong','',p.label),el('small','quiet',p.key?t('cloudKeySaved'):(id==='custom'?'':t('cloudKeyNone'))));card.append(head);
- if(id==='custom'){
-  const label=el('input');label.placeholder=t('cloudLabel');label.value=p.label==='Custom'?'':p.label;label.maxLength=40;
+ const card=el('div','connect-card'),head=el('div','connect-card-head');card.dataset.provider=id;
+ head.append(el('strong','',p.label),el('small','quiet',p.key?t('cloudKeySaved'):(p.custom?'':t('cloudKeyNone'))));card.append(head);
+ // An added custom provider can be removed; the first click only asks (its key is deleted with it).
+ if(p.removable){const remove=el('button','text-button connect-remove',t('cloudRemoveProvider'));remove.type='button';let armed=0;
+  remove.onclick=()=>{if(!armed){remove.textContent=t('cloudRemoveConfirm');remove.classList.add('danger');armed=setTimeout(()=>{armed=0;remove.textContent=t('cloudRemoveProvider');remove.classList.remove('danger');},4000);return;}clearTimeout(armed);connAction('provider-remove',{provider:id});};
+  head.append(remove);}
+ if(p.custom){
+  const label=el('input');label.placeholder=t('cloudLabel');label.value=/^Custom( [2-9])?$/.test(p.label)?'':p.label;label.maxLength=40;
   const base=el('input');base.placeholder=t('cloudBase');base.value=p.base||'';base.spellcheck=false;
-  const save=el('button','secondary',t('cloudSaveBase'));save.type='button';save.onclick=()=>connAction('provider',{provider:id,base:base.value,label:label.value||'Custom'});
+  const save=el('button','secondary',t('cloudSaveBase'));save.type='button';save.onclick=()=>connAction('provider',{provider:id,base:base.value,label:label.value});
   const row=el('div','connect-inline');row.append(label,base,save);card.append(row);
  }
  const key=el('input');key.type='password';key.autocomplete='off';key.spellcheck=false;key.placeholder=t('cloudKey')+(p.keyHint?' · '+p.keyHint:'');key.dataset.provider=id;
@@ -99,7 +109,7 @@ function providerCard(id,p){
  const addButton=el('button','secondary',t('cloudAddModel'));addButton.type='button';addButton.onclick=()=>{const v=add.value.trim();if(!v)return;connAction('provider',{provider:id,models:[...p.models,v]});};
  add.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();addButton.click();}};
  const load=el('button','text-button',t('cloudLoad'));load.type='button';
- load.onclick=async()=>{if(!p.key&&id!=='custom'){toast(t('cloudKeyFirst'));return;}load.disabled=true;try{const r=await api.connections('provider-models',{provider:id});cloudLoaded.set(id,r.models);toast(tf('cloudLoaded',{n:fmt(r.models.length)}));paintCloud();}catch(e){toast(cleanError(e));}finally{load.disabled=false;}};
+ load.onclick=async()=>{if(!p.key&&!p.custom){toast(t('cloudKeyFirst'));return;}load.disabled=true;try{const r=await api.connections('provider-models',{provider:id});cloudLoaded.set(id,r.models);toast(tf('cloudLoaded',{n:fmt(r.models.length)}));paintCloud();}catch(e){toast(cleanError(e));}finally{load.disabled=false;}};
  const addRow=el('div','connect-inline');addRow.append(add,addButton,load);models.append(addRow);
  const loaded=cloudLoaded.get(id);
  if(loaded?.length){

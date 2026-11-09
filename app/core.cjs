@@ -528,6 +528,8 @@ async function requestNow(action,args={}){
   if(action==='get')return connectionsView();
   if(action==='cloud'){await connections.setCloud(args);return connectionsView();}
   if(action==='provider'){await connections.setCloudProvider(String(args.provider||''),args);return connectionsView();}
+  if(action==='provider-add'){const id=await connections.addCustomProvider();return {...await connectionsView(),added:id};}
+  if(action==='provider-remove'){connections.removeCustomProvider(String(args.provider||''));return connectionsView();}
   if(action==='provider-models'){const list=await cloud.listModels(String(args.provider||''));return {models:list};}
   if(action==='provider-test'){const target=String(args.provider||''),model=String(args.model||'');const r=await cloud.chat({provider:target,model,messages:[{role:'user',content:'Reply with the single word: ready'}],maxTokens:16,signal:AbortSignal.timeout(60000)});return {reply:String(r.content||'').slice(0,200)};}
   if(action==='mcp-add'){const id=await connections.addServer({name:args.name,url:args.url,token:args.token});try{const r=await mcpClient.listTools(await connections.server(id));await connections.updateServer(id,{tools:r.tools,serverName:r.serverName,checked:new Date().toISOString(),error:''});}catch(error){await connections.updateServer(id,{error:error.message,checked:new Date().toISOString()});}return connectionsView();}

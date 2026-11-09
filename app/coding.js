@@ -46,7 +46,7 @@ function paintCodingSettings(){
  const money=field('coding-money',t('codingMoney'),s.taskMoney,'0.01'),tokens=field('coding-tokens',t('codingTokens'),s.taskTokens,'1000'),steps=field('coding-steps',t('codingSteps'),s.maxSteps,'1');
  const thinkRow=el('label','coding-field'),think=el('input');think.type='checkbox';think.id='coding-think';think.checked=!!s.deepThinking;thinkRow.append(think,el('span','',t('codingThink')));box.append(thinkRow);
  box.append(el('p','quiet',t('codingPrices')));
- const keys=new Set(Object.keys(s.prices||{}));const current=/^cloud:([a-z]+)\/(.+)$/.exec($('model-picker').value||'');if(current)keys.add(current[1]+'/'+current[2]);
+ const keys=new Set(Object.keys(s.prices||{}));const current=/^cloud:([a-z]+[0-9]?)\/(.+)$/.exec($('model-picker').value||'');if(current)keys.add(current[1]+'/'+current[2]);
  for(const key of keys){const p=s.prices?.[key]||{};const row=el('div','coding-price-row');row.dataset.model=key;row.append(el('code','',key));for(const [cls,v] of [['price-input',p.input],['price-cached',p.cachedInput],['price-output',p.output]]){const i=el('input',cls);i.type='number';i.min='0';i.step='0.001';i.value=v==null?'':String(v);i.setAttribute('aria-label',key+' '+cls.slice(6));row.append(i);}box.append(row);}
  const save=el('button','secondary',t('codingSave'));save.type='button';save.id='coding-save';
  save.onclick=async()=>{const prices={};for(const row of box.querySelectorAll('.coding-price-row')){const v=c=>row.querySelector(c).value.trim();if(v('.price-input')===''||v('.price-output')==='')continue;prices[row.dataset.model]={input:Number(v('.price-input')),cachedInput:v('.price-cached')===''?Number(v('.price-input')):Number(v('.price-cached')),output:Number(v('.price-output')),currency:'USD'};}
@@ -55,7 +55,7 @@ function paintCodingSettings(){
 }
 
 // One-time consent before a cloud model receives project files.
-function cloudProviderOf(model){const m=/^cloud:([a-z]+)\//.exec(String(model||''));return m?m[1]:null;}
+function cloudProviderOf(model){const m=/^cloud:([a-z]+[0-9]?)\//.exec(String(model||''));return m?m[1]:null;}
 const codingSendWithProject=sendWithProject;sendWithProject=async function(text,options={}){
  const provider=cloudProviderOf($('model-picker').value);
  if(!provider)return codingSendWithProject(text,options);

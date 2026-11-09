@@ -42,7 +42,7 @@ function createImageGen({dataDir, image, downloader, cloud, connections, emit = 
   // ---------- settings ----------
   function cleanSettings(s = {}) {
     const cloudModels = {};
-    for (const [p, list] of Object.entries(s.cloudModels || {})) if (connections.PROVIDERS[p] && Array.isArray(list)) cloudModels[p] = [...new Set(list.filter(x => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\/@+-]{0,127}$/.test(x)))].slice(0, 12);
+    for (const [p, list] of Object.entries(s.cloudModels || {})) if ((connections.PROVIDERS[p] || connections.isCustom?.(p)) && Array.isArray(list)) cloudModels[p] = [...new Set(list.filter(x => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:\/@+-]{0,127}$/.test(x)))].slice(0, 12);
     return {engine: ENGINES[s.engine] ? s.engine : null, model: typeof s.model === 'string' && s.model.length <= 200 ? s.model : 'local:z-image-turbo',
       shape: SHAPES[s.shape] ? s.shape : 'square', fast: s.fast === true, steps: Number.isInteger(s.steps) && s.steps >= 1 && s.steps <= 50 ? s.steps : null,
       tool: s.tool === true, toolAsk: s.toolAsk !== false, cloudModels};
@@ -226,7 +226,7 @@ function createImageGen({dataDir, image, downloader, cloud, connections, emit = 
         const p = PACKAGES.find(x => x.id === model.slice(6)); if (!p) throw imgError('invalid', 'Unknown image model.');
         buffers = await localGenerate(p, opts, onProgress, any); label = p.name + ' · ' + p.variant; engine = 'local';
       } else if (model.startsWith('cloud:')) {
-        const m = /^cloud:([a-z]+)\/(.+)$/.exec(model); if (!m) throw imgError('invalid', 'Unknown image model.');
+        const m = /^cloud:([a-z]+[0-9]?)\/(.+)$/.exec(model); if (!m) throw imgError('invalid', 'Unknown image model.');
         if (!connections.summary().cloud.enabled) throw imgError('setup', 'Cloud models are turned off. Turn them on in Settings → Cloud models.');
         onProgress({phase: 'cloud', provider: connections.providerLabel(m[1])});
         buffers = await cloud.generateImage({provider: m[1], model: m[2], prompt: opts.prompt, shape: opts.shape, count, signal: any});
