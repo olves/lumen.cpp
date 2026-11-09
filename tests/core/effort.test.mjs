@@ -20,7 +20,7 @@ test('OpenAI reasoning models offer low, medium and high', () => {
 });
 
 test('models without effort levels: local models, Anthropic, non-reasoning OpenAI models', () => {
-  for (const m of ['Qwen2.5 Coder 7B', 'cloud:anthropic/claude-sonnet-4', 'cloud:openai/gpt-4o', 'cloud:gemini/gemini-2.5-flash', '']) assert.deepEqual(effortOf(m), { levels: [], def: null }, m);
+  for (const m of ['Qwen2.5 Coder 7B', 'cloud:anthropic/claude-sonnet-4', 'cloud:openai/gpt-4o', 'cloud:gemini/gemini-2.0-flash', '']) assert.deepEqual(effortOf(m), { levels: [], def: null }, m);
 });
 
 test('the run setting stores effort per chat and rejects unknown levels', () => {
@@ -32,4 +32,9 @@ test('the run setting stores effort per chat and rejects unknown levels', () => 
   r.set(id, { effort: null });
   assert.equal(r.effective(id, {}).effort, undefined, 'unset = the model default');
   assert.equal(r.effective(id, { sampling: { effort: 'low' } }).effort, 'low', '"Use for new chats" default');
+});
+
+test('Gemini thinking models offer low, medium and high (Google maps reasoning_effort on its OpenAI endpoint)', () => {
+  for (const m of ['cloud:gemini/gemini-2.5-flash', 'cloud:gemini/gemini-2.5-pro', 'cloud:gemini/gemini-3-flash', 'cloud:openrouter/google/gemini-3.1-pro']) assert.deepEqual(effortOf(m), { levels: ['low', 'medium', 'high'], def: null }, m);
+  assert.deepEqual(effortOf('cloud:gemini/gemini-2.0-flash').levels, [], 'older Gemini models do not think');
 });
