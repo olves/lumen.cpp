@@ -12,6 +12,7 @@ Object.assign(translations,{
  statusVram:['VRAM','VRAM'],
  statusEngine:['Engine','Motor'],
  statusSpeed:['Speed','Hız'],
+ gpuBusyNote:['{program} is using {percent}% of the graphics card. Local replies slow down while it runs; pausing it helps.','{program} ekran kartının %{percent} kadarını kullanıyor. O çalışırken yerel yanıtlar yavaşlar; duraklatmak hızlandırır.'],
  statusCodingContext:['Context used by the coding task','Kodlama görevinin kullandığı bağlam'],
  statusCodingTokensTitle:['Tokens of the coding task; cached tokens are billed far lower by the provider.','Kodlama görevinin token sayısı; sağlayıcı önbellekli token’ları çok daha düşük ücretlendirir.'],
  statusSpeedTitle:['Generation speed of the last response (tokens per second)','Son yanıtın üretim hızı (saniyede token)'],
@@ -30,7 +31,7 @@ Object.assign(translations,{
 function paintPlaceholder(){const prompt=document.getElementById('prompt');if(!prompt)return;const cloud=isCloud();const text=cloud?tf('composerPlaceholderCloud',{provider:providerOf()||t('statusCloudGeneric')}):t('composerPlaceholder');prompt.placeholder=text;prompt.dataset.placeholder=text;}
 
 // The only source the status surface reads. syncStatus() fills it from the app; paintStatus() never reads state.* itself.
-const statusState={ready:false,placement:'composer',model:'',cloud:null,context:null,vram:null,engine:'',web:false,phase:'ready',speed:null,coding:null};
+const statusState={ready:false,placement:'composer',model:'',cloud:null,context:null,vram:null,engine:'',web:false,phase:'ready',speed:null,coding:null,gpuBusy:[]};
 // Generation speed. Chunks are counted while a reply streams (one chunk is about one token in llama.cpp's stream); the
 // final context event replaces the estimate with the engine's exact token count over the same interval. The first chunk
 // only starts the clock, so prompt processing time is never counted as generation.
@@ -145,7 +146,7 @@ function paintStatus(){
  }
  contextItem.node.setAttribute('aria-label',`${t('statusContext')}: ${contextItem.value.textContent}`);
  speedItem.node.hidden=statusState.speed==null;
- if(statusState.speed!=null){speedItem.label.textContent=t('statusSpeed');speedItem.value.textContent=`${fmt(Math.round(statusState.speed*10)/10)} tok/s`;speedItem.node.title=t('statusSpeedTitle');speedItem.node.setAttribute('aria-label',`${t('statusSpeed')}: ${speedItem.value.textContent}`);}
+ if(statusState.speed!=null){speedItem.label.textContent=t('statusSpeed');speedItem.value.textContent=`${fmt(Math.round(statusState.speed*10)/10)} tok/s`;const busy=statusState.gpuBusy[0];speedItem.node.classList.toggle('status-gpu-busy',!!busy);speedItem.node.title=busy?gpuBusyText(busy):t('statusSpeedTitle');if(busy)speedItem.value.textContent+=' ⚠';speedItem.node.setAttribute('aria-label',`${t('statusSpeed')}: ${speedItem.value.textContent}`);}
  const coding=statusState.coding&&statusState.coding.chatId===state.chat?.Id?statusState.coding:null,tr=state.prefs?.language==='tr';
  codingSteps.hidden=codingTokens.hidden=codingRing.hidden=!coding;
  if(coding){
@@ -200,7 +201,7 @@ function handleEngineEvent(event){
  if(event.type==='context'){
   if(state.chat&&event.data)state.contexts.set(state.chat.Id,event.data);
   const generated=Number(event.data?.Generated)||0;
-  if(generated>1&&speedRun.chunks>1&&(event.data.Final||event.data.Counted)){const exact=rate(generated);if(exact!=null)statusState.speed=exact;}
+  if(generated>1&&speedRun.chunks>1&&(event.data.Final||event.data.Counted)){const exact=rate(generated);if(exact!=null)statusState.speed=exact;if(event.data.Final&&!event.data.Cloud)checkGpuBusy();}
   refreshStatus();return;
  }
  if(event.type==='progress'&&/^Engine · /.test(String(event.data?.label||'')))refreshStatus();
@@ -260,3 +261,15 @@ placeStatus();
 if(state.ready)refreshStatus();else statusRoot.hidden=true;
 // Test seam only (no window.lumen change): read the state, feed an engine event, or force a repaint.
 globalThis.LumenStatus=Object.freeze({state:statusState,coding:handleCodingStatus,setClock(fn){speedClockOverride=typeof fn==='function'?fn:null;},refresh:refreshStatus,event:handleEngineEvent,placement:placeStatus});
+
+// Other programs keeping the GPU busy (core gpubusy.cjs; the core reads the counters at most every two minutes). Asked after a
+// local reply finishes, not on a timer. A program is named in a toast once per session; the speed item keeps the note.
+const gpuBusyTold=new Set();let gpuBusyAsking=false;
+const gpuBusyText=b=>tf('gpuBusyNote',{program:b.title||b.name,percent:b.percent});
+async function checkGpuBusy(){
+ if(gpuBusyAsking||!api.modelsInfo||/cpu/i.test(String(statusState.engine||'')))return;gpuBusyAsking=true;
+ try{const r=await api.modelsInfo('gpu-busy');statusState.gpuBusy=Array.isArray(r?.busy)?r.busy:[];
+  const first=statusState.gpuBusy[0];if(first&&!gpuBusyTold.has(first.name)){gpuBusyTold.add(first.name);toast(gpuBusyText(first));}
+  paintStatus();
+ }catch{}finally{gpuBusyAsking=false;}
+}

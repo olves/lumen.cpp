@@ -49,3 +49,5 @@ button.status-item:disabled{opacity:.55;cursor:default}
 /* Coding agent items: messages · steps, tokens · cache rate, and the context ring (statusbar.js). */
 .status-coding,.status-ring{flex:none}
 .ring-dial{width:11px;height:11px;flex:none;border-radius:50%;background:conic-gradient(var(--text) var(--ring,0%),var(--border) 0)}
+/* v1.0.9: another program keeps the GPU busy (statusbar.js checkGpuBusy) */
+.status-item.status-gpu-busy,.status-item.status-gpu-busy .status-value{color:var(--text)}

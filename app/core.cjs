@@ -179,7 +179,7 @@ function coreRequest(action,args={},onEvent=null){if(action==='rename')return re
 // Free memory when idle (prefs.idleUnload minutes, 0 = never). The clock starts when the last chat, benchmark, agent or local
 // API run ends; it is cleared while one runs, so a model is never unloaded under a reply. Tests shorten it with
 // LUMEN_TEST_IDLE_MS (testhook, --ui-check only).
-const idleChoices=[0,5,15,30,60];let idleTimer=null,engineRuns=0,idleTestMs=null;
+const idleChoices=[0,5,15,30,60];let idleTimer=null,engineRuns=0,idleTestMs=null,gpuBusy=null;
 function idleDelay(){const minutes=Number(prefs().idleUnload);if(!idleChoices.includes(minutes)||!minutes)return 0;return idleTestMs||minutes*60000;}
 function scheduleIdle(){clearTimeout(idleTimer);idleTimer=null;const delay=idleDelay();if(!delay||!loaded)return;idleTimer=setTimeout(idleUnload,delay);idleTimer.unref?.();}
 async function idleUnload(){idleTimer=null;if(engineRuns||skillFlight||imageFlight||cloudFlight){scheduleIdle();return;}if(!loaded)return;
@@ -264,6 +264,7 @@ async function requestNow(action,args={}){
  const hook=test?require('./testhook.cjs').install({platform,env:process.env}):null;
  // LUMEN_TEST_ALLOW_HOST: the UI tests' local server passes the web checks (web.cjs allowTestHost; test mode only).
  if(hook?.overrides.idleMs)idleTestMs=hook.overrides.idleMs;
+ gpuBusy=require('./gpubusy.cjs').createGpuBusy(hook?.overrides.gpuBusy?{canned:hook.overrides.gpuBusy}:{});
  if(hook?.overrides.allowHost)require('./web.cjs').allowTestHost(hook.overrides.allowHost);
  const openDialog=o=>hook?hook.openDialog(o):platform.dialog.open(o);const saveDialog=o=>hook?hook.saveDialog(o):platform.dialog.save(o);
  // lumen-host (backend/LumenHost.cs + LumenCore.cs) is the local engine process: chats, models, engine setup and llama-server.
@@ -652,6 +653,8 @@ async function requestNow(action,args={}){
   if(JSON.stringify(args).length>20000)throw Error('Invalid request.');
   if(action==='context'){if(typeof args.model!=='string'||args.model.length>400)throw Error('Invalid request.');const p=prefs();const r=await contextFor(args.model,p.contextSize);const choice=r.key?autoChoices.get(r.key):null;const m=modelNamed(args.model);return {mode:r.mode,value:r.value,reason:r.reason||null,trained:choice?.trained||m&&modelInfo.meta(m)?.shape?.trainedContext||null,estimate:choice?.estimate||null};}
   if(action==='benchmarks')return benchmarks();
+  // Other programs keeping the GPU busy (gpubusy.cjs): asked by the renderer after a local reply; throttled there and here.
+  if(action==='gpu-busy')return gpuBusy?gpuBusy.check():{busy:[],checkedAt:null};
   if(action==='fit'){
    // Memory estimates for model files: installed ones use their GGUF metadata (context included), others only the file size.
    if(!Array.isArray(args.items)||args.items.length>300)throw Error('Invalid request.');const p=prefs(),options=engineOptions(p),hardware=await modelInfo.hardware({loadedBytes:await loadedUsage()});
