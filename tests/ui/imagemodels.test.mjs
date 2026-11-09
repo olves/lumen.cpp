@@ -68,6 +68,15 @@ describe(`image models stay out of chat lists (${shell})`, () => {
     assert.equal(await ev("document.getElementById('model-picker').value"), model);
   });
 
+  test('Explore → For you does not recommend them as chat models', async () => {
+    await ev("openSettings('explore'); 0");
+    await app.cdp.waitFor("document.getElementById('discover-list').children.length > 2", 15000);
+    const text = await ev("document.getElementById('discover-list').textContent");
+    assert.ok(text.length > 0, 'the For you list rendered');
+    assert.doesNotMatch(text, /Qwen[ -]?Image/i);
+    await ev("setPage('chat'); 0");
+  });
+
   test('the local API does not list them', async () => {
     // The API server reads request('models') like the renderer; check through the same decorated list.
     const list = await ev("api.request('models').then(l => l.filter(m => m.Installed && !m.Cloud && !m.Image).map(m => m.Name))");
