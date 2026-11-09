@@ -470,3 +470,21 @@ After each task the project's own tests were run independently (`node --test`).
   shape until the system text said to keep names/exports/formatting unchanged.
 - Money: DeepSeek's pricing pages give no numbers to a plain fetch, so Lumen ships without default prices; with prices entered
   in the project dialog the summary shows the amount.
+
+### Four task types, one cold session each (2026-11-09)
+
+Script: `work/coding-deepseek/bench.mjs` (project: a small cart module with a discount bug). Each task starts a new session (no
+cache from earlier tasks); success = the project's own tests pass **and** a behavior check of what the task asked for.
+
+| Task | flash: steps · input (cached) · output · time | v4-pro: steps · input (cached) · output · time |
+|---|---|---|
+| Bug fix (`applyDiscount`) | 4 · 6.8K (88 %) · 366 · 6 s ✓ | 3 · 4.9K (66 %) · 386 · 8 s ✓ |
+| Rename across 3 files (+README) | 5 · 9.9K (88 %) · 823 · 8 s ✓ | 4 · 7.4K (87 %) · 713 · 11 s ✓ |
+| New function + docs + tests | 3 · 6.2K (83 %) · 1,008 · 9 s ✓ | 4 · 9.6K (86 %) · 1,274 · 17 s ✓ |
+| Optional argument across modules + test | 4 · 8.3K (85 %) · 1,119 · 10 s ✓ | 3 · 6.2K (85 %) · 897 · 11 s ✓ |
+| **Total** | **4/4 · 31.3K (86 %) · 3.3K** | **4/4 · 28.1K (83 %) · 3.3K** |
+
+The first run's bug-fix check looked for one way of writing the fix and wrongly marked a correct fix
+(`cents - Math.round(cents * percent / 100)`) as failed; the check now tests behavior. These tasks are far smaller than the
+30-task agentic benchmark the user's friend shared, so per-task dollar figures are not comparable; what carries over is the
+86 % cache share and the small output (edits as search/replace).
