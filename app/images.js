@@ -87,7 +87,14 @@ function paintImages(){
   const list=s.cloudModels[prov]||[];const row=el('div','connect-models');row.append(el('strong','',p.label));const chips=el('div','connect-chips');
   for(const m of list){const chip=el('span','connect-chip'),x=el('button','skill-chip-remove','×');x.type='button';x.onclick=()=>imgSettings({cloudModels:{...s.cloudModels,[prov]:list.filter(v=>v!==m)}});const use=el('button','text-button',s.settings.model==='cloud:'+prov+'/'+m?t('imgDefault'):t('imgUse'));use.type='button';use.onclick=()=>imgSettings({model:'cloud:'+prov+'/'+m});chip.append(el('code','',m),use,x);chips.append(chip);}
   const input=el('input');input.placeholder=tf('imgCloudAdd',{example:examples[prov]||'model-id'});input.spellcheck=false;const add=el('button','secondary',t('imgAdd'));add.type='button';add.onclick=()=>{const v=input.value.trim();if(v)imgSettings({cloudModels:{...s.cloudModels,[prov]:[...list,v]}});};input.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();add.click();}};
-  const line=el('div','connect-inline');line.append(input,add);row.append(chips,line);cloudCard.append(row);
+  // v1.1: pick from the provider's own model list (image models first: names with image, dall-e, imagen, flux, sd…).
+  const pick=el('select','img-cloud-pick');pick.setAttribute('aria-label',t('imgPickFromList'));pick.hidden=true;
+  const load=el('button','secondary img-cloud-load',t('imgPickFromList'));load.type='button';
+  load.onclick=async()=>{load.disabled=true;try{const r=await api.connections('provider-models',{provider:prov});const all=r.models.filter(m=>!list.includes(m)),images=all.filter(m=>IMAGE_MODEL_NAME.test(m));
+   const choices=images.length?images:all;pick.replaceChildren(new Option(images.length?tf('imgPickCount',{n:fmt(images.length)}):t('imgPickNoneFound'),''),...choices.map(m=>new Option(m,m)));pick.hidden=false;load.hidden=true;pick.focus();}
+   catch(e){toast(cleanError(e));}finally{load.disabled=false;}};
+  pick.onchange=()=>{if(pick.value)imgSettings({cloudModels:{...s.cloudModels,[prov]:[...list,pick.value]}});};
+  const line=el('div','connect-inline');line.append(input,add,load,pick);row.append(chips,line);cloudCard.append(row);
  }
  // Defaults and the tool
  const defaults=el('div','connect-card');defaults.append(el('span','connect-subhead',t('imgDefaults')));
@@ -209,7 +216,8 @@ loadImages();
 // Picking an image model (local package or cloud image model) in the model menu turns image generation on: the message is the
 // prompt and the reply is the picture. Picking a chat model turns it off. The separate "Create image" row of the + menu is gone
 // (it stays in the DOM, hidden, for scripts that look for it); the chip under the message box keeps the options (shape, count, seed).
-Object.assign(translations,{imgModelsGroup:['Image models','Görsel modelleri'],imgModelsSetup:['Set up image models…','Görsel modellerini ayarla…'],imgPickerTag:['image','görsel']});
+const IMAGE_MODEL_NAME=/image|dall-?e|imagen|flux|stable-?diffusion|sdxl?|sd3|seedream|recraft|ideogram|kolors|hidream|qwen-image|z-image/i;
+Object.assign(translations,{imgPickFromList:['Choose from the provider’s list','Sağlayıcının listesinden seç'],imgPickCount:['{n} image models found — choose one','{n} görsel modeli bulundu — birini seç'],imgPickNoneFound:['No image model names found — all models','Görsel model adı bulunamadı — tüm modeller'],imgModelsGroup:['Image models','Görsel modelleri'],imgModelsSetup:['Set up image models…','Görsel modellerini ayarla…'],imgPickerTag:['image','görsel']});
 $('create-image')?.classList.add('menu-hidden');
 const imagesModelSelector=renderModelSelector;renderModelSelector=function(){
  imagesModelSelector();

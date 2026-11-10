@@ -153,6 +153,20 @@ describe(`images, cloud provider mock (${shell})`, () => {
   });
   after(async () => { await app?.stop(); cloud?.close(); });
 
+  test('Settings → Images: a cloud image model is chosen from the provider list', async () => {
+    await ev("window.lumen.connections('cloud', {enabled: true, consented: true}).then(() => 0)");
+    await ev(`window.lumen.connections('provider', {provider: 'custom', base: ${js(cloud.base)}, label: 'Mock cloud', key: ${js(cloud.key)}, models: [${js(cloud.model)}]}).then(() => 0)`);
+    await ev("window.lumen.images('settings', {cloudModels: {}}).then(() => loadConnections()).then(() => { openSettings('images'); return 0; })");
+    await app.cdp.waitFor("!!document.querySelector('#images-panel .img-cloud-load')", 10000);
+    await ev("document.querySelector('#images-panel .img-cloud-load').click(); 0");
+    await app.cdp.waitFor("!document.querySelector('#images-panel .img-cloud-pick').hidden", 10000);
+    const options = await ev("[...document.querySelector('#images-panel .img-cloud-pick').options].map(o => o.value)");
+    assert.deepEqual(options, ['', cloud.imageModel], 'only names that look like image models');
+    await ev(`(() => { const p = document.querySelector('#images-panel .img-cloud-pick'); p.value = ${js(cloud.imageModel)}; p.dispatchEvent(new Event('change')); return 0; })()`);
+    await app.cdp.waitFor(`window.lumen.images('status').then(r => (r.cloudModels.custom || []).includes(${js(cloud.imageModel)}))`, 10000);
+    await ev("setPage('chat'); 0");
+  });
+
   test('a cloud image model makes a picture; the provider got the prompt and key', async () => {
     await ev("window.lumen.connections('cloud', {enabled: true, consented: true}).then(() => 0)");
     await ev(`window.lumen.connections('provider', {provider: 'custom', base: ${js(cloud.base)}, label: 'Mock cloud', key: ${js(cloud.key)}, models: [${js(cloud.model)}]}).then(() => 0)`);
