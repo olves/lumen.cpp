@@ -100,7 +100,6 @@ describe(`images, local engine stand-in (${shell})`, () => {
   test('Save writes the PNG through the save dialog', async () => {
     await ev("document.querySelector('.gen-actions button').click(); 0");
     const g = await ev("state.chat.Messages.at(-1).Generated");
-    if (!g) console.log("DEBUG", JSON.stringify(await ev("state.chat.Messages.map(m => [m.Role, String(m.Content).slice(0,60), !!m.Generated])")));
     const file = path.join(saveDir, 'lumen-' + g.images[0].sha.slice(0, 8) + '.png');
     for (let i = 0; i < 50 && !fs.existsSync(file); i++) await sleep(100);
     assert.ok(fs.readFileSync(file).equals(fs.readFileSync(path.join(dataDir, 'generated', g.images[0].sha + '.png'))));
@@ -185,7 +184,6 @@ describe(`images, cloud provider mock (${shell})`, () => {
     // The grid can show before the saved chat (with its Generated sidecar) is back in state.
     await app.cdp.waitFor('!!state.chat.Messages.at(-1).Generated', 10000);
     const g = await ev("state.chat.Messages.at(-1).Generated");
-    if (!g) console.log("DEBUG", JSON.stringify(await ev("state.chat.Messages.map(m => [m.Role, String(m.Content).slice(0,60), !!m.Generated])")));
     assert.equal(g.engine, 'cloud');
     assert.deepEqual([g.images[0].width, g.images[0].height], [320, 192]);
     const req = cloud.requests.find(r => r.path === '/v1/images/generations');
