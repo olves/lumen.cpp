@@ -11,8 +11,13 @@
 .ws-group.collapsed .ws-toggle svg:first-child{transform:rotate(-90deg)}
 .ws-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .ws-count{color:var(--text-muted);font-size:var(--font-size-small)}
-.ws-add,.ws-more{width:24px;height:24px;flex:none;opacity:0}
+.ws-group-head{position:relative}
+/* The + and … buttons sit over the count and appear on hover or keyboard focus, so the name keeps the full width. */
+.ws-add,.ws-more{width:24px;height:24px;flex:none;position:absolute;top:50%;translate:0 -50%;opacity:0;background:var(--hover)}
+.ws-more{right:2px}.ws-add{right:28px}
 .ws-group-head:hover :is(.ws-add,.ws-more),.ws-group-head:focus-within :is(.ws-add,.ws-more){opacity:1}
+.ws-group-head:hover .ws-count,.ws-group-head:focus-within .ws-count{visibility:hidden}
+.ws-toggle{padding-right:8px}
 .ws-items{padding-left:10px}
 .ws-empty{margin:2px 0 6px 18px;color:var(--text-muted);font-size:var(--font-size-small)}
 .history-row .history-time{margin-left:auto;padding-left:6px;color:var(--text-muted);font-size:var(--font-size-small);flex:none}
