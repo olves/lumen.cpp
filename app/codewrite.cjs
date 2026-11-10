@@ -22,7 +22,21 @@ function writeAtomic(file, data) {
   try { fs.writeFileSync(temp, data); fs.renameSync(temp, file); } catch (error) { try { fs.unlinkSync(temp); } catch {} throw error; }
 }
 
-const EXCLUDED_LOWER = new Set([...EXCLUDED_DIRS].map(name => name.toLowerCase()));
+const DELETE_LIMITS = { files: 2000, bytes: 500 * 1024 * 1024 };
+function folderSize(dir) {
+  let files = 0, bytes = 0, links = 0; const stack = [dir];
+  while (stack.length) {
+    const current = stack.pop();
+    for (const e of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, e.name);
+      if (e.isSymbolicLink()) { links++; continue; }
+      if (e.isDirectory()) stack.push(full); else { files++; bytes += fs.statSync(full).size; }
+      if (files > DELETE_LIMITS.files) return { files, bytes, links };
+    }
+  }
+  return { files, bytes, links };
+}
+const EXCLUDED_LOWER =new Set([...EXCLUDED_DIRS].map(name => name.toLowerCase()));
 const RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 // guard(rel) -> reason|null runs the project's read rules (gitignore, user excludes, sensitive, binary) on the real path.
 function createProjectWriter({ root, checkpointsDir, allowSensitive = [], maxCreateBytes = 200 * 1024, maxEditBytes = 1024 * 1024, guard = null }) {
@@ -91,14 +105,60 @@ function createProjectWriter({ root, checkpointsDir, allowSensitive = [], maxCre
     return { kind: 'create', path: rel, before: '', after: text, diff: diffLines('', text), sha: null };
   }
 
+  // v1.1: folders, deletes and moves. A deleted file or folder is moved into the task's checkpoint folder (copied when it is on
+  // another drive), so undo can put it back; folders larger than DELETE_LIMITS are refused.
+  async function previewMkdir(input) {
+    const { full, rel } = await resolve(input);
+    if (fs.existsSync(full)) throw fail('exists', `${rel} already exists.`);
+    return { kind: 'mkdir', path: rel, before: '', after: '', diff: { added: 0, removed: 0, hunks: [] }, sha: null };
+  }
+  async function previewDelete(input) {
+    const { full, rel } = await resolve(input);
+    let stat; try { stat = fs.lstatSync(full); } catch { throw fail('not-found', `${rel} does not exist.`); }
+    if (stat.isSymbolicLink()) throw fail('outside', `${rel} is a link; it is not deleted.`);
+    if (stat.isDirectory()) {
+      const size = folderSize(full);
+      if (size.files > DELETE_LIMITS.files || size.bytes > DELETE_LIMITS.bytes) throw fail('too-large', `${rel} has ${size.files} files (${Math.round(size.bytes / 1048576)} MB); folders over ${DELETE_LIMITS.files} files or ${Math.round(DELETE_LIMITS.bytes / 1048576)} MB are not deleted by the agent.`);
+      if (size.links) throw fail('outside', `${rel} contains links; it is not deleted.`);
+      return { kind: 'delete', path: rel, isDir: true, files: size.files, bytes: size.bytes, before: '', after: '', diff: { added: 0, removed: 0, hunks: [] }, sha: null };
+    }
+    const buffer = fs.readFileSync(full);
+    let text = null; if (buffer.length <= 256 * 1024 && !buffer.includes(0)) { try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(buffer); } catch {} }
+    return { kind: 'delete', path: rel, isDir: false, files: 1, bytes: buffer.length, before: text ?? '', after: '', diff: text !== null ? diffLines(text, '') : { added: 0, removed: 0, hunks: [] }, sha: sha256(buffer) };
+  }
+  // A case-only rename (a.js -> A.js) resolves to the same real file; the requested spelling of the new name is kept.
+  async function moveTarget(from, target) {
+    const to = await resolve(target);
+    if (from.full.toLowerCase() !== to.full.toLowerCase()) return to;
+    const name = String(target).replace(/\\/g, '/').split('/').filter(Boolean).at(-1);
+    return { full: path.join(path.dirname(from.full), name), rel: [...from.rel.split('/').slice(0, -1), name].join('/') };
+  }
+  async function previewMove(input, target) {
+    const from = await resolve(input), to = await moveTarget(from, target);
+    if (!fs.existsSync(from.full)) throw fail('not-found', `${from.rel} does not exist.`);
+    if (fs.lstatSync(from.full).isSymbolicLink()) throw fail('outside', `${from.rel} is a link; it is not moved.`);
+    if (fs.existsSync(to.full) && from.full.toLowerCase() !== to.full.toLowerCase()) throw fail('exists', `${to.rel} already exists.`);
+    if (from.full.toLowerCase() !== to.full.toLowerCase() && inside(to.full, from.full)) throw fail('invalid', 'A folder cannot be moved into itself.');
+    return { kind: 'move', path: from.rel, to: to.rel, isDir: fs.statSync(from.full).isDirectory(), before: '', after: '', diff: { added: 0, removed: 0, hunks: [] }, sha: null };
+  }
+  function moveInto(source, dest) {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    try { fs.renameSync(source, dest); }
+    catch (error) { if (error.code !== 'EXDEV') throw error; fs.cpSync(source, dest, { recursive: true, errorOnExist: true, force: false }); fs.rmSync(source, { recursive: true, force: true }); }
+  }
+
   async function apply(change, taskId) {
     if (!validTask(taskId)) throw fail('invalid', 'Invalid task.');
+    if (change?.kind === 'mkdir' || change?.kind === 'delete' || change?.kind === 'move') return applyOther(change, taskId);
     const { full, rel } = await resolve(change?.path);
     const exists = fs.existsSync(full);
     if (change.kind === 'edit' ? !exists || sha256(fs.readFileSync(full)) !== change.sha : exists) throw fail('changed', `${rel} changed since the change was prepared. Read it again.`);
-    const m = manifest(taskId); let entry = m.files.find(f => f.path === rel);
+    const m = manifest(taskId);
+    // Several edits of one file in a task share one checkpoint, unless something else (delete, move) touched the path since.
+    const last = m.files.filter(f => f.path === rel || f.to === rel).at(-1);
+    let entry = last && (last.kind === 'edit' || last.kind === 'create') && last.path === rel ? last : null;
     if (!entry) {
-      entry = { path: rel, kind: change.kind, orig: null, sha256After: null };
+      entry = { path: rel, kind: change.kind, orig: null, sha256After: null, root: rootReal };
       if (change.kind === 'edit') { entry.orig = 'orig-' + m.files.length; fs.mkdirSync(taskDir(taskId), { recursive: true }); fs.copyFileSync(full, path.join(taskDir(taskId), entry.orig)); }
       m.files.push(entry);
     }
@@ -109,24 +169,81 @@ function createProjectWriter({ root, checkpointsDir, allowSensitive = [], maxCre
     return { path: rel, lines: changed.length ? `${changed[0]}-${changed.at(-1)}` : '' };
   }
 
+  async function applyOther(change, taskId) {
+    const m = manifest(taskId), n = m.files.length;
+    if (change.kind === 'mkdir') {
+      const { full, rel } = await resolve(change.path);
+      if (fs.existsSync(full)) throw fail('changed', `${rel} exists now.`);
+      const created = []; let probe = full; while (!fs.existsSync(probe)) { created.unshift(probe); probe = path.dirname(probe); }
+      fs.mkdirSync(full, { recursive: true });
+      m.files.push({ path: rel, kind: 'mkdir', created: created.map(p => path.relative(rootReal, p).split(path.sep).join('/')), root: rootReal });
+      saveManifest(taskId, m); return { path: rel, lines: '' };
+    }
+    if (change.kind === 'delete') {
+      const { full, rel } = await resolve(change.path);
+      if (!fs.existsSync(full) || (!change.isDir && sha256(fs.readFileSync(full)) !== change.sha)) throw fail('changed', `${rel} changed since the change was prepared.`);
+      const store = 'del-' + n;
+      moveInto(full, path.join(taskDir(taskId), store));
+      m.files.push({ path: rel, kind: 'delete', store, isDir: !!change.isDir, root: rootReal });
+      saveManifest(taskId, m); return { path: rel, lines: '' };
+    }
+    const from = await resolve(change.path), to = await moveTarget(from, change.to);
+    if (!fs.existsSync(from.full) || (fs.existsSync(to.full) && from.full.toLowerCase() !== to.full.toLowerCase())) throw fail('changed', `${from.rel} or ${to.rel} changed since the change was prepared.`);
+    fs.mkdirSync(path.dirname(to.full), { recursive: true });
+    fs.renameSync(from.full, to.full);
+    m.files.push({ path: from.rel, to: to.rel, kind: 'move', root: rootReal });
+    saveManifest(taskId, m); return { path: to.rel, lines: '' };
+  }
+
+  // Undo runs the task's changes backwards, so "edit, then delete" or "move, then edit" come back in the right order. A writer for
+  // another root (changes outside the workspace folder, Full access or approved) undoes its own entries.
   async function undo(taskId) {
     if (!validTask(taskId)) throw fail('invalid', 'Invalid task.');
+    rootReal ??= await realRoot(root);
     const m = manifest(taskId), restored = [], removed = [], skipped = [];
     if (m.undone) return { restored, removed, skipped };
-    for (const entry of m.files) {
+    const others = new Map();
+    const writerFor = entry => {
+      if (!entry.root || entry.root.toLowerCase() === rootReal.toLowerCase()) return null;
+      if (!others.has(entry.root)) others.set(entry.root, createProjectWriter({ root: entry.root, checkpointsDir, allowSensitive: [...allowed], maxCreateBytes, maxEditBytes }));
+      return others.get(entry.root);
+    };
+    for (const entry of [...m.files].reverse()) {
       try {
-        const { full } = await resolve(entry.path);
-        const current = fs.existsSync(full) ? sha256(fs.readFileSync(full)) : null;
-        if (current !== entry.sha256After) { skipped.push({ path: entry.path, reason: current ? 'changed' : 'missing' }); continue; }
-        if (entry.kind === 'create') { fs.unlinkSync(full); removed.push(entry.path); }
-        else { writeAtomic(full, fs.readFileSync(path.join(taskDir(taskId), entry.orig))); restored.push(entry.path); }
+        const w = writerFor(entry);
+        const r = w ? await w.undoEntry(entry, taskId) : await undoEntry(entry, taskId);
+        if (r === 'restored') restored.push(entry.path); else if (r === 'removed') removed.push(entry.to || entry.path); else skipped.push({ path: entry.to || entry.path, reason: r });
       } catch (error) { skipped.push({ path: entry.path, reason: 'error: ' + error.message }); }
     }
     m.undone = true; saveManifest(taskId, m);
     return { restored, removed, skipped };
   }
+  async function undoEntry(entry, taskId) {
+    const { full } = await resolve(entry.path);
+    if (entry.kind === 'mkdir') {
+      for (const rel of [...entry.created].reverse()) { const dir = path.join(rootReal, rel); try { fs.rmdirSync(dir); } catch (error) { if (error.code !== 'ENOENT') return 'changed'; } }
+      return 'removed';
+    }
+    if (entry.kind === 'delete') {
+      if (fs.existsSync(full)) return 'changed';
+      moveInto(path.join(taskDir(taskId), entry.store), full); return 'restored';
+    }
+    if (entry.kind === 'move') {
+      const to = await moveTarget({ full, rel: entry.path }, entry.to);
+      if (!fs.existsSync(to.full)) return 'missing';
+      if (fs.existsSync(full) && full.toLowerCase() !== to.full.toLowerCase()) return 'changed';
+      fs.mkdirSync(path.dirname(full), { recursive: true }); fs.renameSync(to.full, full); return 'restored';
+    }
+    const current = fs.existsSync(full) ? sha256(fs.readFileSync(full)) : null;
+    if (current !== entry.sha256After) return current ? 'changed' : 'missing';
+    if (entry.kind === 'create') { fs.unlinkSync(full); return 'removed'; }
+    writeAtomic(full, fs.readFileSync(path.join(taskDir(taskId), entry.orig))); return 'restored';
+  }
 
-  return { previewEdit, previewCreate, apply, undo, changedFiles: taskId => validTask(taskId) ? manifest(taskId).files.map(f => f.path) : [] };
+  return {
+    previewEdit, previewCreate, previewMkdir, previewDelete, previewMove, apply, undo, undoEntry,
+    changedFiles: taskId => validTask(taskId) ? [...new Set(manifest(taskId).files.map(f => f.to || f.path))] : [],
+  };
 }
 
 module.exports = { createProjectWriter };

@@ -181,3 +181,110 @@ test('review #9: undo continues past a file it cannot restore and reports it', a
   assert.deepEqual(r.skipped.map(s => s.path), ['a.txt']);
   assert.equal(p.read('b.txt'), 'two\n');
 });
+
+// v1.1: folders, deletes, moves, and changes outside the workspace folder.
+test('mkdir creates nested folders and undo removes only what it created', async () => {
+  const p = project({ 'keep/a.txt': 'x' });
+  const c = await p.w.previewMkdir('keep/new/deep');
+  assert.equal(c.kind, 'mkdir');
+  await p.w.apply(c, 't1');
+  assert.ok(fs.statSync(path.join(p.root, 'keep/new/deep')).isDirectory());
+  await code(p.w.previewMkdir('keep'), 'exists');
+  const r = await p.w.undo('t1');
+  assert.deepEqual(r.removed, ['keep/new/deep']);
+  assert.equal(fs.existsSync(path.join(p.root, 'keep/new')), false);
+  assert.ok(fs.existsSync(path.join(p.root, 'keep/a.txt')));
+});
+
+test('mkdir undo leaves a folder that got files afterwards', async () => {
+  const p = project({});
+  await p.w.apply(await p.w.previewMkdir('d'), 't1');
+  fs.writeFileSync(path.join(p.root, 'd/user.txt'), 'mine');
+  const r = await p.w.undo('t1');
+  assert.equal(r.skipped[0].reason, 'changed');
+  assert.ok(fs.existsSync(path.join(p.root, 'd/user.txt')));
+});
+
+test('delete moves a file into the checkpoint and undo brings it back', async () => {
+  const p = project({ 'src/old.js': 'line1\nline2\n' });
+  const c = await p.w.previewDelete('src/old.js');
+  assert.equal(c.kind, 'delete'); assert.equal(c.diff.removed, 2);
+  assert.ok(fs.existsSync(path.join(p.root, 'src/old.js')), 'preview deletes nothing');
+  await p.w.apply(c, 't1');
+  assert.equal(fs.existsSync(path.join(p.root, 'src/old.js')), false);
+  const r = await p.w.undo('t1');
+  assert.deepEqual(r.restored, ['src/old.js']);
+  assert.equal(p.read('src/old.js'), 'line1\nline2\n');
+});
+
+test('delete of a folder, then undo; a recreated path is left alone', async () => {
+  const p = project({ 'tmp/a.txt': 'a', 'tmp/sub/b.txt': 'b' });
+  const c = await p.w.previewDelete('tmp');
+  assert.equal(c.isDir, true); assert.equal(c.files, 2);
+  await p.w.apply(c, 't1');
+  assert.equal(fs.existsSync(path.join(p.root, 'tmp')), false);
+  assert.equal((await p.w.undo('t1')).restored[0], 'tmp');
+  assert.equal(p.read('tmp/sub/b.txt'), 'b');
+  await p.w.apply(await p.w.previewDelete('tmp'), 't2');
+  fs.mkdirSync(path.join(p.root, 'tmp'));
+  assert.equal((await p.w.undo('t2')).skipped[0].reason, 'changed');
+});
+
+test('delete refuses excluded folders, sensitive files and missing paths', async () => {
+  const p = project({ 'node_modules/x/i.js': '1', '.env': 'K=1' });
+  await code(p.w.previewDelete('node_modules'), 'excluded');
+  await code(p.w.previewDelete('.env'), 'sensitive');
+  await code(p.w.previewDelete('nope.txt'), 'not-found');
+  await code(p.w.previewDelete('../outside.txt'), 'outside');
+});
+
+test('a file changed after the delete preview is not deleted', async () => {
+  const p = project({ 'a.txt': 'one' });
+  const c = await p.w.previewDelete('a.txt');
+  fs.writeFileSync(path.join(p.root, 'a.txt'), 'two');
+  await code(p.w.apply(c, 't1'), 'changed');
+  assert.equal(p.read('a.txt'), 'two');
+});
+
+test('move renames, creates the target folder, undo moves back; case-only rename works', async () => {
+  const p = project({ 'a.js': 'A' });
+  const c = await p.w.previewMove('a.js', 'lib/b.js');
+  assert.equal(c.kind, 'move'); assert.equal(c.to, 'lib/b.js');
+  await p.w.apply(c, 't1');
+  assert.equal(p.read('lib/b.js'), 'A'); assert.equal(fs.existsSync(path.join(p.root, 'a.js')), false);
+  assert.deepEqual(p.w.changedFiles('t1'), ['lib/b.js']);
+  await p.w.undo('t1');
+  assert.equal(p.read('a.js'), 'A');
+  await p.w.apply(await p.w.previewMove('a.js', 'A.js'), 't2');
+  assert.ok(fs.readdirSync(p.root).includes('A.js'));
+});
+
+test('move refuses an existing target and moving a folder into itself', async () => {
+  const p = project({ 'a.txt': '1', 'b.txt': '2', 'd/x.txt': '3' });
+  await code(p.w.previewMove('a.txt', 'b.txt'), 'exists');
+  await code(p.w.previewMove('d', 'd/inner'), 'invalid');
+});
+
+test('undo runs backwards: edit then delete, move then edit', async () => {
+  const p = project({ 'a.txt': 'v1\n', 'm.txt': 'm1\n' });
+  await p.w.apply(await p.w.previewEdit('a.txt', [{ old: 'v1', new: 'v2' }]), 't1');
+  await p.w.apply(await p.w.previewDelete('a.txt'), 't1');
+  await p.w.apply(await p.w.previewMove('m.txt', 'n.txt'), 't1');
+  await p.w.apply(await p.w.previewEdit('n.txt', [{ old: 'm1', new: 'm2' }]), 't1');
+  const r = await p.w.undo('t1');
+  assert.deepEqual(r.skipped, []);
+  assert.equal(p.read('a.txt'), 'v1\n'); assert.equal(p.read('m.txt'), 'm1\n');
+  assert.equal(fs.existsSync(path.join(p.root, 'n.txt')), false);
+});
+
+test('changes through a writer for another root are undone by the workspace writer', async () => {
+  const p = project({ 'in.txt': 'i' });
+  const elsewhere = path.join(p.base, 'elsewhere'); fs.mkdirSync(elsewhere); fs.writeFileSync(path.join(elsewhere, 'o.txt'), 'o\n');
+  const outside = createProjectWriter({ root: path.parse(elsewhere).root, checkpointsDir: p.checkpointsDir });
+  const rel = path.relative(path.parse(elsewhere).root, path.join(elsewhere, 'o.txt'));
+  await outside.apply(await outside.previewEdit(rel, [{ old: 'o', new: 'changed' }]), 't1');
+  await p.w.apply(await p.w.previewEdit('in.txt', [{ old: 'i', new: 'j' }]), 't1');
+  const r = await p.w.undo('t1');
+  assert.equal(r.restored.length, 2);
+  assert.equal(fs.readFileSync(path.join(elsewhere, 'o.txt'), 'utf8'), 'o\n'); assert.equal(p.read('in.txt'), 'i');
+});
