@@ -23,6 +23,14 @@ test('edit tools appear only when edits are allowed', () => {
   assert.match(JSON.stringify(ctx.toolDefinitions(true, { createBytes: 12288 })), /12 KB/);
 });
 
+test('v1.1 modes: Plan reads only; other modes add folder/delete/move and, with commands on, the command tools', () => {
+  const names = offer => ctx.toolDefinitions(offer).map(t => t.function.name);
+  assert.deepEqual(names({ write: false, exec: false }), ['list_dir', 'find_files', 'search_text', 'read_file', 'finish']);
+  assert.deepEqual(names({ write: true, exec: false }), ['list_dir', 'find_files', 'search_text', 'read_file', 'edit_file', 'create_file', 'make_dir', 'delete_path', 'move_path', 'finish']);
+  assert.deepEqual(names({ write: true, exec: true }).slice(-5), ['run_command', 'start_background', 'read_background', 'stop_background', 'finish']);
+  assert.match(ctx.systemText({ projectName: 'p', allowEdits: { write: false, exec: false }, mode: 'plan', language: 'en' }), /Plan mode/);
+});
+
 test('toChatMessages pairs tool_call ids with results', () => {
   const entries = [{ role: 'user', msg: 0, text: 'Fix the bug' }, ...read(1, 'c1', 'a.js')];
   const m = ctx.toChatMessages('SYS', entries);

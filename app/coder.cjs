@@ -6,14 +6,19 @@
 // and tools, append-only transcript) so providers can serve it from their cache; the transcript is compacted rarely, at 75 % of
 // the window. Usage, cache hits and cost are summed per task and checked against the user's limits after every step.
 const crypto = require('node:crypto');
+const nodePath = require('node:path');
+const perms = require('./permissions.cjs');
 const ctx = require('./codecontext.cjs');
 const cost = require('./codecost.cjs');
 const { createProjectWriter } = require('./codewrite.cjs');
-const { createProjectTools } = require('./projects.cjs');
+const { createProjectTools, inside } = require('./projects.cjs');
 
 const APPROVAL_MS = 10 * 60 * 1000, KEEP_STEPS = 8, MAX_REPEAT_FAIL = 3, CLOUD_STEP_TOKENS = 8192, LOCAL_STEP_TOKENS = 4096;
 const short = (text, n) => { const s = String(text ?? ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const READ_TOOLS = new Set(['list_dir', 'find_files', 'search_text', 'read_file']);
+const WRITE_TOOLS = new Set(['edit_file', 'create_file', 'make_dir', 'delete_path', 'move_path']);
+const EXEC_TOOLS = new Set(['run_command', 'start_background']);
+const PLAN_DENIED = 'not allowed: the conversation is in Plan mode (read only). Do not try to change anything; finish with your plan.';
 
 // A JSON-step schema for local models built from the same tool definitions the cloud gets.
 function stepSchema(tools) {
@@ -26,7 +31,8 @@ function parseLocal(text) {
   const { action, ...args } = value; return { name: action, args };
 }
 
-function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, log = () => {} }) {
+// v1.1: exec (exec.cjs) enables the command tools; audit(record) gets one line per change or command and who allowed it.
+function createCoder({ cloud, engine, store, checkpointsDir, exec = null, audit = () => {}, emit = () => {}, log = () => {} }) {
   const runs = new Map(), approvals = new Map();
   const settings0 = () => store.settings();
 
@@ -42,6 +48,10 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
 
   async function run(options) {
     const { runId, chat, msgIndex, prompt, model, cloudTarget, contextSize, language = 'en', binding, allowEdits, systemPrompt = '' } = options;
+    // v1.1 permission mode of the workspace; callers without one (v1.0.8) keep "Allow edits" = Ask with file tools only.
+    const mode = perms.validMode(options.mode) ? options.mode : null;
+    const offer = mode ? { ...perms.offers(mode), exec: perms.offers(mode).exec && !!exec } : { write: !!allowEdits, exec: false };
+    const policy = mode || (allowEdits ? 'ask' : 'plan');
     // null = the model takes no effort; undefined (older callers, tests) = low, or high with "Think more during steps".
     const stepEffort = options.reasoningEffort === undefined ? (settings0().deepThinking ? 'high' : 'low') : options.reasoningEffort || undefined;
     if (runs.size) throw Error('Another run is active.');
@@ -52,8 +62,8 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
     const project = createProjectTools(binding);
     const writer = createProjectWriter({ root: binding.root, checkpointsDir, allowSensitive: binding.allow || [], maxCreateBytes: local ? 12 * 1024 : 200 * 1024, guard: rel => project.writeCheck(rel) });
     const taskId = runId, info = await project.info();
-    const tools = ctx.toolDefinitions(allowEdits, { createBytes: local ? 12 * 1024 : 200 * 1024 });
-    const system = ctx.systemText({ projectName: info.name, allowEdits, language }) + (systemPrompt.trim() ? '\n\nThe user\'s instructions for this conversation:\n' + short(systemPrompt.trim(), 12000) : '');
+    const tools = ctx.toolDefinitions(offer, { createBytes: local ? 12 * 1024 : 200 * 1024 });
+    const system = ctx.systemText({ projectName: info.name, allowEdits: offer, language, mode }) + (systemPrompt.trim() ? '\n\nThe user\'s instructions for this conversation:\n' + short(systemPrompt.trim(), 12000) : '');
     // Cloud: the whole session transcript continues (cache + memory). Local: only the last task's summary (host limits).
     const saved = store.get(chat.Id);
     let entries = local ? [] : saved.entries.slice();
@@ -148,59 +158,166 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
       return { route: 'project', taskId, files, totals, cost: taskCost, ...(budgetStop ? { budgetStop } : {}), sources, tasks: [publicTask()], ...extra };
     }
 
+    // Where a path points: inside the workspace folder (relative path for the project tools/writer) or outside it (absolute).
+    function locate(input) {
+      if (outsideOff === undefined) outsideOff = !mode;
+      const text = String(input ?? '').trim();
+      const abs = nodePath.resolve(info.root, text || '.');
+      if (inside(abs, info.root)) return { outside: false, rel: nodePath.relative(info.root, abs).split(nodePath.sep).join('/') || '.', abs };
+      // v1.0.8 callers (no mode): outside paths stay refused by the project tools and the writer.
+      if (outsideOff) return { outside: false, rel: text, abs };
+      return { outside: true, abs };
+    }
+    var outsideOff, outsideWriters;
+    function writerAt(root) { const key = root.toLowerCase(); outsideWriters ??= new Map(); if (!outsideWriters.has(key)) outsideWriters.set(key, createProjectWriter({ root, checkpointsDir, maxCreateBytes: local ? 12 * 1024 : 200 * 1024 })); return outsideWriters.get(key); }
+    // Ask the user (approval card). Returns 'apply' | 'skip' | 'timeout'; 'apply-all' sets applyAll for file changes inside the folder.
+    async function askUser(callId, change, { allowAll }) {
+      send({ type: 'edit-approval', callId, change });
+      let decision = await waitApproval(runId, callId, signal);
+      if (decision === 'apply-all') { if (allowAll) applyAll = true; decision = 'apply'; }
+      return decision;
+    }
+    function skippedText(decision) { return decision === 'timeout' ? 'skipped: the user did not answer in time; it was not done.' : 'skipped: the user declined this; it was not done.'; }
+    function auditOf(tool, target, how, extra = {}) { try { audit({ time: new Date().toISOString(), chat: chat.Id, task: taskId, mode: policy, tool, target, decision: how, ...extra }); } catch {} }
+
     async function callTool(c, step) {
       if (c.invalid) return { error: true, text: c.invalid };
       const allowed = tools.some(t => t.function.name === c.name);
       if (!allowed) return { error: true, text: `Unknown tool "${c.name}". Use one of: ${tools.map(t => t.function.name).join(', ')}.` };
       const a = c.args;
-      if (READ_TOOLS.has(c.name)) {
-        const key = c.name + JSON.stringify(a);
-        if (seen.has(key)) return { text: 'You already did that. Use the earlier result or try something else.' };
-        const op = { kind: { list_dir: 'p-list', find_files: 'p-find', search_text: 'p-grep', read_file: 'p-read' }[c.name], label: a.query || a.path || a.pattern || '.', status: 'running', detail: '' };
-        task.ops.push(op); send({ type: 'task', task: publicTask() });
+      if (READ_TOOLS.has(c.name)) return readCall(c);
+      if (WRITE_TOOLS.has(c.name)) return writeCall(c);
+      if (EXEC_TOOLS.has(c.name)) return commandCall(c);
+      if (c.name === 'read_background' || c.name === 'stop_background') {
         try {
-          let text;
-          if (c.name === 'list_dir') { const r = await project.list(a.path || '.', a.depth || 2); text = `list_dir ${r.path}${r.truncated ? ' (truncated)' : ''}:\n${r.entries.join('\n') || '(empty)'}`; op.detail = String(r.entries.length); }
-          else if (c.name === 'find_files') { const r = await project.find(a.pattern); text = `find_files "${r.pattern}": ${r.files.length} file(s)${r.truncated ? ' (truncated)' : ''}\n${r.files.join('\n')}`; op.detail = String(r.files.length); }
-          else if (c.name === 'search_text') { const r = await project.search(a.query, { path: a.path || '.', signal }); text = `search_text "${r.query}" in ${r.path}: ${r.matches.length} match(es)${r.truncated ? ' (truncated; narrow the search)' : ''}\n${r.matches.map(m => `${m.path}:${m.line}: ${m.text}`).join('\n')}`; op.detail = String(r.matches.length); if (!r.matches.length) { emptySearch = true; text += '(no matches: the exact text may differ; read the file with read_file before editing it)'; } }
-          else { const r = await project.read(a.path, a.start_line || 1, a.end_line); text = `read_file ${r.path} lines ${r.start}-${r.end} of ${r.totalLines}${r.truncated ? ' (more lines follow; read them with start_line)' : ''}:\n${r.text}`; op.label = r.path; op.detail = `${r.start}-${r.end}`; readFiles.set(r.path + ':' + r.start, { path: r.path, start: r.start, end: r.end }); }
-          seen.set(key, true); op.status = 'done'; send({ type: 'task', task: publicTask() });
-          return { text };
-        } catch (error) { op.status = 'failed'; op.detail = short(error.message, 120); send({ type: 'task', task: publicTask() }); return { error: true, text: error.message }; }
+          if (c.name === 'read_background') { const r = exec.read(a.id); return { text: `${r.id} ${r.running ? 'running' : 'ended with exit code ' + r.code}${r.truncated ? ' (output cut)' : ''}:\n${r.output || '(no new output)'}` }; }
+          const r = await exec.stop(a.id); auditOf(c.name, a.id, 'auto'); return { text: `${r.id} stopped.` };
+        } catch (error) { return { error: true, text: error.message }; }
       }
-      // edit_file / create_file: preview → approval → apply.
+      return { error: true, text: 'Unknown tool.' };
+    }
+
+    async function readCall(c) {
+      const a = c.args, key = c.name + JSON.stringify(a);
+      if (seen.has(key)) return { text: 'You already did that. Use the earlier result or try something else.' };
+      const where = locate(c.name === 'read_file' ? a.path : a.path || '.');
+      const op = { kind: { list_dir: 'p-list', find_files: 'p-find', search_text: 'p-grep', read_file: 'p-read' }[c.name], label: a.query || a.path || a.pattern || '.', status: 'running', detail: '' };
+      task.ops.push(op); send({ type: 'task', task: publicTask() });
+      let tools0 = project, target = a.path;
+      if (where.outside) {
+        const d = perms.decide(policy, { kind: 'read', outside: true });
+        if (d.action === 'ask') {
+          const decision = await askUser(c.id, { kind: 'read', path: where.abs, warn: 'outside', added: 0, removed: 0, hunks: [] }, { allowAll: false });
+          send({ type: 'edit-done', callId: c.id, decision: decision === 'apply' ? 'applied' : decision === 'timeout' ? 'timeout' : 'skipped' });
+          if (decision !== 'apply') { op.status = 'failed'; op.detail = 'skipped'; send({ type: 'task', task: publicTask() }); auditOf(c.name, where.abs, 'declined'); return { text: skippedText(decision) }; }
+          auditOf(c.name, where.abs, 'user');
+        } else auditOf(c.name, where.abs, 'auto');
+        const isFile = c.name === 'read_file';
+        tools0 = createProjectTools({ root: isFile ? nodePath.dirname(where.abs) : where.abs });
+        target = isFile ? nodePath.basename(where.abs) : '.';
+      }
+      try {
+        let text;
+        if (c.name === 'list_dir') { const r = await tools0.list(where.outside ? '.' : target || '.', a.depth || 2); text = `list_dir ${where.outside ? where.abs : r.path}${r.truncated ? ' (truncated)' : ''}:\n${r.entries.join('\n') || '(empty)'}`; op.detail = String(r.entries.length); }
+        else if (c.name === 'find_files') { const r = await tools0.find(a.pattern); text = `find_files "${r.pattern}": ${r.files.length} file(s)${r.truncated ? ' (truncated)' : ''}\n${r.files.join('\n')}`; op.detail = String(r.files.length); }
+        else if (c.name === 'search_text') { const r = await tools0.search(a.query, { path: where.outside ? '.' : a.path || '.', signal }); text = `search_text "${r.query}" in ${where.outside ? where.abs : r.path}: ${r.matches.length} match(es)${r.truncated ? ' (truncated; narrow the search)' : ''}\n${r.matches.map(m => `${m.path}:${m.line}: ${m.text}`).join('\n')}`; op.detail = String(r.matches.length); if (!r.matches.length) { emptySearch = true; text += '(no matches: the exact text may differ; read the file with read_file before editing it)'; } }
+        else { const r = await tools0.read(target, a.start_line || 1, a.end_line); const shown = where.outside ? where.abs : r.path; text = `read_file ${shown} lines ${r.start}-${r.end} of ${r.totalLines}${r.truncated ? ' (more lines follow; read them with start_line)' : ''}:\n${r.text}`; op.label = shown; op.detail = `${r.start}-${r.end}`; if (!where.outside) readFiles.set(r.path + ':' + r.start, { path: r.path, start: r.start, end: r.end }); }
+        seen.set(key, true); op.status = 'done'; send({ type: 'task', task: publicTask() });
+        return { text };
+      } catch (error) { op.status = 'failed'; op.detail = short(error.message, 120); send({ type: 'task', task: publicTask() }); return { error: true, text: error.message }; }
+    }
+
+    // File changes: preview → permission (mode) → approval when needed → apply. Outside the folder: always asks (except Full).
+    async function writeCall(c) {
+      const a = c.args;
       if (c.name === 'edit_file' && emptySearch && ![...readFiles.values()].some(r => relPath(r.path) === relPath(a.path)))
         return { error: true, text: `Read ${a.path} with read_file first: a search found nothing, so the edit must be based on the file's real text.` };
+      const locs = (c.name === 'move_path' ? [a.from, a.to] : [a.path]).map(locate);
+      const outside = locs.some(l => l.outside);
+      let w = writer, arg = l => l.rel, shown = p => p;
+      if (outside) {
+        const drives = new Set(locs.map(l => nodePath.parse(l.abs).root.toLowerCase()));
+        if (drives.size > 1) return { error: true, text: 'Moving between drives is not supported; copy with a command instead.' };
+        const driveRoot = nodePath.parse(locs[0].abs).root;
+        w = writerAt(driveRoot); arg = l => nodePath.relative(driveRoot, l.abs).split(nodePath.sep).join('/'); shown = p => nodePath.join(driveRoot, p);
+      }
+      const d = perms.decide(policy, { kind: 'write', outside });
+      if (d.action === 'deny') { auditOf(c.name, locs.map(l => l.abs).join(' -> '), 'denied'); return { error: true, text: PLAN_DENIED }; }
       let change;
-      try { change = c.name === 'edit_file' ? await writer.previewEdit(a.path, a.edits) : await writer.previewCreate(a.path, a.content); }
-      catch (error) { return { error: true, text: error.message }; }
-      const op = { kind: 'p-edit', label: change.path, status: 'running', detail: `+${change.diff.added} −${change.diff.removed}` };
+      try {
+        change = c.name === 'edit_file' ? await w.previewEdit(arg(locs[0]), a.edits) : c.name === 'create_file' ? await w.previewCreate(arg(locs[0]), a.content)
+          : c.name === 'make_dir' ? await w.previewMkdir(arg(locs[0])) : c.name === 'delete_path' ? await w.previewDelete(arg(locs[0])) : await w.previewMove(arg(locs[0]), arg(locs[1]));
+      } catch (error) { return { error: true, text: error.message }; }
+      const label = shown(change.path) + (change.to ? ' → ' + shown(change.to) : '');
+      const counted = change.kind === 'edit' || change.kind === 'create' || (change.kind === 'delete' && !change.isDir);
+      const op = { kind: 'p-edit', label, status: 'running', detail: counted ? `+${change.diff.added} −${change.diff.removed}` : change.kind };
       task.ops.push(op); send({ type: 'task', task: publicTask() });
-      let decision = 'apply';
-      if (!applyAll) {
-        send({ type: 'edit-approval', callId: c.id, change: { kind: change.kind, path: change.path, added: change.diff.added, removed: change.diff.removed, hunks: change.diff.hunks } });
-        decision = await waitApproval(runId, c.id, signal);
-        if (decision === 'apply-all') { applyAll = true; decision = 'apply'; }
+      let decision = 'apply', how = 'auto';
+      if (d.action === 'ask' && !(applyAll && !outside)) {
+        how = 'user';
+        decision = await askUser(c.id, { kind: change.kind, path: shown(change.path), to: change.to ? shown(change.to) : undefined, isDir: change.isDir, files: change.files, added: change.diff.added, removed: change.diff.removed, hunks: change.diff.hunks, warn: d.warn }, { allowAll: !outside });
       }
       if (decision !== 'apply') {
         send({ type: 'edit-done', callId: c.id, decision: decision === 'timeout' ? 'timeout' : 'skipped' });
         op.status = 'failed'; op.detail = decision === 'timeout' ? 'timeout' : 'skipped'; send({ type: 'task', task: publicTask() });
-        return { text: decision === 'timeout' ? 'skipped: the user did not answer in time; the change was not applied.' : 'skipped: the user declined this change; it was not applied.' };
+        auditOf(c.name, label, 'declined');
+        return { text: skippedText(decision) };
       }
       try {
-        const done = await writer.apply(change, taskId);
+        const done = await w.apply(change, taskId);
         for (const key of [...seen.keys()]) if (!key.startsWith('read_file') || key.includes(JSON.stringify(change.path).slice(1, -1))) seen.delete(key);
-        send({ type: 'edit-done', callId: c.id, decision: 'applied' });
+        send({ type: 'edit-done', callId: c.id, decision: 'applied', ...(how === 'auto' ? { change: { kind: change.kind, path: label, added: change.diff.added, removed: change.diff.removed } } : {}) });
         op.status = 'done'; send({ type: 'task', task: publicTask() });
+        auditOf(c.name, label, how);
+        if (change.kind !== 'edit' && change.kind !== 'create') return { text: `applied: ${{ mkdir: 'created folder', delete: 'deleted', move: 'moved' }[change.kind]} ${label}` };
         const region = change.after.replace(/\r\n/g, '\n').split('\n');
         const [from, to] = (done.lines || '1-1').split('-').map(Number);
         const view = region.slice(Math.max(0, from - 1), Math.min(region.length, Math.max(from, to), from + 19)).join('\n');
-        return { text: `applied: ${change.kind === 'create' ? 'created' : 'edited'} ${done.path}${done.lines ? ' lines ' + done.lines : ''}${view ? ':\n' + view : ''}` };
+        return { text: `applied: ${change.kind === 'create' ? 'created' : 'edited'} ${shown(done.path)}${done.lines ? ' lines ' + done.lines : ''}${view ? ':\n' + view : ''}` };
       } catch (error) {
         send({ type: 'edit-done', callId: c.id, decision: 'failed', error: error.message });
         op.status = 'failed'; op.detail = short(error.message, 120); send({ type: 'task', task: publicTask() });
         return { error: true, text: error.message };
       }
+    }
+
+    // Commands: the classifier says harmless (Auto) and whether a path points outside; the mode decides; output streams to the card.
+    async function commandCall(c) {
+      const command = String(c.args.command || '').trim(), background = c.name === 'start_background';
+      if (!command || command.length > 8000) return { error: true, text: 'Give one PowerShell command line (at most 8000 characters).' };
+      const cls = await exec.classify(command, info.root);
+      const d = perms.decide(policy, { kind: 'exec', outside: cls.outside, harmless: cls.harmless && !background });
+      if (d.action === 'deny') { auditOf(c.name, command, 'denied'); return { error: true, text: PLAN_DENIED }; }
+      const op = { kind: 'p-run', label: short(command, 120), status: 'running', detail: '' };
+      task.ops.push(op); send({ type: 'task', task: publicTask() });
+      let how = 'auto';
+      if (d.action === 'ask') {
+        how = 'user';
+        const decision = await askUser(c.id, { kind: 'command', command, cwd: info.root, background, warn: d.warn, added: 0, removed: 0, hunks: [] }, { allowAll: false });
+        if (decision !== 'apply') {
+          send({ type: 'edit-done', callId: c.id, decision: decision === 'timeout' ? 'timeout' : 'skipped' });
+          op.status = 'failed'; op.detail = 'skipped'; send({ type: 'task', task: publicTask() }); auditOf(c.name, command, 'declined');
+          return { text: skippedText(decision) };
+        }
+      }
+      send({ type: 'command-start', callId: c.id, command, background, auto: how === 'auto' });
+      if (background) {
+        try {
+          const job = exec.start({ command, cwd: info.root });
+          op.status = 'done'; op.detail = job.id; send({ type: 'task', task: publicTask() }); send({ type: 'edit-done', callId: c.id, decision: 'ran', background: true });
+          auditOf(c.name, command, how, { job: job.id });
+          return { text: `started in the background as ${job.id}. Read its output with read_background("${job.id}").` };
+        } catch (error) { op.status = 'failed'; send({ type: 'task', task: publicTask() }); send({ type: 'edit-done', callId: c.id, decision: 'failed', error: error.message }); return { error: true, text: error.message }; }
+      }
+      const pending = []; let timer = null;
+      const flush = () => { timer = null; if (pending.length) send({ type: 'command-output', callId: c.id, lines: pending.splice(0) }); };
+      const r = await exec.run({ command, cwd: info.root, timeoutMs: (Number(c.args.timeout_seconds) || 120) * 1000, signal, onLine: (stream, line) => { if (pending.length < 400) pending.push({ s: stream, d: line.slice(0, 2000) }); timer ??= setTimeout(flush, 250); } });
+      clearTimeout(timer); flush();
+      const status = r.stopped ? 'stopped by the user' : r.timedOut ? 'timed out and was stopped' : r.error ? r.error : 'exit code ' + r.code;
+      op.status = r.code === 0 && !r.timedOut && !r.stopped ? 'done' : 'failed'; op.detail = r.timedOut ? 'timeout' : 'exit ' + r.code; send({ type: 'task', task: publicTask() });
+      send({ type: 'edit-done', callId: c.id, decision: 'ran', code: r.code, timedOut: r.timedOut });
+      auditOf(c.name, command, how, { code: r.code, timedOut: r.timedOut });
+      return { error: op.status === 'failed', text: `${status}${r.truncated ? ' (output cut)' : ''}:\n${r.output || '(no output)'}` };
     }
   }
 
@@ -222,7 +339,8 @@ function createCoder({ cloud, engine, store, checkpointsDir, emit = () => {}, lo
     return result;
   }
 
-  return { run, approve, cancel, undo, active: () => runs.size > 0 };
+  const cancelAll = () => { for (const c of runs.values()) c.abort(); };
+  return { run, approve, cancel, cancelAll, undo, active: () => runs.size > 0 };
 }
 
 module.exports = { createCoder, stepSchema };
