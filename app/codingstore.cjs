@@ -6,7 +6,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const DEFAULTS = { prices: {}, taskMoney: 0.2, taskTokens: 3000000, maxSteps: 40, deepThinking: false, consented: [] };
+// tools (v1.1 built-in plugins): which agent tools are offered at all; the mode still decides what asks.
+const TOOL_KEYS = ['commands', 'background', 'instructions'];
+const DEFAULTS = { prices: {}, taskMoney: 0.2, taskTokens: 3000000, maxSteps: 40, deepThinking: false, consented: [], tools: { commands: true, background: true, instructions: true } };
 const validId = id => typeof id === 'string' && /^[a-f0-9]{32}$/i.test(id);
 const num = (v, min, max) => Number.isFinite(v) && v >= min && v <= max;
 
@@ -20,13 +22,14 @@ function createCodingStore(dataDir) {
   const blank = () => ({ allowEdits: false, entries: [], tasks: [] });
   const entry = chatId => { if (!validId(chatId)) throw Error('Invalid conversation.'); const all = load(); return all[chatId] ??= blank(); };
 
-  function settings() { return { ...DEFAULTS, ...read(settingsFile, {}) }; }
+  function settings() { const saved = read(settingsFile, {}); return { ...DEFAULTS, ...saved, tools: { ...DEFAULTS.tools, ...(saved.tools && typeof saved.tools === 'object' ? saved.tools : {}) } }; }
   function saveSettings(patch = {}) {
     const next = settings();
     if ('taskMoney' in patch) { if (!num(patch.taskMoney, 0, 1000)) throw Error('Invalid task money limit.'); next.taskMoney = patch.taskMoney; }
     if ('taskTokens' in patch) { if (!num(patch.taskTokens, 0, 1e9)) throw Error('Invalid task token limit.'); next.taskTokens = Math.round(patch.taskTokens); }
     if ('maxSteps' in patch) { if (!num(patch.maxSteps, 1, 1e6)) throw Error('Invalid step limit.'); next.maxSteps = Math.min(100, Math.round(patch.maxSteps)); }
     if ('deepThinking' in patch) next.deepThinking = patch.deepThinking === true;
+    if ('tools' in patch) { if (!patch.tools || typeof patch.tools !== 'object') throw Error('Invalid tools.'); for (const k of TOOL_KEYS) if (k in patch.tools) next.tools[k] = patch.tools[k] === true; }
     if ('consented' in patch) { if (!Array.isArray(patch.consented)) throw Error('Invalid consent list.'); next.consented = [...new Set(patch.consented.map(String))].slice(0, 30); }
     if ('prices' in patch) {
       const prices = {};

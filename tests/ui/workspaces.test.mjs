@@ -118,6 +118,21 @@ describe(`workspaces and modes (${shell})`, () => {
     assert.equal(list.list.find(w => w.name === 'Site').mode, 'full');
   });
 
+  test('Settings → Plugins shows the built-in tools; switching Commands off removes the command tools', async () => {
+    await ev("openSettings('plugins'); 0");
+    await app.cdp.waitFor("!!document.querySelector('#builtin-tools .builtin-card[data-tool=commands] input')", 10000);
+    assert.deepEqual(await ev("[...document.querySelectorAll('#builtin-tools .builtin-card')].map(c => c.dataset.tool)"), ['files', 'changes', 'commands', 'background', 'instructions', 'web']);
+    await ev("document.getElementById('builtin-commands').click(); 0");
+    await app.cdp.waitFor("api.projects('coding', {chatId: state.chat.Id}).then(r => r.settings.tools.commands === false)", 5000);
+    await ev("setPage('chat'); 0");
+    cloud.setScript(() => finish('ok'));
+    const before = await send('Which tools?');
+    await settled(before);
+    const names = cloud.requests.filter(r => r.path === '/v1/chat/completions').at(-1).body.tools.map(t => t.function.name);
+    assert.ok(!names.includes('run_command'), names.join(','));
+    await ev("api.projects('coding-settings', {chatId: state.chat.Id, patch: {tools: {commands: true}}}).then(() => 0)");
+  });
+
   test('Turkish: sidebar and mode chip', async () => {
     await ev("state.prefs.language = 'tr'; localize(); renderHistory(); renderToolChips(); 0");
     assert.equal(await ev("document.querySelector('.ws-head .rail-label').textContent"), 'Çalışma alanları');

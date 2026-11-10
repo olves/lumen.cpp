@@ -46,7 +46,9 @@ test('token limit applies without a price; money limit only with one', () => {
 
 test('store: defaults, settings save, allow edits per chat', () => {
   const d = dir(), s = createCodingStore(d);
-  assert.deepEqual(s.settings(), { prices: {}, taskMoney: 0.2, taskTokens: 3000000, maxSteps: 40, deepThinking: false, consented: [] });
+  assert.deepEqual(s.settings(), { prices: {}, taskMoney: 0.2, taskTokens: 3000000, maxSteps: 40, deepThinking: false, consented: [], tools: { commands: true, background: true, instructions: true } });
+  // v1.1 built-in tools: partial patches keep the other switches; unknown keys are ignored.
+  assert.deepEqual(createCodingStore(dir()).saveSettings({ tools: { commands: false, nope: true } }).tools, { commands: false, background: true, instructions: true });
   s.saveSettings({ taskMoney: 0.5, maxSteps: 999, prices: { 'deepseek/deepseek-flash': { input: 1, cachedInput: 0.1, output: 2, currency: 'USD' } } });
   const again = createCodingStore(d).settings();
   assert.equal(again.taskMoney, 0.5);

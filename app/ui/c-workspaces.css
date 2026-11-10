@@ -48,3 +48,8 @@
 .cmd-out:empty{display:none}
 @media (prefers-reduced-motion:reduce){.ws-toggle svg:first-child{transition:none}}
 .history-row:hover .history-time,.history-row:focus-within .history-time{display:none}
+.builtin-tools{margin:8px 0 18px}
+.builtin-card{display:flex;flex-direction:column;gap:8px}
+.builtin-badge{align-self:flex-start;padding:1px 8px;border:1px solid var(--border);border-radius:999px;color:var(--text-muted);font-size:var(--font-size-small)}
+.builtin-switch{display:flex;align-items:center;gap:8px;font-size:var(--font-size-small);color:var(--text-muted)}
+.builtin-card>button{align-self:flex-start}

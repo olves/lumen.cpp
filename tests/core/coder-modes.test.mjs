@@ -118,3 +118,14 @@ test('background command: start, read, stop', async () => {
   const out = results(s);
   assert.match(out[0], /started in the background/); assert.match(out[2], /stopped/);
 });
+
+test('built-in tools: commands can be switched off; AGENTS.md joins the system text', async () => {
+  const s = setup();
+  fs.writeFileSync(path.join(s.root, 'AGENTS.md'), 'Use tabs. Run npm test before finishing.');
+  const store = createCodingStore(s.base); store.saveSettings({ tools: { commands: false } });
+  await s.run('auto', steps());
+  const names = s.requests[0].tools.map(t => t.function.name);
+  assert.ok(!names.includes('run_command') && !names.includes('start_background'));
+  assert.ok(names.includes('make_dir'));
+  assert.ok(s.requests[0].messages[0].content.includes('--- AGENTS.md ---' + String.fromCharCode(10) + 'Use tabs.'));
+});

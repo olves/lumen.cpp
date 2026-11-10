@@ -207,3 +207,37 @@ listen('agent-event',event=>{
 });
 function markOutside(callId,card){card??=[...document.querySelectorAll('.edit-card')].at(-1);if(!card||card.querySelector('.outside-warn'))return;card.classList.add('outside');const w=el('p','outside-warn',t('cardOutside'));card.querySelector('.edit-head')?.after(w);}
 loadWorkspaces().then(()=>{renderHistory();renderToolChips();});
+
+// ---------- Settings → Plugins: built-in agent tools (v1.1) ----------
+// Cards like the plugin grid: what the agent can use in a workspace folder. Files and changes follow the mode; commands, background
+// commands and project instructions can be switched off (coding-settings.json tools). Web research has its own settings page.
+Object.assign(translations,{
+ builtinTitle:['Built-in tools','Yerleşik araçlar'],builtinIntro:['What the agent can use in a workspace folder. The mode in the message box decides what asks first.','Ajanın bir çalışma alanı klasöründe kullanabildikleri. Neyin önce soracağına mesaj kutusundaki mod karar verir.'],
+ bt_files:['Files','Dosyalar'],bt_files_d:['List, find, search and read text files.','Metin dosyalarını listeler, bulur, arar ve okur.'],
+ bt_changes:['File changes','Dosya değişiklikleri'],bt_changes_d:['Edit, create, move and delete files and folders; a task’s changes can be undone.','Dosya ve klasörleri düzenler, oluşturur, taşır ve siler; bir görevin değişiklikleri geri alınabilir.'],
+ bt_commands:['Commands','Komutlar'],bt_commands_d:['Run PowerShell commands in the folder (build, test, install). Their effects cannot be undone.','Klasörde PowerShell komutları çalıştırır (derleme, test, kurulum). Etkileri geri alınamaz.'],
+ bt_background:['Background commands','Arka plan komutları'],bt_background_d:['Keep a dev server or watcher running; the agent reads its output and stops it.','Bir geliştirme sunucusunu veya izleyiciyi açık tutar; ajan çıktısını okur ve durdurur.'],
+ bt_instructions:['Project instructions','Proje talimatları'],bt_instructions_d:['Reads AGENTS.md and CLAUDE.md at the folder’s root as the project’s rules.','Klasör kökündeki AGENTS.md ve CLAUDE.md dosyalarını projenin kuralları olarak okur.'],
+ bt_web:['Web research','Web araştırması'],bt_web_d:['Search and read web pages. Set up in Settings → Search.','Web’de arar ve sayfa okur. Ayarlar → Arama’dan kurulur.'],
+ btAlways:['Always on','Her zaman açık'],btByMode:['By mode','Moda göre'],btOn:['On','Açık'],btOff:['Off','Kapalı'],btUnavailable:['Not available in this build','Bu sürümde yok'],btOpen:['Open','Aç'],btSaved:['Built-in tools saved','Yerleşik araçlar kaydedildi'],
+});
+let builtinSettings=null;
+async function loadBuiltin(){try{const r=await api.projects('coding',{chatId:state.chat.Id});builtinSettings=r.settings;}catch{}return builtinSettings;}
+const wsPaintPlugins=paintPlugins;paintPlugins=function(){
+ wsPaintPlugins();const panel=$('plugins-panel');if(panel.hidden)return;
+ if(!builtinSettings||!wsState.loaded){Promise.all([loadBuiltin(),loadWorkspaces()]).then(()=>{if(builtinSettings)paintPlugins();});return;}
+ const tools=builtinSettings.tools||{},box=el('section','builtin-tools');box.id='builtin-tools';
+ box.append(el('span','connect-subhead plugin-subhead',t('builtinTitle')),el('p','quiet',t('builtinIntro')));
+ const grid=el('div','plugin-grid builtin-grid');
+ const card=(key,state0)=>{const c=el('div','connect-card plugin-card builtin-card');c.dataset.tool=key;const head=el('div','connect-card-head'),title=el('div');title.append(el('strong','',t('bt_'+key)),el('small','quiet',t('bt_'+key+'_d')));head.append(title);c.append(head);
+  if(state0.badge)c.append(el('small','builtin-badge',state0.badge));
+  if(state0.toggle){const label=el('label','builtin-switch'),sw=el('span','switch'),box2=el('input'),knob=el('span');box2.type='checkbox';box2.checked=tools[key]!==false;box2.id='builtin-'+key;box2.disabled=!!state0.disabled;sw.append(box2,knob);
+   const text=el('span','',box2.checked?t('btOn'):t('btOff'));label.append(sw,text);
+   box2.onchange=async()=>{try{const r=await api.projects('coding-settings',{chatId:state.chat.Id,patch:{tools:{[key]:box2.checked}}});builtinSettings=r;text.textContent=box2.checked?t('btOn'):t('btOff');toast(t('btSaved'));}catch(e){box2.checked=!box2.checked;toast(cleanError(e));}};c.append(label);}
+  if(state0.open){const b=el('button','secondary',t('btOpen'));b.type='button';b.onclick=state0.open;c.append(b);}
+  grid.append(c);};
+ card('files',{badge:t('btAlways')});card('changes',{badge:t('btByMode')});
+ card('commands',wsState.commands?{toggle:true}:{badge:t('btUnavailable')});card('background',wsState.commands?{toggle:true}:{badge:t('btUnavailable')});
+ card('instructions',{toggle:true});card('web',{open:()=>openSettings('search')});
+ box.append(grid);panel.querySelector('.settings-heading')?.after(box);
+};

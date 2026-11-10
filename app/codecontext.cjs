@@ -29,9 +29,9 @@ function toolDefinitions(allowEdits, { createBytes = 200 * 1024, readLines = 300
     fn('move_path', 'Move or rename a file or folder. The target must not exist.', { from: str('string', 'Current path.'), to: str('string', 'New path.') }, ['from', 'to']));
   if (offer.exec) tools.push(
     fn('run_command', 'Run one Windows PowerShell command in the project folder and get its output and exit code. Use it to build, test, install or inspect. It must finish on its own (no prompts, no servers: use start_background for those). Output is cut to its first and last part.', { command: str('string', 'The PowerShell command line.'), timeout_seconds: str('integer', 'Stop after this many seconds (default 120, at most 600).', { minimum: 1, maximum: 600 }) }, ['command']),
-    fn('start_background', 'Start a long-running PowerShell command (a dev server, a watcher) in the project folder. Returns an id; read its output with read_background and stop it with stop_background. At most 5 at once.', { command: str('string', 'The PowerShell command line.') }, ['command']),
+    ...(offer.background === false ? [] : [fn('start_background', 'Start a long-running PowerShell command (a dev server, a watcher) in the project folder. Returns an id; read its output with read_background and stop it with stop_background. At most 5 at once.', { command: str('string', 'The PowerShell command line.') }, ['command']),
     fn('read_background', 'Read the new output of a background command since the last read, and whether it is still running.', { id: str('string', 'The id start_background returned.') }, ['id']),
-    fn('stop_background', 'Stop a background command and everything it started.', { id: str('string', 'The id start_background returned.') }, ['id']));
+    fn('stop_background', 'Stop a background command and everything it started.', { id: str('string', 'The id start_background returned.') }, ['id'])]));
   tools.push(fn('finish', 'End the task. The summary is shown to the user as your answer: what you found or changed (with file paths) and anything left to do.', { summary: str('string', 'Your answer to the user, in their language.') }, ['summary']));
   return tools;
 }
