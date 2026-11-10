@@ -204,3 +204,33 @@ const imagesLocalize=localize;localize=function(){
  if(state.ready){renderToolChips();if(state.page==='settings'&&state.setting==='images')paintImages();}
 };
 loadImages();
+
+// ---------- v1.1: image models in the model picker ----------
+// Picking an image model (local package or cloud image model) in the model menu turns image generation on: the message is the
+// prompt and the reply is the picture. Picking a chat model turns it off. The separate "Create image" row of the + menu is gone
+// (it stays in the DOM, hidden, for scripts that look for it); the chip under the message box keeps the options (shape, count, seed).
+Object.assign(translations,{imgModelsGroup:['Image models','Görsel modelleri'],imgModelsSetup:['Set up image models…','Görsel modellerini ayarla…'],imgPickerTag:['image','görsel']});
+$('create-image')?.classList.add('menu-hidden');
+const imagesModelSelector=renderModelSelector;renderModelSelector=function(){
+ imagesModelSelector();
+ const current=imageMode?currentImageModel():null;
+ if(current){$('selected-model-name').textContent=current.label;$('selected-model-logo').replaceChildren(icon('image'));$('model-trigger').title=current.label;
+  document.querySelectorAll('#model-options .model-option.selected').forEach(o=>{o.classList.remove('selected');o.setAttribute('aria-selected','false');o.querySelector('.model-check').textContent='';});}
+ const list=$('model-options'),query=$('model-filter').value.trim().toLocaleLowerCase();
+ const choices=imageChoices().filter(c=>c.label.toLocaleLowerCase().includes(query));
+ list.querySelector('.model-menu-empty')?.remove();
+ if(choices.length){
+  list.append(el('div','menu-caption model-group-caption',t('imgModelsGroup')));
+  for(const c of choices){
+   const chosen=current?.id===c.id,option=el('button','model-option image-model-option'+(chosen?' selected':''));option.type='button';option.setAttribute('role','option');option.setAttribute('aria-selected',String(chosen));option.disabled=state.busy;option.dataset.imageModel=c.id;
+   const info=el('span','model-option-info');info.append(el('strong','',c.label),el('small','',t('imgPickerTag')+' · '+(c.local?t('ready'):t('cloudModelTag'))));
+   option.append(icon('image'),info,el('span','model-check',chosen?'✓':''));
+   option.onclick=async()=>{await imgSettings({model:c.id});imageMode=true;if(typeof toolsMode!=='undefined')toolsMode=false;closeComposerMenus();renderToolChips();renderModelSelector();$('prompt').focus();};
+   list.append(option);
+  }
+ }else if(!list.querySelector('.model-option'))list.append(el('p','model-menu-empty',t('noMatch')));
+};
+// Opening the menu loads what the image list needs; a chat model choice ends image mode.
+$('model-trigger').addEventListener('click',()=>{if(!imagesState||!connectionsState)Promise.all([loadImages(),loadConnections()]).then(()=>{if(!$('model-menu').hidden)renderModelSelector();});});
+$('model-picker').addEventListener('change',()=>{if(imageMode){imageMode=false;renderToolChips();renderModelSelector();}});
+const imagesPickerChips=renderToolChips;renderToolChips=function(){imagesPickerChips();renderModelSelector();};

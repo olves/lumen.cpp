@@ -28,7 +28,7 @@ describe(`+ menu (${shell})`, () => {
 
   test('rows are grouped: add, modes, conversation', async () => {
     await open();
-    assert.deepEqual(await layout(), ['# Add', 'attach-any', 'attach-project', '# Modes', 'use-research', 'use-tools', 'create-image',
+    assert.deepEqual(await layout(), ['# Add', 'attach-any', 'attach-project', '# Modes', 'use-research', 'use-tools',
       '# Conversation', 'use-skill', 'composer-instructions']);
     assert.equal(await ev("document.activeElement.id"), 'attach-any', 'the first row takes focus');
   });

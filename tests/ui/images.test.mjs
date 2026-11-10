@@ -59,11 +59,13 @@ describe(`images, local engine stand-in (${shell})`, () => {
     await shot('settings');
   });
 
-  test('Create image: chip, progress with live preview, picture under the reply', async () => {
+  test('image model from the model menu: chip, progress with live preview, picture under the reply', async () => {
     await ev("setPage('chat'); 0");
-    await app.cdp.click('#add-button');
-    await app.cdp.waitFor("!!document.querySelector('#create-image')", 5000);
-    await app.cdp.click('#create-image');
+    // v1.1: image models are picked in the model menu (the + menu row is gone).
+    await app.cdp.click('#model-trigger');
+    await app.cdp.waitFor("!!document.querySelector('#model-options .image-model-option')", 10000);
+    assert.equal(await ev("!!document.getElementById('create-image')?.classList.contains('menu-hidden')"), true);
+    await ev("([...document.querySelectorAll('#model-options .image-model-option')].find(o => o.dataset.imageModel === imagesState.settings.model) || document.querySelector('#model-options .image-model-option')).click(); 0");
     await app.cdp.waitFor("!!document.querySelector('.image-chip')", 10000);
     await app.cdp.type('#prompt', 'a red fox in the snow');
     await app.cdp.click('#send');
@@ -98,6 +100,7 @@ describe(`images, local engine stand-in (${shell})`, () => {
   test('Save writes the PNG through the save dialog', async () => {
     await ev("document.querySelector('.gen-actions button').click(); 0");
     const g = await ev("state.chat.Messages.at(-1).Generated");
+    if (!g) console.log("DEBUG", JSON.stringify(await ev("state.chat.Messages.map(m => [m.Role, String(m.Content).slice(0,60), !!m.Generated])")));
     const file = path.join(saveDir, 'lumen-' + g.images[0].sha.slice(0, 8) + '.png');
     for (let i = 0; i < 50 && !fs.existsSync(file); i++) await sleep(100);
     assert.ok(fs.readFileSync(file).equals(fs.readFileSync(path.join(dataDir, 'generated', g.images[0].sha + '.png'))));
@@ -155,15 +158,20 @@ describe(`images, cloud provider mock (${shell})`, () => {
     await ev(`window.lumen.connections('provider', {provider: 'custom', base: ${js(cloud.base)}, label: 'Mock cloud', key: ${js(cloud.key)}, models: [${js(cloud.model)}]}).then(() => 0)`);
     await ev(`window.lumen.images('settings', {cloudModels: {custom: [${js(cloud.imageModel)}]}, model: ${js('cloud:custom/' + cloud.imageModel)}}).then(() => 0)`);
     await ev('Promise.all([loadImages(), loadConnections()]).then(() => 0)');
-    await app.cdp.click('#add-button');
-    await app.cdp.waitFor("!!document.querySelector('#create-image')", 5000);
-    await app.cdp.click('#create-image');
+    // v1.1: image models are picked in the model menu (the + menu row is gone).
+    await app.cdp.click('#model-trigger');
+    await app.cdp.waitFor("!!document.querySelector('#model-options .image-model-option')", 10000);
+    assert.equal(await ev("!!document.getElementById('create-image')?.classList.contains('menu-hidden')"), true);
+    await ev("([...document.querySelectorAll('#model-options .image-model-option')].find(o => o.dataset.imageModel === imagesState.settings.model) || document.querySelector('#model-options .image-model-option')).click(); 0");
     await app.cdp.waitFor("!!document.querySelector('.image-chip')", 10000);
     await app.cdp.type('#prompt', 'a lighthouse at dawn');
     await app.cdp.click('#send');
     await app.cdp.waitFor("!!document.querySelector('.message.assistant .gen-grid img')", 60000);
     await app.cdp.waitFor('state.busy === false', 30000);
+    // The grid can show before the saved chat (with its Generated sidecar) is back in state.
+    await app.cdp.waitFor('!!state.chat.Messages.at(-1).Generated', 10000);
     const g = await ev("state.chat.Messages.at(-1).Generated");
+    if (!g) console.log("DEBUG", JSON.stringify(await ev("state.chat.Messages.map(m => [m.Role, String(m.Content).slice(0,60), !!m.Generated])")));
     assert.equal(g.engine, 'cloud');
     assert.deepEqual([g.images[0].width, g.images[0].height], [320, 192]);
     const req = cloud.requests.find(r => r.path === '/v1/images/generations');
