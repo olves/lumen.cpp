@@ -1,5 +1,5 @@
 // Builds backend/lumen-exec.exe from app/backend/LumenExec.cs for tests (binaries are not in the repository). Output goes to
-// work/bin and, when it exists, the Electron dev copy's backend, so UI tests get the helper too. Rebuilt when the source is newer.
+// work/bin and, when they exist, the Electron dev copy and the Tauri build backends, so UI tests get the helper too. Rebuilt when the source is newer.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -23,5 +23,7 @@ export function execHelper() {
   const out = build(path.join(work, 'bin', 'lumen-exec.exe'));
   const dev = path.join(work, 'electron-dev', 'resources', 'app', 'backend');
   if (fs.existsSync(dev)) fs.copyFileSync(out, path.join(dev, 'lumen-exec.exe'));
+  const tauri = path.join(work, 'tauri-build', 'backend');
+  if (fs.existsSync(path.join(tauri, 'lumen-host.exe'))) fs.copyFileSync(out, path.join(tauri, 'lumen-exec.exe'));
   return out;
 }
