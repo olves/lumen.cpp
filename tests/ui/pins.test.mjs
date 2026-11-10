@@ -41,11 +41,12 @@ describe(`pinned conversations (${shell})`, () => {
     await ev(`${pinOf('Alpha')}.click(); 0`);
     await app.cdp.waitFor("document.querySelectorAll('#history .history-row.pinned').length === 1", 5000);
     assert.deepEqual((await titles()).slice(0, 3), ['Alpha', 'Gamma', 'Beta']);
-    assert.deepEqual(await labels(), ['Pinned', 'Recent']);
+    // v1.1: the rest of the list is grouped by workspace (no "Recent" label); the Workspaces header stays.
+    assert.deepEqual(await labels(), ['Pinned']);
     await shot('pinned');
     assert.equal(await ev(`${pinOf('Alpha')}.getAttribute('aria-pressed')`), 'true');
     assert.equal(await ev(`${pinOf('Alpha')}.getAttribute('aria-label')`), 'Unpin conversation: Alpha');
-    assert.equal(await ev("document.getElementById('history').previousElementSibling.hidden"), true, 'outer Recent label hidden while groups show');
+    assert.equal(await ev("document.querySelector('.ws-head .rail-label').hidden"), false);
   });
 
   test('pins survive a restart and follow the language', async () => {
@@ -55,7 +56,7 @@ describe(`pinned conversations (${shell})`, () => {
     await start();
     assert.deepEqual((await titles()).slice(0, 3), ['Beta', 'Alpha', 'Gamma'], 'newest pin first');
     await ev("(async () => { state.prefs = await api.preferences({ ...state.prefs, language: 'tr' }); localize(); renderHistory(); return 0; })()");
-    assert.deepEqual(await labels(), ['Sabitlenenler', 'Son sohbetler']);
+    assert.deepEqual(await labels(), ['Sabitlenenler']);
     await ev("(async () => { state.prefs = await api.preferences({ ...state.prefs, language: 'en' }); localize(); renderHistory(); return 0; })()");
   });
 
@@ -69,7 +70,7 @@ describe(`pinned conversations (${shell})`, () => {
     await ev(`${pinOf('Alpha')}.click(); 0`);
     await app.cdp.waitFor("document.querySelectorAll('#history .history-row.pinned').length === 0", 5000);
     assert.deepEqual(await labels(), []);
-    assert.equal(await ev("document.getElementById('history').previousElementSibling.hidden"), false);
+    assert.equal(await ev("document.querySelector('.ws-head .rail-label').hidden"), false);
   });
 
   test('pin buttons are disabled while busy', async () => {

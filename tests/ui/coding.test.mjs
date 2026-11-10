@@ -47,7 +47,9 @@ describe(`coding agent (${shell})`, () => {
   });
   after(async () => { await app?.stop(); cloud?.close(); });
 
-  test('first cloud run asks for project-file consent once; edits are off and the run is read-only', async () => {
+  test('first cloud run asks for project-file consent once; in Plan mode the run is read-only', async () => {
+    // v1.1: the workspace's mode replaces the v1.0.8 "Allow edits" switch; Plan offers read tools only.
+    await ev("window.lumen.workspaces('mode', {id: 'default', mode: 'plan'}).then(r => { wsState = {...r, loaded: true}; renderToolChips(); return 0; })");
     cloud.setScript((body, n) => n === 1 ? { toolCalls: [{ name: 'read_file', args: { path: 'app.js' } }] } : finish('add() subtracts instead of adding.'));
     const before = await send('What is wrong in app.js?');
     await app.cdp.waitFor("!!document.querySelector('.coding-consent .coding-consent-allow')", 10000);
@@ -57,7 +59,6 @@ describe(`coding agent (${shell})`, () => {
     assert.equal(await ev(`${LAST}.querySelector('.message-body').textContent.trim()`), 'add() subtracts instead of adding.');
     const sent = cloud.requests.filter(r => r.path === '/v1/chat/completions').at(-2).body;
     assert.deepEqual(sent.tools.map(t => t.function.name), ['list_dir', 'find_files', 'search_text', 'read_file', 'finish']);
-    assert.equal(await ev("(api.projects('coding', {chatId: state.chat.Id})).then(r => r.allowEdits)"), false);
     // A second run does not ask again.
     cloud.setScript(() => finish('Still fine.'));
     const again = await send('Anything else?');
@@ -65,14 +66,16 @@ describe(`coding agent (${shell})`, () => {
     assert.equal(await ev("!!document.querySelector('.coding-consent')"), false);
   });
 
-  test('the switch turns edits on; a change card shows the diff and Apply writes the file', async () => {
+  test('Ask mode from the chip menu; a change card shows the diff and Apply writes the file', async () => {
+    assert.equal(await ev("document.querySelector('.project-chip .mode-chip').textContent"), 'Plan');
+    await ev("document.querySelector('.project-chip .mode-chip').click(); 0");
+    await app.cdp.waitFor("!!document.querySelector('.ws-menu')", 5000);
+    await ev("[...document.querySelectorAll('.ws-menu button')].find(b => b.textContent.startsWith('Ask')).click(); 0");
+    await app.cdp.waitFor("document.querySelector('.project-chip .mode-chip')?.textContent === 'Ask'", 5000);
     await ev('openProjectDialog().then(() => 0)');
-    await app.cdp.waitFor("!!document.getElementById('allow-edits')", 5000);
-    assert.equal(await ev("document.getElementById('allow-edits').checked"), false);
-    await ev("document.getElementById('allow-edits').click(); 0");
-    await app.cdp.waitFor("api.projects('coding', {chatId: state.chat.Id}).then(r => r.allowEdits)", 5000);
+    await app.cdp.waitFor("document.getElementById('project-dialog').open", 5000);
+    assert.equal(await ev("document.querySelector('.coding-switch').hidden"), true, 'the old switch is hidden');
     await ev("document.getElementById('project-dialog').close(); 0");
-    assert.match(await ev("document.querySelector('.project-chip').textContent"), /edits on/);
     cloud.setScript((body, n) => n === 1 ? { toolCalls: [{ name: 'edit_file', args: { path: 'app.js', edits: [{ old: 'return a - b;', new: 'return a + b;' }] } }] } : finish(`Fixed app.js. (${lastToolText(body).split('\n')[0]})`));
     const before = await send('Fix add.');
     await card();

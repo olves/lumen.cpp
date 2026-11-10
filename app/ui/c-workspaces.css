@@ -1,0 +1,45 @@
+/* v1.1 workspaces (sidebar groups), the agent's mode chip and menu, and the approval/command cards (workspacesui.js). Tokens only. */
+.ws-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ws-head .rail-label{flex:1;min-width:0}
+.ws-new{width:24px;height:24px;flex:none}
+.ws-group{margin-bottom:4px}
+.ws-group-head{display:flex;align-items:center;gap:2px;border-radius:var(--radius)}
+.ws-group-head:hover{background:var(--hover)}
+.ws-toggle{flex:1;min-width:0;display:flex;align-items:center;gap:6px;padding:5px 6px;border:0;background:none;color:var(--text);font:inherit;font-size:var(--font-size-ui);text-align:left;cursor:pointer;border-radius:var(--radius)}
+.ws-toggle svg{flex:none;width:14px;height:14px;color:var(--text-muted)}
+.ws-toggle svg:first-child{transition:transform var(--duration) var(--ease)}
+.ws-group.collapsed .ws-toggle svg:first-child{transform:rotate(-90deg)}
+.ws-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.ws-count{color:var(--text-muted);font-size:var(--font-size-small)}
+.ws-add,.ws-more{width:24px;height:24px;flex:none;opacity:0}
+.ws-group-head:hover :is(.ws-add,.ws-more),.ws-group-head:focus-within :is(.ws-add,.ws-more){opacity:1}
+.ws-items{padding-left:10px}
+.ws-empty{margin:2px 0 6px 18px;color:var(--text-muted);font-size:var(--font-size-small)}
+.history-row .history-time{margin-left:auto;padding-left:6px;color:var(--text-muted);font-size:var(--font-size-small);flex:none}
+.ws-menu{position:fixed;z-index:60;min-width:200px;max-width:340px;padding:4px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 8px 24px var(--shadow-color)}
+.ws-menu[hidden]{display:none}
+.ws-menu button{display:flex;width:100%;align-items:flex-start;gap:8px;padding:7px 9px;border:0;background:none;color:var(--text);font:inherit;font-size:var(--font-size-ui);text-align:left;border-radius:var(--radius);cursor:pointer}
+.ws-menu button:hover,.ws-menu button:focus-visible{background:var(--hover)}
+.ws-menu button[aria-checked=true]{background:var(--selected)}
+.ws-menu button.danger{color:var(--danger)}
+.ws-menu button span{display:flex;flex-direction:column;gap:2px}
+.ws-menu button small{color:var(--text-muted);font-size:var(--font-size-small);white-space:normal}
+.ws-menu-note{margin:4px 9px 6px;color:var(--text-muted);font-size:var(--font-size-small)}
+.ws-folder-note{word-break:break-all}
+#workspace-name{width:100%}
+.mode-chip{margin-left:4px;padding:1px 8px;border:1px solid var(--border);border-radius:999px;background:none;color:var(--text-muted);font:inherit;font-size:var(--font-size-small);cursor:pointer;white-space:nowrap}
+.mode-chip:hover{color:var(--text);background:var(--hover)}
+.mode-chip.danger{border-color:var(--danger);color:var(--danger);font-weight:600}
+.edit-card.outside{border-color:var(--danger)}
+.outside-warn{margin:6px 0 0;color:var(--danger);font-size:var(--font-size-small);font-weight:600}
+.cmd-text{margin:8px 0 4px;padding:8px 10px;max-height:160px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:var(--font-size-small);background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius)}
+.cmd-where,.cmd-noundo{display:block}
+.cmd-log{margin:6px 0;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-1)}
+.cmd-log>summary{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:var(--font-size-small);min-width:0}
+.cmd-log>summary code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.cmd-log .cmd-status{color:var(--text-muted);flex:none}
+.cmd-log.failed .cmd-status{color:var(--danger)}
+.cmd-out{margin:0;padding:8px 10px;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:var(--font-size-small);border-top:1px solid var(--border)}
+.cmd-out:empty{display:none}
+@media (prefers-reduced-motion:reduce){.ws-toggle svg:first-child{transition:none}}
+.history-row:hover .history-time,.history-row:focus-within .history-time{display:none}
