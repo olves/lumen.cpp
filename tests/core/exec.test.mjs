@@ -14,7 +14,9 @@ const helper = execHelper();
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-exec-'));
 fs.writeFileSync(path.join(root, 'a.txt'), 'merhaba\n');
 const exec = createExec({ helper, env: { ...process.env, DEEPSEEK_API_KEY: 'sk-secret-value', MY_TOKEN: 't', LUMEN_TEST_X: '1' } });
-const pingCount = () => (spawnSync('tasklist', ['/FI', 'IMAGENAME eq PING.EXE', '/NH'], { encoding: 'utf8' }).stdout.match(/PING\.EXE/gi) || []).length;
+// Each test pings its own loopback address, so other processes (parallel test files) never change the count.
+const pingCount = ip => Number(spawnSync('powershell', ['-NoProfile', '-Command', `@(Get-CimInstance Win32_Process -Filter "Name='PING.EXE'" | Where-Object { $_.CommandLine -like '*${ip}*' }).Count`], { encoding: 'utf8' }).stdout.trim() || 0);
+const settle = async ip => { for (let i = 0; i < 20 && pingCount(ip) > 0; i++) await new Promise(r => setTimeout(r, 250)); return pingCount(ip); };
 
 test('runs in the folder, keeps Turkish text, returns the exit code and plain error lines', async () => {
   const r = await exec.run({ command: 'Get-Location | Select-Object -ExpandProperty Path; Write-Output "çğışöü"; Write-Error "olmadı"; exit 4', cwd: root });
@@ -34,29 +36,23 @@ test('keys, tokens and Lumen internals are not in the environment', async () => 
 });
 
 test('a timeout ends the command and everything it started', async () => {
-  const before = pingCount();
-  const r = await exec.run({ command: 'Start-Process -WindowStyle Hidden ping -ArgumentList "-n","60","127.0.0.1"; ping -n 60 127.0.0.1 | Out-Null', cwd: root, timeoutMs: 2500 });
+  const r = await exec.run({ command: 'Start-Process -WindowStyle Hidden ping -ArgumentList "-n","60","127.0.0.21"; ping -n 60 127.0.0.21 | Out-Null', cwd: root, timeoutMs: 4000 });
   assert.equal(r.timedOut, true);
-  await new Promise(r => setTimeout(r, 500));
-  assert.equal(pingCount(), before, 'no ping left running');
+  assert.equal(await settle('127.0.0.21'), 0, 'no ping left running');
 });
 
 test('stopping through the signal ends the tree', async () => {
-  const before = pingCount();
   const controller = new AbortController();
-  setTimeout(() => controller.abort(), 1500);
-  const r = await exec.run({ command: 'ping -n 60 127.0.0.1', cwd: root, signal: controller.signal });
+  setTimeout(() => controller.abort(), 2500);
+  const r = await exec.run({ command: 'ping -n 60 127.0.0.22', cwd: root, signal: controller.signal });
   assert.equal(r.stopped, true);
-  await new Promise(r => setTimeout(r, 500));
-  assert.equal(pingCount(), before);
+  assert.equal(await settle('127.0.0.22'), 0);
 });
 
 test('a finished command leaves nothing behind (processes it started end with it)', async () => {
-  const before = pingCount();
-  const r = await exec.run({ command: 'Start-Process -WindowStyle Hidden ping -ArgumentList "-n","60","127.0.0.1"; "started"', cwd: root });
+  const r = await exec.run({ command: 'Start-Process -WindowStyle Hidden ping -ArgumentList "-n","60","127.0.0.23"; "started"', cwd: root });
   assert.equal(r.code, 0); assert.match(r.output, /started/);
-  await new Promise(r => setTimeout(r, 500));
-  assert.equal(pingCount(), before);
+  assert.equal(await settle('127.0.0.23'), 0);
 });
 
 test('long output is cut to its first and last part', async () => {
