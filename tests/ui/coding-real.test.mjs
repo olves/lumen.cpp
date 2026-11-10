@@ -44,3 +44,36 @@ describe(`coding agent with a local model (${shell})`, { skip: model ? false : '
     assert.doesNotMatch(text, /hello\(/);
   });
 });
+
+// v1.1 with a real local model: Auto mode in a new workspace — make a folder, write a file, run a read-only command (no card),
+// and report back. What the model chose is printed; the disk is checked.
+describe(`v1.1 workspace agent with a local model (${shell})`, { skip: model ? false : 'no installed model' }, () => {
+  const data2 = path.join(runDir, 'data-v11'), docs = path.join(runDir, 'Belgeler');
+  let app2;
+  const ev2 = e => app2.cdp.evaluate(e);
+  before(async () => {
+    fs.mkdirSync(docs, { recursive: true });
+    prepareData(data2, model);
+    app2 = await launch({ shell, dataDir: data2, env: { LUMEN_TEST_DOCUMENTS: docs } });
+    await app2.cdp.waitFor('state.ready === true', 30000);
+    await ev2("window.lumen.workspaces('create', {name: 'Deneme'}).then(r => { wsState = {...r, loaded: true}; return window.lumen.workspaces('mode', {id: r.created.id, mode: 'auto'}).then(x => { wsState = {...x, loaded: true}; return newChatIn(x.list.find(w => w.name === 'Deneme')); }); }).then(() => 0)");
+    await app2.cdp.waitFor("state.chat.Project?.workspaceFolder === true", 10000);
+  });
+  after(async () => { await app2?.stop(); });
+
+  test('creates a folder and a file, runs a command, answers', async () => {
+    await ev2("window.__approver = setInterval(() => { const b = document.querySelector('.edit-card .edit-apply'); if (b && !b.disabled) b.click(); }, 300); 0");
+    await app2.cdp.type('#prompt', 'Create a folder named src. Then create the file src/hello.txt with the text merhaba. Then run the command Get-ChildItem src and tell me what it listed. Finish when done.');
+    await app2.cdp.click('#send');
+    await app2.cdp.waitFor("document.querySelectorAll('.message.assistant').length > 0 && state.busy === false", 900000);
+    await ev2('clearInterval(window.__approver); 0');
+    const root = path.join(docs, 'Lumen', 'Deneme');
+    const reply = await ev2("[...document.querySelectorAll('.message.assistant')].at(-1).textContent");
+    const audit = fs.readFileSync(path.join(data2, 'agent-audit.log'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    console.log('# reply:', reply.replace(/\s+/g, ' ').slice(0, 300));
+    console.log('# audit:', audit.map(a => `${a.tool}:${a.decision}`).join(' '));
+    assert.ok(fs.existsSync(path.join(root, 'src', 'hello.txt')), 'src/hello.txt exists');
+    assert.match(fs.readFileSync(path.join(root, 'src', 'hello.txt'), 'utf8'), /merhaba/);
+    assert.ok(audit.some(a => a.tool === 'run_command' && a.decision === 'auto'), 'a read-only command ran without asking in Auto');
+  });
+});
