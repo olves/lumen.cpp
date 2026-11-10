@@ -93,7 +93,7 @@ const asks = [
   ["[System.Diagnostics.Process]::Start('calc.exe')", 'method-call'], ['Get-ChildItem | ForEach-Object { $_.Delete() }', 'method-call'],
   ['git -c core.pager=calc.exe log', 'git-global-option'], ['git log --ext-diff', 'git-option'], ['git show --textconv HEAD:a', 'git-option'],
   ['git diff --output=out.patch', 'git-option'], ['git branch -D main', 'git-branch-change'], ['git checkout main', 'git-checkout'],
-  ['git push', 'git-push'], ['cmd /c del a.txt', 'not-listed'], ['Invoke-Item .\\x.lnk', 'not-listed'], ["& 'C:\\Windows\\System32\\calc.exe'", 'not-listed'],
+  ['git push', 'git-push'], ['cmd /c del a.txt', 'not-listed'], ['Invoke-Item .\\x.lnk', 'not-listed'], ["& 'C:\\Windows\\System32\\calc.exe'", 'path-command'],
   ['npm install', 'not-listed'], ['node script.js', 'not-listed'], ['function Get-ChildItem { Remove-Item x }; Get-ChildItem', 'defines-function'],
   ['Get-Content $path', 'dynamic-argument'], ['Get-ChildItem -Path $env:USERPROFILE', 'dynamic-argument'], ['Start-Process notepad', 'not-listed'],
   ['Get-Content a.txt | Out-File b.txt', 'not-listed'], ['Get-Content a.txt | Set-Content b.txt', 'not-listed'], ['Get-Help Get-Item -Online', 'param-online'],
@@ -113,4 +113,33 @@ test('outside paths are flagged even for commands that ask anyway', async () => 
   assert.equal((await exec.classify('Remove-Item C:\\Windows\\x', root)).outside, true);
   assert.equal((await exec.classify('Get-Content .\\a.txt', root)).outside, false);
   assert.equal((await exec.classify('Copy-Item a.txt ..\\b.txt', root)).outside, true);
+});
+
+// Review findings (DeepSeek v4-pro, 11 Nov 2026), each checked by hand and fixed.
+test('review: a bare "version" argument is not a version flag', async () => {
+  for (const command of ['node version', 'npx version', 'python version']) assert.equal((await exec.classify(command, root)).harmless, false, command);
+  assert.equal((await exec.classify('go version', root)).harmless, true);
+});
+test('review: a command given by path is never matched by its base name', async () => {
+  for (const command of [String.raw`C:\Users\Public\evil\node.exe --version`, String.raw`.\git.exe status`, String.raw`Microsoft.PowerShell.Management\Remove-Item x`]) {
+    const r = await exec.classify(command, root); assert.equal(r.harmless, false, command); assert.ok(r.reasons.includes('path-command'), command);
+  }
+  assert.equal((await exec.classify(String.raw`C:\Users\Public\evil\node.exe --version`, root)).outside, true);
+});
+test('review: ~ is the home folder, not a folder inside the workspace', async () => {
+  for (const command of [String.raw`Get-Content ~\AppData\Roaming\secret.txt`, 'Get-ChildItem ~']) { const r = await exec.classify(command, root); assert.equal(r.outside, true, command); assert.equal(r.harmless, false, command); }
+});
+test('review: a junction inside the folder that points outside is outside', async () => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-junction-target-'));
+  fs.writeFileSync(path.join(target, 'secret.txt'), 's');
+  fs.symlinkSync(target, path.join(root, 'j'), 'junction');
+  const r = await exec.classify(String.raw`Get-Content .\j\secret.txt`, root);
+  assert.equal(r.outside, true); assert.equal(r.harmless, false);
+});
+test('review: credentials are removed by name and by value', () => {
+  const out = cleanEnv({ AZURE_STORAGE_CONNECTION_STRING: 'DefaultEndpointsProtocol=https;AccountKey=abc', DATABASE_URL: 'postgres://u:p@h/db', GH_PAT: 'x', SOMETHING: 'https://user:pw@host/x', PATH: String.raw`C:\Windows`, PATHEXT: '.EXE', HOME_URL: 'https://example.com' });
+  assert.deepEqual(Object.keys(out).sort(), ['HOME_URL', 'PATH', 'PATHEXT']);
+});
+test('list arguments of plain words are constants (Select-Object -Property Name,Length)', async () => {
+  assert.equal((await exec.classify('Get-ChildItem | Select-Object -Property Name,Length', root)).harmless, true);
 });

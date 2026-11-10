@@ -8,6 +8,8 @@
 // This is a convenience filter, not a sandbox (the user was told so): whatever it cannot prove read-only asks. The bypass list
 // in tests/core/execpolicy.test.mjs started from a DeepSeek draft (11 Nov 2026) and was checked by hand.
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 
 const ALIASES = {
   gci: 'get-childitem', ls: 'get-childitem', dir: 'get-childitem', cat: 'get-content', type: 'get-content', gc: 'get-content',
@@ -29,7 +31,8 @@ const BLOCK_OK = new Set(['foreach-object', 'where-object', 'select-object', 'so
 const PARAMS_FORBIDDEN = { 'get-content': ['stream', 'wait', 'tail'], 'select-string': [], 'get-childitem': [], 'get-help': ['online', 'showwindow'], 'get-command': [] };
 const EXES = new Set(['where', 'whoami', 'hostname', 'tree', 'findstr']);
 const VERSION_ONLY = new Set(['node', 'npm', 'npx', 'python', 'python3', 'py', 'pip', 'pip3', 'dotnet', 'cargo', 'rustc', 'go', 'java', 'javac', 'ruby', 'php', 'gcc', 'clang', 'cmake', 'ninja', 'yarn', 'pnpm', 'deno', 'bun', 'git', 'tsc', 'rg']);
-const VERSION_ARGS = new Set(['--version', '-v', '-V', 'version', '-version']);
+// Flags only: a bare word ("node version") would run a script of that name. `go version` is a subcommand, allowed by name.
+const VERSION_ARGS = new Set(['--version', '-v', '-V', '-version']);
 const GIT_READ = new Set(['status', 'log', 'show', 'diff', 'branch', 'tag', 'remote', 'rev-parse', 'ls-files', 'ls-tree', 'describe', 'merge-base', 'show-ref', 'rev-list', 'shortlog', 'blame', 'grep']);
 const GIT_FORBID = /^(-c|-C|--config-env|--exec-path|--paginate|-p|--output|--ext-diff|--textconv|--use-textconv|--open-files-in-pager|-O|--no-index|--filters|--remerge-diff|--git-dir|--work-tree)(=|$)/;
 // branch/tag/remote change state with any argument except these listing flags.
@@ -37,19 +40,27 @@ const GIT_LIST_ONLY = { branch: /^(-a|--all|-r|--remotes|-v|-vv|--list|--show-cu
 
 const lower = s => String(s || '').toLowerCase();
 const exeName = name => lower(path.basename(String(name || '').replace(/\\/g, '/'))).replace(/\.(exe|cmd|bat|com)$/, '');
-const looksLikePath = v => /^[a-z]:[\\/]?|^\\\\|^\/\/|^\.\.?([\\/]|$)|[\\/]/i.test(v);
+const looksLikePath = v => /^[a-z]:[\\/]?|^\\\\|^\/\/|^\.\.?([\\/]|$)|^~|[\\/]/i.test(v);
 const providerPath = v => /^[a-z][a-z0-9]+::?/i.test(v) && !/^[a-z]:[\\/]?/i.test(v) || /^(env|hklm|hkcu|cert|variable|function|alias|wsman|registry)::?/i.test(v);
 
+// Inside the folder after PowerShell's "~" (home) and after following junctions and symbolic links of the part that exists
+// (review 11 Nov: a junction in the folder pointing out, or ~\AppData, looked inside).
+function real(p) {
+  let probe = p;
+  while (!fs.existsSync(probe)) { const up = path.dirname(probe); if (up === probe) return p; probe = up; }
+  try { return path.join(fs.realpathSync.native(probe), path.relative(probe, p)); } catch { return p; }
+}
 function insideRoot(value, root) {
   if (!root) return true;
-  const text = String(value).replace(/[*?]+.*$/, '') || '.';
+  let text = String(value).replace(/[*?]+.*$/, '') || '.';
   if (/^\\\\|^\/\//.test(text)) return false;
-  const full = path.resolve(root, text), a = full.toLowerCase(), b = path.resolve(root).toLowerCase();
+  if (/^~([\\/]|$)/.test(text)) text = path.join(os.homedir(), text.slice(1));
+  const full = real(path.resolve(root, text)), a = full.toLowerCase(), b = real(path.resolve(root)).toLowerCase();
   return a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
 }
 
 // Numbers and lists of plain words (-First 3, -Property Name,Length) are constants too.
-const constant = a => a.k === 'x' && (a.type === 'ConstantExpressionAst' || a.type === 'ArrayLiteralAst' && /^[w .,'"-]*$/.test(a.v));
+const constant = a => a.k === 'x' && (a.type === 'ConstantExpressionAst' || a.type === 'ArrayLiteralAst' && /^[\w .,'"-]*$/.test(a.v));
 
 function classify(parsed, { root } = {}) {
   const reasons = [];
@@ -68,6 +79,8 @@ function classify(parsed, { root } = {}) {
     }
     if (c.dynamic || !c.name) { reasons.push('dynamic-command'); continue; }
     if (c.op === '.') { reasons.push('dot-source'); continue; }
+    // A command given by path (C:\x\node.exe, .\git.exe, Module\Cmdlet) is never matched by its base name.
+    if (/[\\/:]/.test(c.name)) { if (looksLikePath(c.name) && !insideRoot(c.name, root)) outside = true; reasons.push('path-command'); continue; }
     const name = lower(c.name), cmdlet = ALIASES[name] || name;
     if (CMDLETS.has(cmdlet)) {
       for (const a of c.args || []) {
@@ -85,7 +98,7 @@ function classify(parsed, { root } = {}) {
     const strings = (c.args || []).map(a => a.k === 's' ? a.v : a.k === 'p' ? '-' + a.v : constant(a) ? a.v : null);
     if (strings.includes(null)) { reasons.push('dynamic-argument'); continue; }
     if (EXES.has(exe)) continue;
-    if (VERSION_ONLY.has(exe) && strings.length === 1 && VERSION_ARGS.has(strings[0])) continue;
+    if (VERSION_ONLY.has(exe) && strings.length === 1 && (VERSION_ARGS.has(strings[0]) || exe === 'go' && strings[0] === 'version')) continue;
     if (exe === 'git') { const why = gitReason(strings); if (why) reasons.push(why); continue; }
     reasons.push('not-listed:' + (ALIASES[name] || name));
   }

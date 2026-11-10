@@ -11,13 +11,15 @@ const crypto = require('node:crypto');
 const readline = require('node:readline');
 const { classify: classifyParsed } = require('./execpolicy.cjs');
 
-const SECRET = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD_|CREDENTIAL|AUTH|COOKIE|SESSION)/i;
+const SECRET = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD_|CREDENTIAL|AUTH|COOKIE|SESSION|CONNECTION_?STR|CONN_?STR|DSN|SIGNING|PRIVATE|CERT|(^|_)PAT($|_)|(DATABASE|DB|REDIS|MONGO\w*|POSTGRES\w*|PG|MYSQL\w*|AMQP|RABBIT\w*|SENTRY|WEBHOOK)_UR[LI])/i;
+// Values that carry credentials whatever the name: URLs with user:password@, connection strings with a key or password.
+const SECRET_VALUE = /:\/\/[^\s:@\/]+:[^\s@\/]+@|(AccountKey|SharedAccessKey|Password|Pwd)\s*=/i;
 const INTERNAL = /^(ELECTRON_|LUMEN_|NODE_OPTIONS$|NODE_TEST|CHROME_|GOOGLE_API)/i;
 const KEEP_HEAD = 4000, KEEP_TAIL = 12000, MAX_LINES = 20000, MAX_JOBS = 5, JOB_BUFFER = 200000;
 
 function cleanEnv(env = process.env) {
   const out = {};
-  for (const [k, v] of Object.entries(env)) if (typeof v === 'string' && !SECRET.test(k) && !INTERNAL.test(k)) out[k] = v;
+  for (const [k, v] of Object.entries(env)) if (typeof v === 'string' && !SECRET.test(k) && !INTERNAL.test(k) && !SECRET_VALUE.test(v)) out[k] = v;
   return out;
 }
 // First KEEP_HEAD and last KEEP_TAIL characters, with a note of what was left out.
