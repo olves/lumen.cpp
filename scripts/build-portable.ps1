@@ -8,7 +8,7 @@
 #   2. Copies app/ to resources/app.
 #   3. Downloads the official llama.cpp b11438 CPU and Vulkan builds from github.com/ggml-org/llama.cpp, checks their size and
 #      SHA-256, and puts them in resources/app/backend/engines (Lumen unpacks them on first use).
-#   4. Compiles lumen-host.exe, lumen-image-ocr.exe and lumen-updater.exe with the .NET Framework 4.8 compiler that ships with
+#   4. Compiles lumen-host.exe, lumen-image-ocr.exe, lumen-exec.exe and lumen-updater.exe with the .NET Framework 4.8 compiler that ships with
 #      Windows.
 # Everything in the folder is built from this repository or downloaded from the official, pinned upstream releases.
 #   5. Writes app/lumen.ico into lumen.cpp.exe as its icon (scripts/SetIcon.cs, compiled the same way; not shipped), so
@@ -72,6 +72,10 @@ try {
   $wm = Join-Path $env:WINDIR 'System32\WinMetadata'
   & $csc /nologo /target:exe /out:lumen-image-ocr.exe "/r:$wm\Windows.Foundation.winmd" "/r:$wm\Windows.Storage.winmd" "/r:$wm\Windows.Graphics.winmd" "/r:$wm\Windows.Media.winmd" "/r:$wm\Windows.Globalization.winmd" "/r:$fw\System.Runtime.WindowsRuntime.dll" "/r:$fw\System.Web.Extensions.dll" /r:System.Runtime.dll /r:System.Threading.Tasks.dll ImageOcr.cs
   if ($LASTEXITCODE) { throw 'lumen-image-ocr.exe did not compile.' }
+  # v1.1: the agent's command runner (Job Object + PowerShell's own parser for Auto mode).
+  $sma = Join-Path $env:WINDIR 'Microsoft.NETassemblyGAC_MSILSystem.Management.Automation4.0_3.0.0.0__31bf3856ad364e35System.Management.Automation.dll'
+  & $csc /nologo /target:exe /out:lumen-exec.exe /r:System.Web.Extensions.dll "/r:$sma" LumenExec.cs
+  if ($LASTEXITCODE) { throw 'lumen-exec.exe did not compile.' }
   & $csc /nologo /target:winexe /out:lumen-updater.exe /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:System.Windows.Forms.dll LumenUpdater.cs
   if ($LASTEXITCODE) { throw 'lumen-updater.exe did not compile.' }
 } finally { Pop-Location }
