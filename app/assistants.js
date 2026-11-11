@@ -65,7 +65,7 @@ async function startAssistant(a){
   $('prompt').focus();
  }catch(e){toast(cleanError(e));}
 }
-function fresh_prompt(){return "You are a helpful assistant. Respond in the user's language. Be clear and accurate.";}
+function fresh_prompt(){return "You are Lumen, a helpful assistant. Respond in the user's language. Be clear and accurate.";}
 const assistantsRenderChips=renderToolChips;renderToolChips=function(){
  assistantsRenderChips();const a=state.chat?.Assistant;if(!a)return;
  const box=$('tool-chips');box.hidden=false;const chip=el('div','skill-chip tool-chip assistant-chip'),open=el('button','project-chip-open');open.type='button';

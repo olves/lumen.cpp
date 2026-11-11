@@ -19,7 +19,7 @@ const t=key=>(translations[key]||[key,key])[state.prefs.language==='tr'?1:0];con
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;}
 // Models that can answer in a chat (image-generation models are listed in the Library but not offered here).
 const chatModels=()=>state.models.filter(m=>!m.Image),modelImage=name=>!!state.models.find(m=>m.Name===name)?.Image;
-function fresh(model){return {Id:crypto.randomUUID().replaceAll('-',''),Title:t('newChat'),Model:model||chatModels()[0]?.Name||'Qwen2.5 1.5B',SystemPrompt:"You are a helpful assistant. Respond in the user's language. Be clear and accurate.",Updated:new Date().toISOString(),Messages:[]};}
+function fresh(model){return {Id:crypto.randomUUID().replaceAll('-',''),Title:t('newChat'),Model:model||chatModels()[0]?.Name||'Qwen2.5 1.5B',SystemPrompt:"You are Lumen, a helpful assistant. Respond in the user's language. Be clear and accurate.",Updated:new Date().toISOString(),Messages:[]};}
 let toastTimer;function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,5000);}
 // Preference changes other than the language (theme, text size, motion, context) only need cheap updates; the conversation,
 // history and model lists are re-rendered only when the interface language actually changes.
