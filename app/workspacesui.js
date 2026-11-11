@@ -241,3 +241,12 @@ const wsPaintPlugins=paintPlugins;paintPlugins=function(){
  card('instructions',{toggle:true});card('web',{open:()=>openSettings('search')});
  box.append(grid);panel.querySelector('.settings-heading')?.after(box);
 };
+
+// v1.2: the end of each command's output is kept with the reply (activity record, coder.cjs op.output) and shown under it, folded.
+Object.assign(translations,{cmdSavedOutput:['Output of {command}','{command} çıktısı']});
+const wsMessageNode=messageNode;messageNode=function(m,index,stream=false){
+ const result=wsMessageNode(m,index,stream);if(stream||m.Role!=='assistant')return result;
+ const runs=(m.Activity?.tasks||[]).flatMap(t=>t.ops||[]).filter(o=>o.kind==='p-run'&&o.output);
+ for(const o of runs){const box=el('details','cmd-log saved'+(o.status==='failed'?' failed':''));const sum=el('summary');sum.append(el('code','',short(o.label,140)),el('small','cmd-status',o.detail||''));box.append(sum,el('pre','cmd-out',o.output));result.node.querySelector('.message-body')?.after(box);}
+ return result;
+};

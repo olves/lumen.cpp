@@ -79,6 +79,9 @@ describe(`workspaces and modes (${shell})`, () => {
     // The live log belongs to the running reply; afterwards the reply's activity keeps the command and its exit code.
     const activity = await ev(`${LAST}.textContent`);
     assert.match(activity, /Ran Write-Output/); assert.match(activity, /exit 0/);
+    // v1.2: the command's output stays with the reply, also after a re-render.
+    await ev('renderMessages(); 0');
+    assert.match(await ev(`${LAST}.querySelector('.cmd-log.saved .cmd-out')?.textContent || ''`), /merhaba dünya/);
   });
 
   test('the mode menu switches to Auto; a harmless command runs without a card, a risky one asks', async () => {
@@ -92,7 +95,7 @@ describe(`workspaces and modes (${shell})`, () => {
     const before = await send('List and clean');
     await app.cdp.waitFor("document.querySelector('.edit-card .edit-apply')?.textContent === 'Run'", 30000);
     assert.match(await ev("document.querySelector('.edit-card .cmd-text').textContent"), /Remove-Item/);
-    assert.match(await ev("document.querySelector('.cmd-log').textContent"), /ran without asking/);
+    assert.match(await ev("[...document.querySelectorAll('.cmd-log:not(.saved)')].at(-1).textContent"), /ran without asking/);
     await ev("document.querySelector('.edit-card .edit-skip').click(); 0");
     await settled(before);
     assert.ok(fs.existsSync(path.join(docs, 'Lumen', 'Site', 'src')), 'skipped command did not run');

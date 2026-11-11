@@ -331,7 +331,9 @@ function createCoder({ cloud, engine, store, checkpointsDir, exec = null, audit 
       const r = await exec.run({ command, cwd: info.root, timeoutMs: (Number(c.args.timeout_seconds) || 120) * 1000, signal, onLine: (stream, line) => { if (pending.length < 400) pending.push({ s: stream, d: line.slice(0, 2000) }); timer ??= setTimeout(flush, 250); } });
       clearTimeout(timer); flush();
       const status = r.stopped ? 'stopped by the user' : r.timedOut ? 'timed out and was stopped' : r.error ? r.error : 'exit code ' + r.code;
-      op.status = r.code === 0 && !r.timedOut && !r.stopped ? 'done' : 'failed'; op.detail = r.timedOut ? 'timeout' : 'exit ' + r.code; send({ type: 'task', task: publicTask() });
+      op.status = r.code === 0 && !r.timedOut && !r.stopped ? 'done' : 'failed'; op.detail = r.timedOut ? 'timeout' : 'exit ' + r.code;
+      // v1.2: the end of the output stays with the reply (activity record), so it can be read after the task.
+      op.output = String(r.output || '').slice(-4000); send({ type: 'task', task: publicTask() });
       send({ type: 'edit-done', callId: c.id, decision: 'ran', code: r.code, timedOut: r.timedOut });
       auditOf(c.name, command, how, { code: r.code, timedOut: r.timedOut });
       return { error: op.status === 'failed', text: `${status}${r.truncated ? ' (output cut)' : ''}:\n${r.output || '(no output)'}` };

@@ -288,3 +288,16 @@ test('changes through a writer for another root are undone by the workspace writ
   assert.equal(r.restored.length, 2);
   assert.equal(fs.readFileSync(path.join(elsewhere, 'o.txt'), 'utf8'), 'o\n'); assert.equal(p.read('in.txt'), 'i');
 });
+
+test('v1.2: undo of a new file also removes the folders it needed, unless something else is in them', async () => {
+  const p = project({ 'keep.txt': 'k' });
+  await p.w.apply(await p.w.previewCreate('a/b/new.txt', 'x'), 't1');
+  assert.ok(fs.existsSync(path.join(p.root, 'a/b/new.txt')));
+  await p.w.undo('t1');
+  assert.equal(fs.existsSync(path.join(p.root, 'a')), false, 'a/ and a/b/ removed');
+  await p.w.apply(await p.w.previewCreate('c/d/new.txt', 'x'), 't2');
+  fs.writeFileSync(path.join(p.root, 'c/user.txt'), 'mine');
+  await p.w.undo('t2');
+  assert.equal(fs.existsSync(path.join(p.root, 'c/d')), false);
+  assert.ok(fs.existsSync(path.join(p.root, 'c/user.txt')), 'a folder with other files stays');
+});

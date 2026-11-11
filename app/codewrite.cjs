@@ -160,6 +160,8 @@ function createProjectWriter({ root, checkpointsDir, allowSensitive = [], maxCre
     if (!entry) {
       entry = { path: rel, kind: change.kind, orig: null, sha256After: null, root: rootReal };
       if (change.kind === 'edit') { entry.orig = 'orig-' + m.files.length; fs.mkdirSync(taskDir(taskId), { recursive: true }); fs.copyFileSync(full, path.join(taskDir(taskId), entry.orig)); }
+      // v1.2: folders a new file needs are created by the write; they are recorded so undo removes them again (when empty).
+      if (change.kind === 'create') { const dirs = []; let probe = path.dirname(full); while (!fs.existsSync(probe)) { dirs.unshift(path.relative(rootReal, probe).split(path.sep).join('/')); probe = path.dirname(probe); } if (dirs.length) entry.createdDirs = dirs; }
       m.files.push(entry);
     }
     const data = Buffer.from(change.after, 'utf8');
@@ -236,7 +238,11 @@ function createProjectWriter({ root, checkpointsDir, allowSensitive = [], maxCre
     }
     const current = fs.existsSync(full) ? sha256(fs.readFileSync(full)) : null;
     if (current !== entry.sha256After) return current ? 'changed' : 'missing';
-    if (entry.kind === 'create') { fs.unlinkSync(full); return 'removed'; }
+    if (entry.kind === 'create') {
+      fs.unlinkSync(full);
+      for (const rel of [...(entry.createdDirs || [])].reverse()) { try { fs.rmdirSync(path.join(rootReal, rel)); } catch {} }
+      return 'removed';
+    }
     writeAtomic(full, fs.readFileSync(path.join(taskDir(taskId), entry.orig))); return 'restored';
   }
 
