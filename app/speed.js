@@ -6,7 +6,8 @@ Object.assign(translations,{
  gpuMemory:['GPU memory','GPU belleği'],gpuMemoryHint:['Auto fits as much of the model as the GPU can hold and keeps the rest in RAM, including the experts of large MoE models. All on GPU fails over to the CPU when the model does not fit.','Otomatik, modelin GPU’ya sığan kısmını GPU’ya, kalanını RAM’e koyar; büyük MoE modellerinin uzmanları dahil. Hepsi GPU’da seçeneği model sığmazsa CPU’ya düşer.'],
  gpuAuto:['Auto','Otomatik'],gpuAll:['All on GPU','Hepsi GPU’da'],gpuCpu:['CPU only','Yalnızca CPU'],
  fastGeneration:['Faster generation','Hızlı üretim'],fastGenerationHint:['Guesses upcoming text from the conversation and checks several tokens in one step. Answers stay the same. Most useful when the model repeats code or text you gave it.','Gelecek metni sohbetten tahmin eder ve birkaç token’ı tek adımda doğrular. Yanıtlar değişmez. En çok, model verdiğin kodu veya metni tekrar yazarken işe yarar.'],
- compactContext:['Compact context memory','Sıkıştırılmış context belleği'],compactContextHint:['Keeps the context in 8-bit instead of 16-bit: about half the memory, so longer contexts or larger models fit. The quality change is usually very small.','Context’i 16 yerine 8 bit tutar: yaklaşık yarı bellek, böylece daha uzun context veya daha büyük model sığar. Kalite farkı genellikle çok küçüktür.'],
+ compactContext:['Compact context memory','Sıkıştırılmış context belleği'],compactContextHint:['Stores the context in fewer bits so longer contexts or larger models fit. 8-bit: about half the memory, practically no change. Tighter: keys stay 8-bit, values 4-bit, about 40% of the memory; measured near lossless on Qwen2.5 and Qwen3; slightly slower when everything already fits.','Context’i daha az bitle tutar; böylece daha uzun context veya daha büyük model sığar. 8 bit: yaklaşık yarı bellek, pratikte fark yok. Daha sıkı: anahtarlar 8, değerler 4 bit, belleğin yaklaşık %40’ı; Qwen2.5 ve Qwen3’te neredeyse kayıpsız ölçüldü; her şey zaten sığıyorsa biraz daha yavaştır.'],
+ kvOff:['Off (16-bit)','Kapalı (16 bit)'],kvCompact:['8-bit','8 bit'],kvTight:['Tighter (8 + 4-bit)','Daha sıkı (8 + 4 bit)'],
  idleUnload:['Free memory when idle','Boştayken belleği boşalt'],idleUnloadHint:['Unloads the chat model from RAM and VRAM after it has not been used for this long. The next message loads it again, which takes a few seconds.','Sohbet modeli bu süre boyunca kullanılmazsa RAM ve VRAM’den çıkarılır. Sonraki mesaj modeli yeniden yükler; bu birkaç saniye sürer.'],idleNever:['Never','Hiçbir zaman'],idle5:['5 min','5 dk'],idle15:['15 min','15 dk'],idle30:['30 min','30 dk'],idle60:['1 hour','1 saat'],
  performanceNote:['Changes apply when the model next loads. Some models also offer a small draft model for faster replies: open the model in Library.','Değişiklikler model bir sonraki yüklenişinde uygulanır. Bazı modellerin hızlı yanıt için küçük bir taslak modeli de vardır: modeli Library’de aç.'],
  performanceNoHost:['These settings need the engine host (backend/lumen-host.exe). The engine currently uses its defaults.','Bu ayarlar motor host’unu (backend/lumen-host.exe) gerektirir. Motor şu an varsayılanlarını kullanıyor.'],
@@ -20,14 +21,14 @@ Object.assign(translations,{
 });
 segmentedIds.push('gpu-layers','idle-unload');
 function paintPerformance(){
- const p=state.prefs;$('gpu-layers').value=['auto','gpu','cpu'].includes(p.gpuLayers)?p.gpuLayers:'auto';$('speculative').checked=p.speculative!==false;$('kv-cache').checked=p.kvCache==='q8_0';
+ const p=state.prefs;$('gpu-layers').value=['auto','gpu','cpu'].includes(p.gpuLayers)?p.gpuLayers:'auto';$('speculative').checked=p.speculative!==false;$('kv-cache').value=['q8_0','k8v4'].includes(p.kvCache)?p.kvCache:'f16';
  $('idle-unload').value=String([0,5,15,30,60].includes(Number(p.idleUnload))?Number(p.idleUnload):0);
  const noHost=toolsConfig&&!toolsConfig.hostReady;for(const id of ['gpu-layers','speculative','kv-cache'])$(id).disabled=!!noHost;
  $('performance-note').textContent=t(noHost?'performanceNoHost':'performanceNote');
  const wide=document.querySelector('#context-size option[value="32768"]');if(wide){wide.disabled=!!noHost;wide.title=noHost?t('contextNeedsHost'):'';}
 }
 async function savePerformance(){
- try{state.prefs=await api.preferences({...state.prefs,gpuLayers:$('gpu-layers').value,speculative:$('speculative').checked,kvCache:$('kv-cache').checked?'q8_0':'f16'});}catch(e){toast(cleanError(e));}
+ try{state.prefs=await api.preferences({...state.prefs,gpuLayers:$('gpu-layers').value,speculative:$('speculative').checked,kvCache:$('kv-cache').value});}catch(e){toast(cleanError(e));}
  paintPerformance();syncSegmented();
 }
 for(const id of ['gpu-layers','speculative','kv-cache'])$(id).onchange=savePerformance;

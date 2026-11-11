@@ -142,13 +142,13 @@ static class LumenHost {
  }
 
  // Engine settings chosen in Lumen. gpu: "auto" lets llama.cpp fit layers (and MoE experts) to free GPU memory, "gpu" puts every
- // layer on the GPU (the bridge's -ngl 99), "cpu" uses the CPU engine. kv: "q8_0" halves context memory. speculative: n-gram
+ // layer on the GPU (the bridge's -ngl 99), "cpu" uses the CPU engine. kv: "q8_0" halves context memory, "k8v4" (K 8-bit, V 4-bit) keeps about 40 %. speculative: n-gram
  // drafting from the conversation itself, plus the model's MTP draft file when one is installed.
  class EngineOptions{public string Gpu="auto";public string Kv="f16";public bool Speculative;}
  static EngineOptions Options(Dictionary<string,object> a){
   var e=a.ContainsKey("engine")?a["engine"] as Dictionary<string,object>:null;if(e==null)return null;var o=new EngineOptions();
   string gpu=Str(e,"gpu");if(gpu=="auto"||gpu=="gpu"||gpu=="cpu")o.Gpu=gpu;else if(gpu!="")throw new Exception("Invalid engine options.");
-  string kv=Str(e,"kv");if(kv=="q8_0"||kv=="f16")o.Kv=kv;else if(kv!="")throw new Exception("Invalid engine options.");
+  string kv=Str(e,"kv");if(kv=="q8_0"||kv=="f16"||kv=="k8v4")o.Kv=kv;else if(kv!="")throw new Exception("Invalid engine options.");
   o.Speculative=Bool(e,"speculative");return o;
  }
  // What the current server was started with. The bridge only knows the model and context; the rest is tracked here.
@@ -235,6 +235,8 @@ static class LumenHost {
   // places layers and MoE experts by free memory, keeping a 1 GiB margin.
   if(backend=="cpu")args.Append(" -ngl 0");else if(options.Gpu=="gpu")args.Append(" -ngl 99");
   if(!plain&&options.Kv=="q8_0")args.Append(" -ctk q8_0 -ctv q8_0");
+  // "k8v4": keys stay 8-bit (Qwen2.5 breaks with 4-5 bit keys), values 4-bit; a quantized V cache needs flash attention (auto).
+  if(!plain&&options.Kv=="k8v4")args.Append(" -ctk q8_0 -ctv q4_0");
   if(!plain&&options.Speculative){args.Append(" --spec-type ").Append(string.IsNullOrEmpty(draft)?"ngram-simple":"draft-mtp,ngram-simple");if(!string.IsNullOrEmpty(draft))args.Append(" -md \"").Append(draft).Append('"');}
   args.Append(" --no-webui --jinja --parallel 1 -lv 4");
   return args.ToString();

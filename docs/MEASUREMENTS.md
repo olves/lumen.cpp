@@ -488,3 +488,25 @@ The first run's bug-fix check looked for one way of writing the fix and wrongly 
 (`cents - Math.round(cents * percent / 100)`) as failed; the check now tests behavior. These tasks are far smaller than the
 30-task agentic benchmark the user's friend shared, so per-task dollar figures are not comparable; what carries over is the
 86 % cache share and the small output (edits as search/replace).
+
+## Context memory: 8-bit and "tighter" (K 8-bit, V 4-bit) — 11 November 2026
+
+RTX 5060 Laptop (8 GB), official llama.cpp b12192 CUDA 13 (b11438 checked on CUDA 13, Vulkan and CPU: all start and answer the same).
+Quality is KL divergence against an f16 cache (`llama-perplexity`, 4 × 8192 tokens of Lumen's docs and code); lower is better.
+Speed and GPU layers at a 64K context with Lumen's automatic placement. Wallpaper Engine was running, so absolute tok/s are noisy;
+the comparison ran under the same conditions. Scripts and raw results: `work/kv-q4/`.
+
+| K / V | Coder 7B KLD | Coder 7B 64K | Qwen3 8B KLD | Qwen3 8B 64K |
+|---|---|---|---|---|
+| f16 / f16 | 0 | 28.8 tok/s, 21/29 layers | 0 | 13.7 tok/s, 15/37 |
+| q8_0 / q8_0 ("8-bit") | 0.0005 | 41.4 tok/s, 27/29 | 0.0007 | 15.1 tok/s, 21/37 |
+| **q8_0 / q4_0 ("Tighter")** | **0.002** | **58.5 tok/s, 29/29** | **0.003** | **17.6 tok/s, 24/37** |
+| q5_0 / q5_0 | 1.27 (broken) | — | 0.007 | 22.0 tok/s, 26/37 |
+| q4_0 / q4_0 | 5.14 (garbage text) | — | 0.035 | 23.5 tok/s, 28/37 |
+
+- Keys below 8 bit break Qwen2.5 (its keys have large outliers; the Hadamard rotation llama.cpp applies to quantized caches does not
+  save it), so Lumen never quantizes keys below 8 bit. Values at 4 bit were near lossless on both models.
+- When everything already fits, "Tighter" is about 10 % slower on the GPU (Coder 1.5B, 8K: 182 vs 202 tok/s); it pays off when memory
+  is short.
+- TurboQuant is not in official llama.cpp (ggml-org/llama.cpp#21089 was closed without merging on 2 June 2026); Lumen uses only
+  official builds.

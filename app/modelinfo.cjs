@@ -76,7 +76,8 @@ function thinkingOf(template){
 const GiB=1024**3;
 function kvBytes(shape,context,kv){
  if(!shape||!shape.layers||!shape.kvHeads||!shape.key)return null;
- const per=kv==='q8_0'?34/32:2,own=Math.max(1,shape.layers-shape.sharedLayers),swaLayers=shape.window?Math.round(own*shape.swaShare):0,full=own-swaLayers;
+ // Bytes per element: f16 2; q8_0 34/32; k8v4 (K q8_0 + V q4_0) the mean of 34/32 and 18/32.
+ const per=kv==='q8_0'?34/32:kv==='k8v4'?26/32:2,own=Math.max(1,shape.layers-shape.sharedLayers),swaLayers=shape.window?Math.round(own*shape.swaShare):0,full=own-swaLayers;
  const tokensSwa=shape.window?Math.min(context,shape.window):context;
  return per*shape.kvHeads*(full*context*(shape.key+shape.value)+swaLayers*tokensSwa*(shape.keySwa+shape.valueSwa));
 }

@@ -44,7 +44,7 @@ renderResults=function(){
   for(const [value,label] of cells){const cell=el('div');cell.append(el('strong','',value),el('span','',label));vals.append(cell);}
   row.append(vals);
   if(r.Protocol&&r.Protocol!=='legacy'){
-   row.append(el('p','quiet result-settings',tf('r_engine',{engine:String(r.Backend||'?').toUpperCase(),layers:r.GpuLayers,ctx:fmt(r.Context),kv:r.Kv,spec:t(r.Speculative?'r_on':'r_off'),draft:r.Draft?t('r_draft'):''})));
+   row.append(el('p','quiet result-settings',tf('r_engine',{engine:String(r.Backend||'?').toUpperCase(),layers:r.GpuLayers,ctx:fmt(r.Context),kv:r.Kv==='k8v4'?'q8_0/q4_0':r.Kv,spec:t(r.Speculative?'r_on':'r_off'),draft:r.Draft?t('r_draft'):''})));
    if(r.GpuWeightsMiB>0||r.CpuWeightsMiB>0)row.append(el('p','quiet result-settings',tf('r_weights',{gpu:modelSize(r.GpuWeightsMiB*1048576),cpu:modelSize(r.CpuWeightsMiB*1048576)})));
    if(r.DraftTokens>0)row.append(el('p','quiet result-settings',tf('r_drafted',{accepted:fmt(r.DraftAccepted),drafted:fmt(r.DraftTokens)})));
   }else row.append(el('p','quiet result-settings',t('r_legacy')));
