@@ -26,7 +26,10 @@ Object.assign(translations,{
 const lumenSend=send;send=async function(){
  if(state.busy||state.chat?.Project||(typeof imageMode!=='undefined'&&imageMode)||(typeof toolsMode!=='undefined'&&toolsMode)||document.querySelector('.web-card'))return lumenSend();
  const text=composeText();if(!text||!state.ready)return lumenSend();
- let route=null;try{route=await api.agent('route',{prompt:text,mode:typeof researchMode!=='undefined'&&researchMode?'research':'auto',model:$('model-picker').value});}catch{}
+ // Only what the user typed decides whether the message wants the web: text read from photos or attached files must not open the
+ // card (a photo's OCR text or a date in a file is not a request to search).
+ const typed=$('prompt').value.trim();if(!typed)return lumenSend();
+ let route=null;try{route=await api.agent('route',{prompt:typed,mode:typeof researchMode!=='undefined'&&researchMode?'research':'auto',model:$('model-picker').value});}catch{}
  if(!route||route.route==='agent'||!route.wants||!['cloud','web-off','auto-off'].includes(route.reason))return lumenSend();
  showWebCard(route.reason,text);
 };
@@ -51,3 +54,27 @@ function showWebCard(reason,text){
  actions.append(without,always,once);card.append(actions);$('messages').append(card);once.focus();
  $('chat-scroll').scrollTop=$('chat-scroll').scrollHeight;
 }
+
+// ---------- Photos and cloud models (ROADMAP-v1.2 §4C) ----------
+// A cloud model that can see photos gets them once the user agreed for that provider (prefs.cloudPhotos, checked again in the
+// core); one that cannot see gets only the text read from them, and says so. Local models keep vision.js's projector offer.
+Object.assign(translations,{
+ cloudPhotoSees:['{provider} can see these photos. They are sent to {provider} with your message.','{provider} bu fotoğrafları görebilir. Mesajınla birlikte {provider} sağlayıcısına gönderilirler.'],
+ cloudPhotoAsk:['This model can see photos. Sending them means the images go to {provider}.','Bu model fotoğrafları görebilir. Göndermek, görüntülerin {provider} sağlayıcısına gitmesi demek.'],
+ cloudPhotoMaybe:['{provider} may be able to see photos; if it cannot, Lumen sends only the text read from them and tells you.','{provider} fotoğrafları görebilir de göremeyebilir de; göremezse Lumen yalnızca okunan metni gönderir ve sana söyler.'],
+ cloudPhotoAllow:['Send photos to {provider}','Fotoğrafları {provider} sağlayıcısına gönder'],
+ cloudPhotoNo:['This cloud model cannot see photos: only the text read from them is sent.','Bu bulut modeli fotoğrafları göremez: yalnızca içlerinden okunan metin gönderilir.'],
+ cloudPhotoDropped:['{provider} did not accept the photos; only their text was sent.','{provider} fotoğrafları kabul etmedi; yalnızca metinleri gönderildi.'],
+});
+const lumenPaintVision=paintVisionOffer;paintVisionOffer=function(){
+ const model=state.models.find(m=>m.Name===visionModel()),cloud=model?.Cloud,hint=$('photo-mode-hint');
+ if(!cloud||hint.hidden)return lumenPaintVision();
+ const provider=cloud.label,allowed=(state.prefs.cloudPhotos||[]).includes(cloud.provider);visionOffer.replaceChildren();visionOffer.hidden=false;
+ if(cloud.sees==='no'){hint.textContent=t('cloudPhotoNo');visionOffer.hidden=true;return;}
+ if(allowed){hint.textContent=tf(cloud.sees==='yes'?'cloudPhotoSees':'cloudPhotoMaybe',{provider});visionOffer.hidden=true;return;}
+ hint.textContent=tf(cloud.sees==='yes'?'cloudPhotoAsk':'cloudPhotoMaybe',{provider});
+ const allow=el('button','text-button cloud-photo-allow',tf('cloudPhotoAllow',{provider}));allow.type='button';allow.disabled=state.busy;
+ allow.onclick=async()=>{try{state.prefs=await api.preferences({...state.prefs,cloudPhotos:[...(state.prefs.cloudPhotos||[]),cloud.provider]});paintVisionOffer();}catch(e){toast(cleanError(e));}};
+ visionOffer.append(allow);
+};
+api.onEvent(e=>{if(e?.type==='images-dropped')toast(tf('cloudPhotoDropped',{provider:e.data?.provider||''}));});

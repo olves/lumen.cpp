@@ -66,11 +66,18 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
       .filter(x => /^[A-Za-z0-9][A-Za-z0-9._:\/@+-]{0,127}$/.test(x)).sort().slice(0, 800);
   }
 
-  // messages: [{role, content}] (text only). Returns {content, reasoning, usage, finish}.
+  // messages: [{role, content, images?: [{mime, data (base64)}]}]. Returns {content, reasoning, usage, finish, imagesDropped}.
+  // Images (v1.2) go as OpenAI-style image_url parts with data URLs; a provider that refuses them gets the request again without
+  // images, and imagesDropped tells the caller.
   // tools (OpenAI function tools) make the reply carry toolCalls [{id, name, arguments (JSON text)}]; streamed calls arrive
   // in pieces keyed by index and are joined here. reasoningEffort goes to DeepSeek only (other providers reject it).
   async function chat({provider, model, messages, maxTokens = 1024, temperature, sampling = {}, signal, onChunk, onReasoning, tools, reasoningEffort}) {
     const {base, headers, label} = await target(provider);
+    const original = messages, hasImages = original.some(m => Array.isArray(m.images) && m.images.length);
+    const wire = withImages => original.map(({images, ...m}) => withImages && Array.isArray(images) && images.length
+      ? {...m, content: [{type: 'text', text: String(m.content ?? '')}, ...images.map(i => ({type: 'image_url', image_url: {url: `data:${i.mime || 'image/png'};base64,${i.data}`}}))]}
+      : m);
+    messages = wire(true);
     const full = {model, messages, stream: true, stream_options: {include_usage: true}};
     // OpenAI's newer models only take max_completion_tokens; the other providers use max_tokens.
     if (provider === 'openai') full.max_completion_tokens = maxTokens; else full.max_tokens = maxTokens;
@@ -83,13 +90,15 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
     // minimal body below on a 400.
     if (reasoningEffort) full.reasoning_effort = reasoningEffort;
     const minimal = {model, messages, stream: true, ...(provider === 'openai' ? {max_completion_tokens: maxTokens} : {max_tokens: maxTokens}), ...toolFields};
-    let response;
-    for (const body of [full, minimal]) {
+    const textOnly = hasImages ? {...minimal, messages: wire(false)} : null;
+    let response, imagesDropped = false;
+    for (const body of [full, minimal, textOnly].filter(Boolean)) {
       response = await fetchImpl(base + '/chat/completions', {method: 'POST', headers, body: JSON.stringify(body), redirect: 'error',
         signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(600000)])});
-      if (response.ok) break;
-      // A 400 often means a field this provider or model does not accept (temperature on reasoning models, stream_options…).
-      if (response.status === 400 && body === full) { await response.text().catch(() => ''); continue; }
+      if (response.ok) { imagesDropped = body === textOnly; break; }
+      // A 400 often means a field this provider or model does not accept (temperature on reasoning models, stream_options…),
+      // and with photos it can mean the model takes no images: the last try goes without them.
+      if (response.status === 400 && (body === full || (body === minimal && textOnly))) { await response.text().catch(() => ''); continue; }
       throw await errorFrom(response, label);
     }
     if (!response.ok) throw await errorFrom(response, label);
@@ -103,7 +112,7 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
       content = String(choice?.message?.content || ''); reasoning = String(choice?.message?.reasoning_content || choice?.message?.reasoning || '');
       if (reasoning) onReasoning?.(reasoning); if (content) onChunk?.(content);
       (choice?.message?.tool_calls || []).forEach((t, i) => addCall(i, t));
-      return {content, reasoning, usage: j?.usage || null, finish: choice?.finish_reason || null, toolCalls: toolCalls()};
+      return {content, reasoning, usage: j?.usage || null, finish: choice?.finish_reason || null, toolCalls: toolCalls(), imagesDropped};
     }
     await readEvents(response.body, data => {
       let j; try { j = JSON.parse(data); } catch { return; }
@@ -117,7 +126,7 @@ function createCloud({connections, version = 'beta', fetchImpl = fetch}) {
       if (Array.isArray(d.tool_calls)) for (const t of d.tool_calls) addCall(Number.isInteger(t.index) ? t.index : 0, t);
       if (choice.finish_reason) finish = choice.finish_reason;
     }, {signal});
-    return {content, reasoning, usage, finish, toolCalls: toolCalls()};
+    return {content, reasoning, usage, finish, toolCalls: toolCalls(), imagesDropped};
   }
   // Images from a provider: Gemini image models ("gemini-…-image") through Gemini's own generateContent; everything else
   // through the OpenAI-compatible /images/generations (gpt-image-1, dall-e-3, Imagen on Gemini's compatible endpoint…).

@@ -98,6 +98,8 @@ export async function cloudServer({ key = 'sk-mock-key-123', reply = 'Merhaba fr
       // Scripted turns for the coding agent: script(body, n) -> {content?, toolCalls?: [{name, args}], usage?}. Streams tool
       // calls in two pieces (name, then arguments) like real providers do.
       const turn = server.script(body, server.turns = (server.turns || 0) + 1) || { content: 'ok' };
+      // {status, error}: answer with an HTTP error (e.g. a model that refuses images).
+      if (turn.status) { res.writeHead(turn.status, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { message: turn.error || 'error' } })); }
       const usage = turn.usage || { prompt_tokens: 1200, completion_tokens: 40, prompt_cache_hit_tokens: server.turns > 1 ? 1000 : 0, prompt_cache_miss_tokens: server.turns > 1 ? 200 : 1200 };
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       (turn.toolCalls || []).forEach((c, index) => {

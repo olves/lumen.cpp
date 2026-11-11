@@ -41,7 +41,11 @@ describe(`Lumen tells the model what it can do (${shell})`, () => {
   });
 
   test('cloud model, web research off: the provider is told web is off and where to turn it on', async () => {
-    await send('Can you research re-library.org?');
+    // The message wants the web, so the v1.2 card comes first; "Answer without the web" sends it as a plain reply.
+    await app.cdp.type('#prompt', 'Can you research re-library.org?'); await app.cdp.click('#send');
+    await app.cdp.waitFor("!!document.querySelector('.web-card .web-without')", 10000);
+    await ev("document.querySelector('.web-card .web-without').click(); 0");
+    await app.cdp.waitFor("document.querySelectorAll('.message.assistant').length > 0 && state.busy === false", 60000);
     const sys = lastSystem();
     assert.match(sys, /You are Lumen \(lumen\.cpp\)/);
     assert.match(sys, /from Mock cloud \(cloud\)/);
