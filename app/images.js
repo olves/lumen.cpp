@@ -216,7 +216,7 @@ loadImages();
 // Picking an image model (local package or cloud image model) in the model menu turns image generation on: the message is the
 // prompt and the reply is the picture. Picking a chat model turns it off. The separate "Create image" row of the + menu is gone
 // (it stays in the DOM, hidden, for scripts that look for it); the chip under the message box keeps the options (shape, count, seed).
-const IMAGE_MODEL_NAME=/image|dall-?e|imagen|flux|stable-?diffusion|sdxl?|sd3|seedream|recraft|ideogram|kolors|hidream|qwen-image|z-image/i;
+const IMAGE_MODEL_NAME=/image|dall-?e|imagen|flux|stable-?diffusion|\bsdxl?\b|sd3|seedream|recraft|ideogram|kolors|hidream|qwen-image|z-image/i;
 Object.assign(translations,{imgPickFromList:['Choose from the provider’s list','Sağlayıcının listesinden seç'],imgPickCount:['{n} image models found — choose one','{n} görsel modeli bulundu — birini seç'],imgPickNoneFound:['No image model names found — all models','Görsel model adı bulunamadı — tüm modeller'],imgModelsGroup:['Image models','Görsel modelleri'],imgModelsSetup:['Set up image models…','Görsel modellerini ayarla…'],imgPickerTag:['image','görsel']});
 $('create-image')?.classList.add('menu-hidden');
 const imagesModelSelector=renderModelSelector;renderModelSelector=function(){
