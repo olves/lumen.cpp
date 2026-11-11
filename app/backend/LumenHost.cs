@@ -27,7 +27,7 @@ using Lumen;
 
 static class LumenHost {
  static readonly HttpClient http=new HttpClient{Timeout=Timeout.InfiniteTimeSpan};
- static readonly int[] contexts={2048,4096,8192,16384,32768};
+ static readonly int[] contexts={2048,4096,8192,16384,32768,65536};
  static readonly object gate=new object(),writeGate=new object();
  static CancellationTokenSource active;
  static readonly ChatSession session=new ChatSession();
@@ -144,12 +144,15 @@ static class LumenHost {
  // Engine settings chosen in Lumen. gpu: "auto" lets llama.cpp fit layers (and MoE experts) to free GPU memory, "gpu" puts every
  // layer on the GPU (the bridge's -ngl 99), "cpu" uses the CPU engine. kv: "q8_0" halves context memory, "k8v4" (K 8-bit, V 4-bit) keeps about 40 %. speculative: n-gram
  // drafting from the conversation itself, plus the model's MTP draft file when one is installed.
- class EngineOptions{public string Gpu="auto";public string Kv="f16";public bool Speculative;}
+ // train: the model's trained context window (GGUF context_length, from the core). A larger chosen context gets YaRN RoPE scaling;
+ // without it llama.cpp caps the context at the trained window (measured 11 Nov 2026 with Qwen3-8B: 40960 cap, needle found at 48K
+ // with scaling).
+ class EngineOptions{public string Gpu="auto";public string Kv="f16";public bool Speculative;public int Train;}
  static EngineOptions Options(Dictionary<string,object> a){
   var e=a.ContainsKey("engine")?a["engine"] as Dictionary<string,object>:null;if(e==null)return null;var o=new EngineOptions();
   string gpu=Str(e,"gpu");if(gpu=="auto"||gpu=="gpu"||gpu=="cpu")o.Gpu=gpu;else if(gpu!="")throw new Exception("Invalid engine options.");
   string kv=Str(e,"kv");if(kv=="q8_0"||kv=="f16"||kv=="k8v4")o.Kv=kv;else if(kv!="")throw new Exception("Invalid engine options.");
-  o.Speculative=Bool(e,"speculative");return o;
+  o.Speculative=Bool(e,"speculative");o.Train=Int(e,"train",0,0,16777216);return o;
  }
  // What the current server was started with. The bridge only knows the model and context; the rest is tracked here.
  static string loadedSignature,loadedProjector="",loadedDraft="";static EngineOptions loadedOptions;
@@ -231,6 +234,8 @@ static class LumenHost {
   var args=new StringBuilder();args.Append("-m \"").Append(model).Append('"');
   if(!string.IsNullOrEmpty(projector))args.Append(" --mmproj \"").Append(projector).Append('"');
   args.Append(" -c ").Append(context);
+  // Also in the plain retry: without scaling the server would silently cap the context at the trained window.
+  if(options.Train>=2048&&context>options.Train)args.Append(" --rope-scaling yarn --rope-scale ").Append(((double)context/options.Train).ToString("0.###",System.Globalization.CultureInfo.InvariantCulture)).Append(" --yarn-orig-ctx ").Append(options.Train);
   // CPU engine: no GPU layers. "gpu": every layer, as the bridge does. "auto": -ngl stays unset so llama.cpp's --fit (on by default)
   // places layers and MoE experts by free memory, keeping a 1 GiB margin.
   if(backend=="cpu")args.Append(" -ngl 0");else if(options.Gpu=="gpu")args.Append(" -ngl 99");
@@ -364,7 +369,7 @@ static class LumenHost {
 
  // A bounded completion used by the agent runtime. Schema-constrained steps never think (grammar and reasoning conflict).
  static async Task<object> Complete(string id,Dictionary<string,object> a,CancellationToken ct){
-  string model=Str(a,"model");int context=Int(a,"contextSize",4096,2048,32768);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
+  string model=Str(a,"model");int context=Int(a,"contextSize",4096,2048,65536);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
   int maxTokens=Int(a,"maxTokens",512,16,4096);double temperature=Num(a,"temperature",0.2,0,2);var sampling=Sampling(a);int timeout=Int(a,"timeoutMs",120000,1000,600000);bool stream=Bool(a,"stream");
   bool schema=a.ContainsKey("schema")&&a["schema"] is Dictionary<string,object>;bool thinking=Bool(a,"thinking")&&!schema;
   var rawMessages=a.ContainsKey("messages")?a["messages"] as IList:null;if(rawMessages==null||rawMessages.Count==0||rawMessages.Count>80)throw new Exception("Invalid messages.");
@@ -391,7 +396,7 @@ static class LumenHost {
  static async Task<object> Benchmark(string id,Dictionary<string,object> a,CancellationToken ct){
   string model=Str(a,"model"),profile=Str(a,"profile")=="current"?"current":"standard";
   var options=profile=="standard"?new EngineOptions{Gpu="gpu",Kv="f16",Speculative=false}:(Options(a)??new EngineOptions());
-  int context=profile=="standard"?2048:Int(a,"contextSize",4096,2048,32768);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
+  int context=profile=="standard"?2048:Int(a,"contextSize",4096,2048,65536);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
   string draft=profile=="standard"?"":(a.ContainsKey("draft")?Str(a,"draft"):"");
   session.Dispose();loadedSignature=null;
   var load=Stopwatch.StartNew();var server=await EnsureServer(id,model,context,ct,"",draft,options);load.Stop();
@@ -453,7 +458,7 @@ static class LumenHost {
  // (Interrupted when it did not finish).
  static async Task<object> ChatTurn(string id,Dictionary<string,object> a,CancellationToken ct){
   var chat=Chat(a);
-  int context=Int(a,"contextSize",4096,2048,32768);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
+  int context=Int(a,"contextSize",4096,2048,65536);if(!contexts.Contains(context))throw new Exception("Invalid context size.");
   bool thinking=Bool(a,"thinking");int reserve=Math.Min(Int(a,"maxTokens",512,128,8192),context/2);double temperature=Num(a,"temperature",0.7,0,2);var sampling=Sampling(a);
   // Selected skills (main limits them to 24,000 characters) and passages from attached documents (sized by main to the window):
   // added to the request's system message only; the saved chat keeps the user's own instructions.

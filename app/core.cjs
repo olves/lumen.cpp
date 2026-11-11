@@ -131,7 +131,7 @@ const {createProjectStore,createProjectTools}=require('./projects.cjs'),projectS
 const hubJson=async url=>{const response=await fetch(url,{signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('Hugging Face: '+response.status);return response.json();};
 const visionStore=require('./vision.cjs').createVisionStore(data,{fetchJson:hubJson}),draftStore=require('./drafts.cjs').createDraftStore(data,{fetchJson:hubJson});
 // Engine options for lumen-host's llama-server launcher (Settings → Runtime → Performance).
-const contextSizes=[2048,4096,8192,16384,32768];
+const contextSizes=[2048,4096,8192,16384,32768,65536];
 const appearanceModel=require('./appearance.js');
 const accentThemes=['warm','graphite','ocean','forest','plum','rose','teal','gold','custom'],hexColor=/^#[0-9a-f]{6}$/i;
 const modelInfo=require('./modelinfo.cjs').createModelInfo(data,{log:message=>{try{fs.appendFileSync(path.join(data,'desktop-engine.log'),message+'\n');}catch{}}});
@@ -162,6 +162,9 @@ function benchmarks(){try{const list=JSON.parse(fs.readFileSync(benchPath,'utf8'
 function saveBenchmark(result){const list=[result,...benchmarks()].slice(0,100);const temp=benchPath+'.tmp';fs.writeFileSync(temp,JSON.stringify(list));fs.renameSync(temp,benchPath);}
 const loadFailure=/Unable to start the local engine|took too long to load|stopped while loading|out of memory|failed to allocate/i;
 function engineOptions(p=prefs()){return {gpu:['auto','gpu','cpu'].includes(p.gpuLayers)?p.gpuLayers:'auto',kv:['q8_0','k8v4'].includes(p.kvCache)?p.kvCache:'f16',speculative:p.speculative!==false};}
+// The engine options for one model, with its trained context window (GGUF context_length) so the host can add YaRN scaling when the
+// chosen context is larger (64K on a 40K model).
+function engineFor(name,p=prefs()){const o=engineOptions(p),m=modelNamed(name),train=m?modelInfo.meta(m)?.shape?.trainedContext:null;return Number.isInteger(train)&&train>0?{...o,train}:o;}
 // Photos of the newest user messages (at most 4 images) go to a vision model as images; older ones keep their OCR text.
 function visionImages(chat){const decorated=photoStore.decorate(chat),result=[];let left=4;for(let i=decorated.Messages.length-1;i>=0&&left>0;i--){const m=decorated.Messages[i];if(m.Role!=='user'||!Array.isArray(m.Images)||!m.Images.length)continue;const files=[];for(const image of m.Images.slice(0,left)){try{const file=photoStore.file(image.id,'image');if(fs.existsSync(file))files.push(file);}catch{}}if(files.length){left-=files.length;result.unshift({index:i,files,text:visionStore.requestText(m.Content)});}}return result;}
 let toolSettings,webTools,agent,browser,downloader,hostReady=false;
@@ -216,7 +219,7 @@ async function requestNow(action,args={}){
    const lastUser=[...args.chat.Messages].reverse().find(m=>m.Role==='user');const docContext=documents.context(args.chat.Id,String(lastUser?.DisplayText||lastUser?.Content||''),Math.max(2000,Math.floor((context.value-(thinking?Math.max(responseTokens,2048):responseTokens))*0.45*3.2)));
    const guidanceWithDocs=[skillGuidance,docContext?.guidance].filter(Boolean).join('\n\n');
    await measureLoad(prepared.chat.Model,context.value,async()=>{for(let attempt=0;;attempt++){
-    try{result=await coreRequest('chat',{chat:prepared.chat,guidance:guidanceWithDocs,contextSize:context.value,projector:projector||'',images,engine:engineOptions(p),draft:draftStore.path(prepared.chat.Model)||'',thinking,maxTokens:thinking?Math.max(responseTokens,2048):responseTokens,temperature:runRequest.temperature,sampling:runRequest.sampling,variables:promptVariables(p)},forward);break;}
+    try{result=await coreRequest('chat',{chat:prepared.chat,guidance:guidanceWithDocs,contextSize:context.value,projector:projector||'',images,engine:engineFor(prepared.chat.Model,p),draft:draftStore.path(prepared.chat.Model)||'',thinking,maxTokens:thinking?Math.max(responseTokens,2048):responseTokens,temperature:runRequest.temperature,sampling:runRequest.sampling,variables:promptVariables(p)},forward);break;}
     catch(error){if(attempt===0&&context.mode==='auto'&&!lastSaved&&loadFailure.test(error.message)&&reduceAuto(context.key)){context=await contextFor(prepared.chat.Model,args.contextSize);continue;}throw error;}
    }
    loaded={model:prepared.chat.Model,context:context.value};});
@@ -233,7 +236,7 @@ async function requestNow(action,args={}){
  if(action==='bench'&&hostReady){
   const name=String(args.name||''),profile=args.profile==='current'?'current':'standard';const m=modelNamed(name);if(!m||!m.Installed)throw Error('Choose a downloaded model.');
   const p=prefs(),context=profile==='current'?(await contextFor(name,p.contextSize)).value:2048;loaded=null;
-  const result=await coreRequest('benchmark',{model:name,profile,contextSize:context,engine:engineOptions(p),draft:draftStore.path(name)||''});
+  const result=await coreRequest('benchmark',{model:name,profile,contextSize:context,engine:engineFor(name,p),draft:draftStore.path(name)||''});
   loaded={model:name,context:result.Context||context};saveBenchmark(result);return result;
  }
  const result=await coreRequest(action,args);
@@ -366,7 +369,7 @@ async function requestNow(action,args={}){
   completeNow({model,contextSize,messages,schema,maxTokens,temperature,sampling,stream,thinking,onChunk,onReasoning,signal,timeoutMs}){
    if(!hostReady)return Promise.reject(Error('Tools need the bundled engine host, which is not available. Normal chat still works.'));
    if(signal?.aborted)return Promise.reject(Object.assign(Error('Cancelled'),{cancelled:true}));
-   const result=coreRequest('complete',{model,contextSize,messages,engine:engineOptions(),draft:draftStore.path(model)||'',...(schema?{schema}:{}),...(sampling&&!schema?{sampling}:{}),variables:promptVariables(),maxTokens,temperature,stream:!!stream,thinking:!!thinking,timeoutMs},e=>{if(e.type==='agent-chunk')onChunk?.(e.data);else if(e.type==='agent-reasoning')onReasoning?.(e.data);else if(e.type==='progress')send('agent-event',{type:'progress',label:e.data.label,value:e.data.value});});
+   const result=coreRequest('complete',{model,contextSize,messages,engine:engineFor(model),draft:draftStore.path(model)||'',...(schema?{schema}:{}),...(sampling&&!schema?{sampling}:{}),variables:promptVariables(),maxTokens,temperature,stream:!!stream,thinking:!!thinking,timeoutMs},e=>{if(e.type==='agent-chunk')onChunk?.(e.data);else if(e.type==='agent-reasoning')onReasoning?.(e.data);else if(e.type==='progress')send('agent-event',{type:'progress',label:e.data.label,value:e.data.value});});
    const abort=()=>{coreRequest('cancel').catch(()=>{});};signal?.addEventListener('abort',abort,{once:true});
    return result.finally(()=>signal?.removeEventListener('abort',abort));
   },

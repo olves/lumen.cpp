@@ -510,3 +510,17 @@ the comparison ran under the same conditions. Scripts and raw results: `work/kv-
   is short.
 - TurboQuant is not in official llama.cpp (ggml-org/llama.cpp#21089 was closed without merging on 2 June 2026); Lumen uses only
   official builds.
+
+### 64K context and YaRN (same day)
+
+A ~48K-token haystack (Lumen's docs and code) with one hidden passphrase at 25 %, 50 % and 75 % depth, `-c 65536`, K 8-bit + V 4-bit
+cache (`work/kv-q4/needle.mjs`):
+
+| Model (GGUF context_length) | No scaling | YaRN 2× / 4× (orig 32768) | Lumen's rule: ×(ctx/train), orig = train |
+|---|---|---|---|
+| Qwen2.5-Coder-7B (131072) | 3/3 | 3/3 / 3/3 | not needed (64K < 131072) |
+| Qwen3-8B (40960) | 0/3 — llama.cpp caps the context at 40960 and refuses the request | 3/3 / 3/3 | 3/3 (×1.6, orig 40960) |
+
+So when the chosen context is larger than the model's trained window, lumen-host adds `--rope-scaling yarn --rope-scale <ctx/train>
+--yarn-orig-ctx <train>` (also in its plain retry). In the app (tests/ui/longcontext.test.mjs, Vulkan, both shells) Qwen3-8B at 64K
+found the passphrase in a 46K-token conversation. Auto context still stops at 16K; 32K and 64K are manual choices.

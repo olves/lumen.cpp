@@ -25,7 +25,7 @@ function paintPerformance(){
  $('idle-unload').value=String([0,5,15,30,60].includes(Number(p.idleUnload))?Number(p.idleUnload):0);
  const noHost=toolsConfig&&!toolsConfig.hostReady;for(const id of ['gpu-layers','speculative','kv-cache'])$(id).disabled=!!noHost;
  $('performance-note').textContent=t(noHost?'performanceNoHost':'performanceNote');
- const wide=document.querySelector('#context-size option[value="32768"]');if(wide){wide.disabled=!!noHost;wide.title=noHost?t('contextNeedsHost'):'';}
+ for(const wide of document.querySelectorAll('#context-size option[value="32768"],#context-size option[value="65536"]')){wide.disabled=!!noHost;wide.title=noHost?t('contextNeedsHost'):'';}
 }
 async function savePerformance(){
  try{state.prefs=await api.preferences({...state.prefs,gpuLayers:$('gpu-layers').value,speculative:$('speculative').checked,kvCache:$('kv-cache').value});}catch(e){toast(cleanError(e));}
