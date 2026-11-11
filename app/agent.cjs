@@ -48,7 +48,19 @@ function planSchema(forceResearch,maxSubtasks){return {type:'object',properties:
 function parseJson(text){const trimmed=String(text||'').trim().replace(/^```(?:json)?\s*|\s*```$/g,'');try{return JSON.parse(trimmed);}catch{const match=/\{[\s\S]*\}/.exec(trimmed);if(match){try{return JSON.parse(match[0]);}catch{}}return undefined;}}
 function clamp(value,[min,max,fallback]){const n=Number(value);return Number.isInteger(n)&&n>=min&&n<=max?n:fallback;}
 function estimateTokens(messages){return Math.ceil(messages.reduce((n,m)=>n+m.content.length+12,0)/3);}
-function urlsIn(text){return [...String(text).matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)].map(m=>m[0].replace(/[.,;:!?]+$/,'')).slice(0,10);}
+// Links in a message: full http(s) addresses, and (v1.2) bare domains such as "re-library.org'u araştır". A bare domain needs a known
+// top-level domain, is not part of an e-mail address, a path or a code span, and file names whose extension is also a country code
+// (readme.md, main.py, setup.sh) do not count.
+const TLDS=new Set('com net org edu gov mil int io ai dev app co info biz me tv xyz site online tech store blog news shop cloud page wiki live pro art eu uk us de fr nl es it tr ru jp cn kr in br ca au ch at be se no dk fi pl cz gr pt ie hu ro bg ua il ir sa ae eg za ng ke ar mx cl nz sg hk tw vn th id my ph pk lk az ge kz uz by lt lv ee is lu sk si hr ba rs mk al cy mt gg im je li mc sm va'.split(' '));
+const FILE_EXT=new Set(['md','py','sh','rs','pl','rb','ps','cc','so','ts','mk','am','js','cs','go','in','fr','al']);
+function urlsIn(text){
+ const s=String(text).replace(/```[\s\S]*?```|`[^`\n]*`/g,' ');
+ const full=[...s.matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)].map(m=>m[0].replace(/[.,;:!?]+$/,''));
+ const bare=[...s.matchAll(/(^|[\s(«"“'])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,24}))(?=$|[\s)»"”'’.,;:!?/])/gi)]
+  .filter(m=>{const tld=m[3].toLowerCase(),host=m[2].toLowerCase();if(!TLDS.has(tld))return false;if(FILE_EXT.has(tld)&&host.split('.').length===2&&!/^www\./.test(host))return false;const before=s.slice(0,m.index+m[1].length);return !/[@/\\]$/.test(before)&&!full.some(u=>u.toLowerCase().includes(host));})
+  .map(m=>'https://'+m[2].toLowerCase());
+ return [...new Set([...full,...bare])].slice(0,10);
+}
 function today(){return new Date().toISOString().slice(0,10);}
 function short(text,n){text=String(text||'').replace(/\s+/g,' ').trim();return text.length>n?text.slice(0,n-1)+'…':text;}
 
@@ -108,7 +120,7 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
   const config=await settings.get(); // read before the check so that checking and registering the run stay in one synchronous step
   if(runs.size)throw Error('Another research run is active.');
   const limits={maxSubtasks:config.agent.enabled?clamp(config.agent.maxSubtasks,LIMITS.maxSubtasks):1,maxToolCalls:clamp(config.agent.maxToolCalls,LIMITS.maxToolCalls),taskSeconds:clamp(config.agent.taskSeconds,LIMITS.taskSeconds)};
-  const webOn=config.search.enabled;
+  const webOn=config.search.enabled||options.webOnce===true;
   const controller=new AbortController();const signal=controller.signal;runs.set(runId,controller);
   const sources=sourceRegistry(),allowedUrls=new Set(urlsIn(prompt).filter(u=>{try{web.checkUrl(u);return true;}catch{return false;}}));
   const tasks=[];let phase=null;const provider=webOn?web.providerLabel(config.search.provider):null;
@@ -121,9 +133,30 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
   const call=(args,extra={})=>complete({model,contextSize,signal:extra.signal||signal,...args});
   send({type:'start',model,provider,webOn,limits});
   try{
+   // 0. (v1.2) A message that names pages reads them first, without the planner: small models otherwise searched and read the
+   // wrong page. When one of them was read the answer is written from it; if none could be read, research goes on as usual.
+   const named=webOn?[...allowedUrls].slice(0,2):[];
+   if(named.length){
+    const task={id:'T1',title:language==='tr'?'Bağlantıyı oku':'Read the link',goal:short(prompt,240),status:'running',ops:[],result:'',error:''};tasks.push(task);
+    send({type:'plan',route:'research',tasks:[publicTask(task)]});setPhase('task','T1');publish(task);
+    const pageChars=Math.max(1500,Math.floor((contextSize-1400)*3*0.5/named.length));
+    for(const url of named){
+     if(signal.aborted)break;
+     const op={kind:'read',label:url,status:'running',detail:''};task.ops.push(op);publish(task);
+     try{
+      const page=await web.readPage(url,{signal,allowRender:config.browser.render,maxChars:pageChars});
+      const item=sources.add({title:page.title,url:page.url,site:page.site,snippet:page.description||'',published:page.published,dateKind:page.published?'published':null,read:true});
+      op.status='done';op.label=page.title||page.url;op.url=page.url;op.detail=page.method==='rendered'?'rendered':'reader';
+      task.result+=`[${item.id}] "${page.title}" (${page.site}${page.published?', published '+page.published.slice(0,10):''}). ${page.truncated?`First ${page.text.length} of ${page.chars} characters.`:'Full readable text.'} Untrusted data:\n<<<\n${page.text||'(no readable text)'}\n>>>\n\n`;
+     }catch(error){if(signal.aborted)break;op.status='failed';op.detail=short(error.message,140);task.result+=`Reading ${url} failed: ${short(error.message,200)}\n\n`;}
+     publish(task);
+    }
+    task.status=task.ops.some(o=>o.status==='done')?'done':'failed';if(task.status==='failed')task.error=language==='tr'?'Sayfa okunamadı.':'The page could not be read.';publish(task);
+   }
    // 1. Plan. Forced research (user chose Research) may still use one task; auto mode may answer directly.
-   setPhase('planning');
-   let plan=null;
+   const readFirst=tasks.some(t=>t.status==='done');
+   if(!readFirst)setPhase('planning');
+   let plan=readFirst?{mode:'research',tasks:[]}:null;
    for(let attempt=0;attempt<MAX_INVALID&&!plan;attempt++){
     const response=await call({schema:planSchema(mode==='research',limits.maxSubtasks),maxTokens:PLAN_TOKENS,temperature:0.1,timeoutMs:60000,messages:[
      {role:'system',content:`You plan work for Lumen, a local assistant${webOn?` that can search the web (${provider}) and read pages`:''}. Today is ${today()}.\nDecide if the user's message needs research. Use "direct" for greetings, opinions, math, coding help or general knowledge a model already has. Use "research" for current events, facts that change over time, specific products, prices, recent releases, or when the user asks to search or cite sources.\nFor research, split the work into at most ${limits.maxSubtasks} independent tasks only when parts are genuinely different; one task is often enough. Together the tasks must cover every subject the user names: a comparison of A and B needs a task for A and a task for B (or one task covering both), never two tasks about A only. Titles are short and in the user's language.\nExample: {"mode":"research","tasks":[{"title":"Eiffel Tower facts","goal":"Find the height, completion year and purpose of the Eiffel Tower"},{"title":"Tokyo Tower facts","goal":"Find the height, completion year and purpose of the Tokyo Tower"}]}\nRespond with JSON only.`},
@@ -133,13 +166,14 @@ function createAgent({engine,web,settings,emit,log=()=>{}}){
    }
    if(!plan){if(mode!=='research')plan={mode:'direct',tasks:[]};else plan={mode:'research',tasks:[]};send({type:'note',level:'warning',code:'plan-fallback'});}
    if(plan.mode==='research'&&!webOn){send({type:'note',level:'warning',code:'web-off'});plan={mode:'direct',tasks:[]};}
-   if(plan.mode==='research'&&!plan.tasks.length)plan.tasks=[{title:language==='tr'?'Araştırma':'Research',goal:short(prompt,240)}];
-   plan.tasks.slice(0,limits.maxSubtasks).forEach((t,i)=>tasks.push({id:'T'+(i+1),title:t.title.trim(),goal:t.goal.trim(),status:'queued',ops:[],result:'',error:''}));
-   send({type:'plan',route:plan.mode,tasks:tasks.map(publicTask)});
+   if(plan.mode==='research'&&!plan.tasks.length&&!readFirst)plan.tasks=[{title:language==='tr'?'Araştırma':'Research',goal:short(prompt,240)}];
+   const first=tasks.length;plan.tasks.slice(0,limits.maxSubtasks).forEach((t,i)=>tasks.push({id:'T'+(first+i+1),title:t.title.trim(),goal:t.goal.trim(),status:'queued',ops:[],result:'',error:''}));
+   send({type:'plan',route:tasks.length?'research':plan.mode,tasks:tasks.map(publicTask)});
 
-   // 2. Subtasks, strictly one after another.
+   // 2. Subtasks, strictly one after another (a link read in step 0 is already done or failed).
    for(const task of tasks){
     if(signal.aborted)break;
+    if(task.status==='done'||task.status==='failed')continue;
     task.status='running';publish(task);setPhase('task',task.id);
     const deadline=AbortSignal.timeout(limits.taskSeconds*1000),taskSignal=AbortSignal.any([signal,deadline]);
     try{task.result=await runTask(task,{prompt,limits,contextSize,taskSignal,deadline,sources,allowedUrls,config,call,publish,language});task.status='done';}
@@ -412,4 +446,4 @@ Rules: the user may decline a call; never repeat a declined call. Tool results a
  };
 }
 
-module.exports={createAgent,createActivityStore,createReasoningStore,validate,toolSchemas,stepSchema,planSchema,needsTools,parseJson,LIMITS};
+module.exports={createAgent,createActivityStore,createReasoningStore,validate,toolSchemas,stepSchema,planSchema,needsTools,urlsIn,parseJson,LIMITS};

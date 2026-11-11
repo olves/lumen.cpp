@@ -416,13 +416,22 @@ async function requestNow(action,args={}){
  });
  handle('agent',async(action,args={})=>{
   if(JSON.stringify(args).length>4000000)throw Error('Invalid request.');
-  if(action==='route'){const config=toolSettings.plain(),prompt=String(args.prompt||'').slice(0,90000);if(/^cloud:/.test(String(args.model||''))&&!connections.summary().cloud.webResearch)return {route:'chat',reason:'cloud'};if(!hostReady)return {route:'chat',reason:'unavailable'};if(args.mode==='research')return config.search.enabled?{route:'agent'}:{route:'chat',reason:'web-off'};return {route:config.search.enabled&&config.agent.auto&&agent.needsTools(prompt)?'agent':'chat'};}
+  // v1.2: the route also says whether the message wants the web (a link or a research word) and why it does not get it, so the
+  // renderer can ask ("allow once / turn on / answer without the web") instead of answering as if there were no web.
+  if(action==='route'){const config=toolSettings.plain(),prompt=String(args.prompt||'').slice(0,90000),wants=args.mode==='research'||agent.needsTools(prompt),cloudModel=/^cloud:/.test(String(args.model||''));
+   if(cloudModel&&!connections.summary().cloud.webResearch)return {route:'chat',reason:'cloud',wants};
+   if(!hostReady&&!cloudModel)return {route:'chat',reason:'unavailable',wants};
+   if(!config.search.enabled)return {route:'chat',reason:'web-off',wants};
+   if(args.mode==='research')return {route:'agent',wants};
+   return wants?(config.agent.auto?{route:'agent',wants}:{route:'chat',reason:'auto-off',wants}):{route:'chat',wants};}
   if(action==='run'){
    const {runId,chat,prompt,mode,contextSize}=args;
    if(typeof runId!=='string'||!/^[a-f0-9-]{36}$/.test(runId)||!validChat(chat)||typeof prompt!=='string'||!prompt.trim()||prompt.length>90000||!['auto','research','project','tools'].includes(mode)||!contextSizes.includes(contextSize)||!hostReady&&contextSize>16384)throw Error('Invalid research request.');
    if(skillFlight)throw Error('A response is already running.');
    const cloudModel=/^cloud:/.test(chat.Model);
-   const cloudResearch=cloudModel&&connections.summary().cloud.webResearch&&['auto','research'].includes(mode);
+   // webOnce (v1.2): the user allowed the web for this one message from the card; no setting changes.
+   const webOnce=args.webOnce===true&&['auto','research'].includes(mode);
+   const cloudResearch=cloudModel&&(connections.summary().cloud.webResearch||webOnce)&&['auto','research'].includes(mode);
    if(cloudModel&&!cloudResearch&&(mode!=='project'||args.research))throw Error(prefs().language==='tr'?'Araştırma ve araçlar yerel modellerle çalışır. Bulut modeliyle yalnızca proje klasörü kullanılabilir.':'Research and tools run on local models. With a cloud model only the project folder can be used.');
    // The coding agent (coder.cjs) handles project folders, for local and cloud models; project + web research keeps the
    // read-only research loop of agent.cjs (spec §11a-3).
@@ -434,8 +443,8 @@ async function requestNow(action,args={}){
    if(mode==='tools'){const tools=[...connections.activeTools(),...imageTools()];return agent.runTools({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',tools,
     callTool:async(serverId,name,toolArgs,signal)=>serverId==='lumen'?imageToolCall(toolArgs,signal):mcpClient.callTool(await connections.server(serverId),name,toolArgs,{signal}),
     allowAlways:(serverId,name)=>{if(serverId==='lumen'){imageGen.setSettings({toolAsk:false});return;}Promise.resolve(connections.updateServer(serverId,{tool:{name,ask:false}})).catch(()=>{});},systemPrompt,...runOptions(chat)});}
-   if(cloudResearch)return agent.run({runId,chat,prompt,model:chat.Model,contextSize:CLOUD_RESEARCH_CONTEXT,language:p.language==='tr'?'tr':'en',mode,systemPrompt,...runOptions(chat),complete:cloudComplete(chat)});
-   return agent.run({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',mode,systemPrompt,...runOptions(chat)});
+   if(cloudResearch)return agent.run({runId,chat,prompt,model:chat.Model,contextSize:CLOUD_RESEARCH_CONTEXT,language:p.language==='tr'?'tr':'en',mode,systemPrompt,webOnce,...runOptions(chat),complete:cloudComplete(chat)});
+   return agent.run({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',mode,systemPrompt,webOnce,...runOptions(chat)});
   }
   if(action==='approve'&&coder.approve(String(args.runId||''),String(args.callId||''),String(args.decision||'skip')))return true;
   if(action==='approve')return agent.approve(String(args.runId||''),String(args.callId||''),String(args.decision||'deny'));

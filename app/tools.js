@@ -160,7 +160,7 @@ async function sendWithAgent(text,options={}){
  const view=activityView();streaming.node.insertBefore(view.root,streaming.body);$('messages').append(streaming.node);streamText='';pendingChunk='';$('chat-scroll').scrollTop=$('chat-scroll').scrollHeight;
  const runId=crypto.randomUUID(),chatId=chat.Id;agentRun={runId,view,chatId};
  let result=null,failure=null;
- try{result=await api.agent('run',{runId,chat,prompt:text,mode:options.mode||(researchMode?'research':'auto'),research:options.mode==='project'&&researchMode&&!!toolsConfig?.search.enabled,contextSize:state.prefs.contextSize});}catch(error){failure=error;}
+ try{result=await api.agent('run',{runId,chat,prompt:text,mode:options.mode||(researchMode?'research':'auto'),research:options.mode==='project'&&researchMode&&!!toolsConfig?.search.enabled,contextSize:state.prefs.contextSize,...(options.webOnce?{webOnce:true}:{})});}catch(error){failure=error;}
  if(flushId)cancelAnimationFrame(flushId);flushStream();agentRun=null;
  try{
   if(state.chat?.Id===chatId){

@@ -51,14 +51,16 @@ describe(`web research with a cloud model (${shell})`, () => {
   });
   after(async () => { await app?.stop(); cloud?.close(); server?.closeAllConnections?.(); server?.close(); });
 
-  test('off by default: research with a cloud model asks for a local model and sends nothing', async () => {
+  test('off by default: research with a cloud model shows the web card (v1.2) and sends nothing', async () => {
     assert.equal(await ev("connectionsState?.cloud?.webResearch ?? false"), false);
     await ev('researchMode = true; renderToolChips(); 0');
     await app.cdp.type('#prompt', 'What is the secret word of the Marlow lantern festival?');
     await app.cdp.click('#send');
-    await app.cdp.waitFor("/local model|yerel model/i.test(document.getElementById('toast').textContent)", 5000);
+    await app.cdp.waitFor("!!document.querySelector('.web-card .web-once')", 5000);
     assert.equal(cloud.requests.filter(r => r.path === '/v1/chat/completions').length, 0);
     assert.equal(web.length, 0);
+    // The message stays in the box: the next tests send it again once web research is on.
+    await ev("document.querySelector('.web-card').remove(); 0");
   });
 
   test('Settings → Cloud models has the switch, off, with a note on what is sent', async () => {
