@@ -34,7 +34,7 @@ const {effortOf}=require('./effort.cjs');
 function effortFor(model,choice){const e=effortOf(model);return e.levels.includes(choice)?choice:undefined;}
 function agentBusy(){return !!(agent?.active()||coder?.active());}
 const {createRunSettings,cleanDefaults}=require('./runsettings.cjs'),runSettings=createRunSettings(data);
-const documents=require('./documents.cjs').createDocuments(data);
+const documents=require('./documents.cjs').createDocuments(data,{ocrHelper:fs.existsSync(path.join(backendDir,'lumen-image-ocr.exe'))?path.join(backendDir,'lumen-image-ocr.exe'):null});
 const assistants=require('./assistants.cjs').createAssistants(data);
 // Connections (connections.cjs): cloud models, MCP servers and the local API. All off until the user turns them on.
 let connections=null,cloud=null,mcpClient=null,apiServer=null,artifacts=null,cloudFlight=null,imageGen=null,plugins=null,imageFlight=null;
@@ -560,7 +560,7 @@ async function requestNow(action,args={}){
   }
   async function addDocumentFiles(chatId,filePaths){
    const added=[],failed=[];
-   for(const file of filePaths){send('document-event',{chatId,name:path.basename(file),phase:'reading'});try{added.push(await documents.add(file));}catch(error){failed.push({name:path.basename(file),reason:error.message});}}
+   for(const file of filePaths){send('document-event',{chatId,name:path.basename(file),phase:'reading'});try{added.push(await documents.add(file,{language:prefs().language==='tr'?'tr':'en'}));}catch(error){failed.push({name:path.basename(file),reason:error.message});}}
    let list=documents.list(chatId);try{list=documents.attach(chatId,added.map(d=>d.id));}catch(error){failed.push({name:'',reason:error.message});}
    send('document-event',{chatId,phase:'done'});
    return {documents:list,added,failed};

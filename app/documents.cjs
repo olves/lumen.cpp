@@ -9,7 +9,8 @@ const {Worker} = require('worker_threads');
 
 const MAX_BYTES = 64 * 1024 * 1024, MAX_DOCS = 10, CHUNK = 900, OVERLAP = 150;
 const TEXT_EXT = new Set(['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'xml', 'html', 'htm', 'yaml', 'yml', 'rst', 'tex']);
-const KINDS = ['pdf', 'docx', ...TEXT_EXT];
+const KINDS = ['pdf', 'docx', 'xlsx', 'pptx', ...TEXT_EXT];
+const OCR_PAGES = 40, SHEET_ROWS = 2000;
 const ID = /^[a-f0-9]{32}$/i, DOC = /^[a-f0-9]{16}$/;
 const STOP = new Set('the a an and or of to in on for is are was were be by with as at from that this it its into about what which who how why when where do does did can could should would will your you i we they he she not no ve ile bir bu şu o da de mi mı mu mü ne ki için gibi daha çok en ama veya hem ya her olan olarak ise kadar sonra önce nasıl neden nedir hangi kim var yok'.split(' ').map(fold));
 
@@ -45,6 +46,47 @@ function docxText(buffer) {
     if (text.trim()) paragraphs.push(text);
   }
   return paragraphs.join('\n');
+}
+// v1.2: Excel .xlsx: one page per sheet, rows as tab-separated cells (shared strings, inline strings, numbers, booleans), at most
+// SHEET_ROWS rows a sheet (the cut is said). Dates stay Excel serial numbers. PowerPoint .pptx: one page per slide, its text and notes.
+function xlsxPages(buffer) {
+  const shared = [], wb = readZipEntry(buffer, 'xl/workbook.xml'); if (!wb) throw Error('unreadable');
+  const ss = readZipEntry(buffer, 'xl/sharedStrings.xml');
+  if (ss) for (const si of ss.split(/<\/si>/).slice(0, -1)) shared.push([...si.matchAll(/<t(?:\s[^>]*)?>([^<]*)<\/t>/g)].map(m => xmlText(m[1])).join(''));
+  const names = [...wb.matchAll(/<sheet\b[^>]*\bname="([^"]*)"/g)].map(m => xmlText(m[1]));
+  const pages = [];
+  for (let n = 1; n <= Math.max(names.length, 1) && n <= 50; n++) {
+    const xml = readZipEntry(buffer, `xl/worksheets/sheet${n}.xml`); if (!xml) continue;
+    const rows = []; let cut = false;
+    for (const row of xml.split(/<\/row>/)) {
+      if (!/<row\b/.test(row)) continue;
+      if (rows.length >= SHEET_ROWS) { cut = true; break; }
+      const cells = [];
+      for (const c of row.matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+        const attrs = c[1] || '', body = c[2] || '', type = /\bt="(\w+)"/.exec(attrs)?.[1], v = /<v>([^<]*)<\/v>/.exec(body)?.[1];
+        let text = type === 's' ? shared[Number(v)] ?? '' : type === 'inlineStr' ? [...body.matchAll(/<t(?:\s[^>]*)?>([^<]*)<\/t>/g)].map(m => xmlText(m[1])).join('') : type === 'b' ? (v === '1' ? 'TRUE' : 'FALSE') : v !== undefined ? xmlText(v) : '';
+        const col = /\br="([A-Z]+)\d+"/.exec(attrs)?.[1];
+        if (col) { const index = [...col].reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1; while (cells.length < index) cells.push(''); }
+        cells.push(text.replace(/[\t\r\n]+/g, ' '));
+      }
+      if (cells.some(x => x)) rows.push(cells.join('\t'));
+    }
+    pages.push(`Sheet: ${names[n - 1] || 'Sheet' + n}\n${rows.join('\n')}${cut ? `\n[only the first ${SHEET_ROWS} rows]` : ''}`);
+  }
+  if (!pages.length) throw Error('unreadable');
+  return pages;
+}
+function pptxPages(buffer) {
+  const slideText = xml => xml.split(/<\/a:p>/).map(p => [...p.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map(m => xmlText(m[1])).join('')).filter(s => s.trim()).join('\n');
+  const pages = [];
+  for (let n = 1; n <= 500; n++) {
+    const xml = readZipEntry(buffer, `ppt/slides/slide${n}.xml`); if (!xml) break;
+    const notes = readZipEntry(buffer, `ppt/notesSlides/notesSlide${n}.xml`);
+    const noteText = notes ? slideText(notes).split('\n').filter(l => !/^\d+$/.test(l.trim())).join('\n') : '';
+    pages.push(`Slide ${n}\n${slideText(xml)}${noteText ? '\nNotes: ' + noteText : ''}`);
+  }
+  if (!pages.length) throw Error('unreadable');
+  return pages;
 }
 function htmlText(s) { return xmlText(s.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<br\s*\/?>|<\/(p|div|li|h\d|tr)>/gi, '\n').replace(/<[^>]+>/g, ' ')).replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n'); }
 // Long text without pages is split into "sections" of about 3,000 characters at paragraph ends.
@@ -89,28 +131,53 @@ function rank(docs, query, limit) {
   }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-function createDocuments(dataDir) {
+// v1.2: scanned PDF pages (no text layer) are read by lumen-image-ocr.exe --pdf (Windows renders the page, Windows OCR reads it).
+// ocrHelper: path to that exe (null: no OCR). Resolves {pages:[text], total} or rejects.
+function pdfOcr(helper, file, language, maxPages = OCR_PAGES) {
+  return new Promise((resolve, reject) => {
+    const child = require('child_process').spawn(helper, ['--pdf', file, language === 'tr' ? 'tr-TR' : 'en-US', String(maxPages)], {windowsHide: true, stdio: ['ignore', 'pipe', 'ignore']});
+    let out = ''; child.stdout.on('data', d => { out += d; });
+    const timer = setTimeout(() => { child.kill(); reject(Error('timeout')); }, 15000 * maxPages + 30000);
+    child.on('error', e => { clearTimeout(timer); reject(e); });
+    child.on('close', () => { clearTimeout(timer); try { const r = JSON.parse(out.trim().split('\n').pop()); r.ok ? resolve(r) : reject(Error(r.error || 'ocr failed')); } catch { reject(Error('ocr failed')); } });
+  });
+}
+function createDocuments(dataDir, {ocrHelper = null} = {}) {
   const dir = path.join(dataDir, 'documents'), linksFile = path.join(dataDir, 'conversation-documents.json'), usedFile = path.join(dataDir, 'conversation-docsources.json');
   const json = (file, fallback) => { try { const v = JSON.parse(fs.readFileSync(file, 'utf8')); return v && typeof v === 'object' && !Array.isArray(v) ? v : fallback; } catch { return fallback; } };
   const write = (file, value) => { const temp = file + '.tmp'; fs.writeFileSync(temp, JSON.stringify(value)); fs.renameSync(temp, file); };
   const cache = new Map();
   function load(id) { if (!DOC.test(id)) return null; if (cache.has(id)) return cache.get(id); try { const d = JSON.parse(fs.readFileSync(path.join(dir, id + '.json'), 'utf8')); if (cache.size > 20) cache.delete(cache.keys().next().value); cache.set(id, d); return d; } catch { return null; } }
-  const summary = d => ({id: d.id, name: d.name, kind: d.kind, size: d.size, pages: d.pages.length, paged: d.paged, chars: d.pages.reduce((a, p) => a + p.length, 0), added: d.added});
+  const summary = d => ({...(d.ocr ? {ocr: true} : {}), id: d.id, name: d.name, kind: d.kind, size: d.size, pages: d.pages.length, paged: d.paged, chars: d.pages.reduce((a, p) => a + p.length, 0), added: d.added});
 
   // Reads a file into a stored document (same content: the existing one).
-  async function add(file) {
+  async function add(file, {language = 'en'} = {}) {
     const stat = fs.statSync(file); if (!stat.isFile()) throw Error('unreadable');
     if (stat.size > MAX_BYTES) throw Error('too-large');
     const ext = path.extname(file).slice(1).toLowerCase(); if (!KINDS.includes(ext)) throw Error('unsupported');
     const buffer = fs.readFileSync(file), sha = crypto.createHash('sha256').update(buffer).digest('hex'), id = sha.slice(0, 16);
     const existing = load(id); if (existing) return summary(existing);
-    let pages, paged = false, title = null;
-    if (ext === 'pdf') { const r = await pdfPages(file); pages = r.pages; paged = true; title = r.title; }
+    let pages, paged = false, title = null, ocr = false;
+    if (ext === 'pdf') {
+      let r; try { r = await pdfPages(file); } catch (error) { if (!ocrHelper || error.message === 'too-large') throw error; r = {pages: [], title: null}; }
+      pages = r.pages; paged = true; title = r.title;
+      // Pages without a text layer (scans, photos of pages) are read with OCR; pages that have text keep it.
+      const empty = pages.length ? pages.map((p, i) => p.trim().length < 20 ? i : -1).filter(i => i >= 0) : [0];
+      if (ocrHelper && empty.length) {
+        try {
+          const o = await pdfOcr(ocrHelper, file, language, Math.min(OCR_PAGES, Math.max(pages.length, 1)));
+          if (!pages.length) pages = o.pages.slice(); else for (const i of empty) if (o.pages[i]?.trim()) pages[i] = o.pages[i];
+          ocr = true;
+        } catch {}
+      }
+    }
     else if (ext === 'docx') pages = sections(docxText(buffer));
+    else if (ext === 'xlsx') { pages = xlsxPages(buffer); paged = true; }
+    else if (ext === 'pptx') { pages = pptxPages(buffer); paged = true; }
     else { if (buffer.includes(0)) throw Error('unreadable'); const text = buffer.toString('utf8').replace(/^﻿/, ''); pages = sections(/^html?$/.test(ext) ? htmlText(text) : text); }
     const chars = pages.reduce((a, p) => a + p.length, 0);
     if (!chars) throw Error(ext === 'pdf' ? 'no-text' : 'empty');
-    const doc = {id, sha, name: path.basename(file).slice(0, 200), kind: ext, size: stat.size, paged, title: title ? String(title).slice(0, 200) : null, pages, chunks: chunk(pages), added: new Date().toISOString()};
+    const doc = {...(ocr ? {ocr: true} : {}), id, sha, name: path.basename(file).slice(0, 200), kind: ext, size: stat.size, paged, title: title ? String(title).slice(0, 200) : null, pages, chunks: chunk(pages), added: new Date().toISOString()};
     fs.mkdirSync(dir, {recursive: true}); write(path.join(dir, id + '.json'), doc); cache.set(id, doc);
     return summary(doc);
   }

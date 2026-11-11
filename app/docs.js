@@ -50,7 +50,8 @@ const docsRenderChips=renderToolChips;renderToolChips=function(){
  open.title=chatDocs.map(d=>d.name).join('\n');open.append(icon('book'),el('span','skill-chip-name',tf('docsChip',{n:fmt(chatDocs.length)})),el('small','tool-chip-note',t('docsChipNote')));open.onclick=openDocsDialog;
  chip.append(open);box.append(chip);
 };
-function docSize(d){return d.paged?tf('docsPages',{n:fmt(d.pages)}):d.pages>1?tf('docsParts',{n:fmt(d.pages)}):'';}
+function docSize(d){const size=d.kind==='xlsx'?tf('docsSheets',{n:fmt(d.pages)}):d.kind==='pptx'?tf('docsSlides',{n:fmt(d.pages)}):d.paged?tf('docsPages',{n:fmt(d.pages)}):d.pages>1?tf('docsParts',{n:fmt(d.pages)}):'';return [size,d.ocr?t('docsOcr'):''].filter(Boolean).join(' · ');}
+Object.assign(translations,{docsSheets:['{n} sheets','{n} sayfa (tablo)'],docsSlides:['{n} slides','{n} slayt'],docsOcr:['read with OCR','OCR ile okundu']});
 function paintDocsDialog(){
  const head=el('div','project-dialog-head'),close=el('button','icon-button','×');close.type='button';close.setAttribute('aria-label',t('close'));close.onclick=()=>docsDialog.close();head.append(el('h2','',t('docsTitle')),close);
  const list=el('div','docs-list');if(!chatDocs.length)list.append(el('p','quiet',t('docsEmpty')));

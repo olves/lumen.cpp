@@ -148,7 +148,7 @@ function composeText(){const prompt=$('prompt').value.trim();if(!draftFiles.leng
 const dropExtensions=new Set(['txt','md','json','js','ts','tsx','jsx','py','cs','cpp','c','h','html','css','yaml','yml','toml','xml','csv','log','rs','go','java','sql','sh','ps1']);
 // Photos (PNG/JPEG/WebP) go to photos.js and PDF/Word files to docs.js; both send the bytes to the core, which runs the same
 // import as the + menu. Text and code files stay in the draft as text.
-const dropPhotoExtensions=new Set(['png','jpg','jpeg','webp']),dropDocExtensions=new Set(['pdf','docx']);
+const dropPhotoExtensions=new Set(['png','jpg','jpeg','webp']),dropDocExtensions=new Set(['pdf','docx','xlsx','pptx']);
 const dropKind=f=>String(f.name).split('.').pop().toLowerCase();
 // Base64 of a dropped file without its data: URL prefix (the IPC carries strings).
 function fileBase64(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).replace(/^data:[^,]*,/,''));reader.onerror=()=>reject(reader.error||Error('read'));reader.readAsDataURL(file);});}

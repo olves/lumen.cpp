@@ -70,7 +70,7 @@ try {
   & $csc /nologo /target:exe /out:lumen-host.exe /r:System.Web.Extensions.dll /r:System.Net.Http.dll /r:System.Management.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll LumenHost.cs LumenCore.cs
   if ($LASTEXITCODE) { throw 'lumen-host.exe did not compile.' }
   $wm = Join-Path $env:WINDIR 'System32\WinMetadata'
-  & $csc /nologo /target:exe /out:lumen-image-ocr.exe "/r:$wm\Windows.Foundation.winmd" "/r:$wm\Windows.Storage.winmd" "/r:$wm\Windows.Graphics.winmd" "/r:$wm\Windows.Media.winmd" "/r:$wm\Windows.Globalization.winmd" "/r:$fw\System.Runtime.WindowsRuntime.dll" "/r:$fw\System.Web.Extensions.dll" /r:System.Runtime.dll /r:System.Threading.Tasks.dll ImageOcr.cs
+  & $csc /nologo /target:exe /out:lumen-image-ocr.exe "/r:$wm\Windows.Foundation.winmd" "/r:$wm\Windows.Storage.winmd" "/r:$wm\Windows.Graphics.winmd" "/r:$wm\Windows.Media.winmd" "/r:$wm\Windows.Globalization.winmd" "/r:$wm\Windows.Data.winmd" "/r:$fw\System.Runtime.WindowsRuntime.dll" "/r:$fw\System.Web.Extensions.dll" /r:System.Runtime.dll /r:System.Threading.Tasks.dll ImageOcr.cs
   if ($LASTEXITCODE) { throw 'lumen-image-ocr.exe did not compile.' }
   # v1.1: the agent's command runner (Job Object + PowerShell's own parser for Auto mode).
   $sma = Join-Path $env:WINDIR 'Microsoft.NET\assembly\GAC_MSIL\System.Management.Automation\v4.0_3.0.0.0__31bf3856ad364e35\System.Management.Automation.dll'
