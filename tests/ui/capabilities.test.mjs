@@ -79,6 +79,8 @@ describe(`Lumen tells the model what it can do (${shell})`, () => {
     await ev("window.lumen.tools('update', {search: {enabled: true}, agent: {auto: false}}).then(() => 0)");
     const reply = await send('Can you access the internet from here? Answer in one or two sentences.');
     console.log('# reply:', reply.replace(/\s+/g, ' ').slice(0, 220));
-    assert.doesNotMatch(reply, /(don't|do not|cannot|can't) (have )?(access|browse)[^.]*internet|no (internet|web) access/i);
+    // With automatic research off, "not by itself, turn on research" is a true answer; a bare denial is not.
+    const denies = /(don't|do not|cannot|can't) (have )?(access|browse)[^.]*internet|no (internet|web) access/i.test(reply);
+    assert.ok(!denies || /research|turn on|settings|araştırma|ayarlar/i.test(reply), 'a denial must say how to turn the web on: ' + reply);
   });
 });
