@@ -125,6 +125,29 @@ const memorySend=send;send=async function(){
  if(!state.busy&&typed&&state.prefs.memoryOn!==false){try{fact=(await api.memory('check',{text:typed})).fact;}catch{}}
  const r=await memorySend();if(fact)showMemoryCard(fact);return r;
 };
+// ---------- Sensitive data before a cloud model (ROADMAP-v1.2 M6-G; sensitive.js) ----------
+// Checked here, on this PC, only when the message goes to a cloud provider; a local model gets no warning.
+Object.assign(translations,{
+ sensTitle:['This message seems to contain private data','Bu mesajda özel bilgi var gibi görünüyor'],
+ sensBody:['It goes to {provider}: {items}.','{provider} sağlayıcısına gidecek: {items}.'],
+ sens_card:['card number {v}','kart numarası {v}'],sens_tckn:['Turkish ID number {v}','T.C. kimlik numarası {v}'],sens_iban:['IBAN {v}','IBAN {v}'],
+ sens_key:['API key or token {v}','API anahtarı veya token {v}'],'sens_private-key':['a private key','özel anahtar'],sens_password:['a password','bir parola'],
+ sensEdit:['Edit','Düzenle'],sensSend:['Send anyway','Yine de gönder'],
+});
+let sensitiveApproved=false;
+const sensitiveSend=send;send=async function(){
+ const model=state.models.find(m=>m.Name===$('model-picker').value);
+ if(state.busy||sensitiveApproved||!model?.Cloud||typeof lumenSensitive==='undefined')return sensitiveSend();
+ const found=lumenSensitive.findSensitive(composeText());if(!found.length)return sensitiveSend();
+ document.querySelector('.sensitive-card')?.remove();
+ const card=el('div','approval-card sensitive-card');card.setAttribute('role','alertdialog');card.setAttribute('aria-label',t('sensTitle'));
+ const items=found.slice(0,4).map(f=>tf('sens_'+f.kind,{v:f.masked})).join(', ');
+ const actions=el('div','approval-actions'),edit=el('button','secondary sens-edit',t('sensEdit')),go=el('button','primary sens-send',t('sensSend'));[edit,go].forEach(b=>b.type='button');
+ edit.onclick=()=>{card.remove();$('prompt').focus();};
+ go.onclick=async()=>{card.remove();sensitiveApproved=true;try{await send();}finally{sensitiveApproved=false;}};
+ actions.append(edit,go);card.append(el('strong','',t('sensTitle')),el('p','',tf('sensBody',{provider:model.Cloud.label,items})),actions);$('messages').append(card);edit.focus();
+ $('chat-scroll').scrollTop=$('chat-scroll').scrollHeight;
+};
 function showMemoryCard(fact){
  document.querySelector('.memory-card')?.remove();
  const card=el('div','approval-card memory-card');card.setAttribute('role','group');card.setAttribute('aria-label',t('memoryCardTitle'));

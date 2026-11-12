@@ -68,6 +68,20 @@ describe(`lasting memory (${shell})`, () => {
     await ev("state.prefs.language = 'en'; localize(); setPage('chat'); 0");
   });
 
+  test('sensitive data to a cloud model: a card first; Edit sends nothing, Send anyway sends it', async () => {
+    const calls = () => cloud.requests.filter(r => r.path === '/v1/chat/completions').length, before = calls();
+    await app.cdp.type('#prompt', 'Pay with 4111 1111 1111 1111 please'); await app.cdp.click('#send');
+    await app.cdp.waitFor("!!document.querySelector('.sensitive-card .sens-send')", 5000);
+    assert.match(await ev("document.querySelector('.sensitive-card').textContent"), /It goes to Mock: card number 4111…1111/);
+    await ev("document.querySelector('.sensitive-card .sens-edit').click(); 0");
+    assert.equal(calls(), before); assert.match(await ev("$('prompt').value"), /4111/);
+    await app.cdp.click('#send');
+    await app.cdp.waitFor("!!document.querySelector('.sensitive-card .sens-send')", 5000);
+    await ev("document.querySelector('.sensitive-card .sens-send').click(); 0");
+    await app.cdp.waitFor("state.busy === false && state.chat.Messages.at(-1)?.Role === 'assistant'", 30000);
+    assert.equal(calls(), before + 1);
+  });
+
   test('a Turkish request with the phrase at the end', async () => {
     await send('Salı günleri toplantım var, bunu hatırla.');
     await app.cdp.waitFor("document.querySelector('.memory-card .memory-fact')?.textContent === 'Salı günleri toplantım var'", 5000);
