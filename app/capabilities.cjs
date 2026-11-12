@@ -11,9 +11,9 @@
 
 const PATHS = {
   en: { cloudWeb: 'Settings → Cloud models → Web research', web: 'Settings → Search', auto: 'Settings → Agents → Research automatically',
-    vision: 'the photo chip → Set up vision', folder: '+ → Workspace folder', mode: 'the mode chip under the message box' },
+    vision: 'the photo chip → Set up vision', folder: '+ → Workspace folder', mode: 'the mode chip under the message box', cloudPhoto: 'the photo note → Send photos to the provider' },
   tr: { cloudWeb: 'Ayarlar → Bulut modelleri → Web araştırması', web: 'Ayarlar → Arama', auto: 'Ayarlar → Ajanlar → Otomatik araştır',
-    vision: 'fotoğraf çipi → Görmeyi kur', folder: '+ → Çalışma alanı klasörü', mode: 'mesaj kutusunun altındaki mod çipi' },
+    vision: 'fotoğraf çipi → Görmeyi kur', folder: '+ → Çalışma alanı klasörü', mode: 'mesaj kutusunun altındaki mod çipi', cloudPhoto: 'fotoğraf notu → Fotoğrafları sağlayıcıya gönder' },
 };
 const MODE_TEXT = { ask: 'asks the user before every change and command', 'accept-edits': 'file changes run, commands ask first', plan: 'read only (Plan mode)', auto: 'file changes and read-only commands run, other commands ask', full: 'full access, nothing asks' };
 
@@ -29,6 +29,7 @@ function describe(state = {}, language = 'en') {
   can.push('read documents the user attaches (PDF, Word, text and code files)' + (state.documents ? `; ${state.documents} attached now` : ''));
   if (state.vision === 'sees') can.push('see attached photos');
   else if (state.vision === 'projector-missing') off.push(`seeing photos with this model (${p.vision}); until then you get only the text read from a photo`);
+  else if (state.vision === 'needs-consent') off.push(`seeing photos: the user has not yet allowed photos to go to ${state.cloud?.label || 'this provider'} (${p.cloudPhoto}); until then you get only the text read from a photo`);
   else not.push('seeing photos with this model (you get only the text read from a photo)');
   // Workspace folder and commands
   if (state.workspace) can.push(`work in the folder of the workspace "${state.workspace.name}": ${MODE_TEXT[state.workspace.mode] || MODE_TEXT.ask}${state.workspace.commands ? '; PowerShell commands included' : ''}`);

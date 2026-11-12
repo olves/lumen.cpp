@@ -98,7 +98,8 @@ function lumenText(chat,mode){
   const searchOn=!!config?.search?.enabled;
   const web=target?(searchOn&&connections.summary().cloud.webResearch?'on':searchOn?'off-cloud':'off'):(!hostReady?'unavailable':searchOn?'on':'off');
   const m=modelNamed(chat.Model),projector=!target&&visionStore.projector(chat.Model);
-  const vision=target?(cloudVision.sees(chat.Model)!=='no'?'sees':'text-only'):(projector?'sees':(()=>{const s=visionStore.status(chat.Model);return s.file||s.checked;})()?'projector-missing':'text-only');
+  // A cloud model "sees" only when photos really go to it (review 12 Nov: before the user's agreement the notice said it could).
+  const vision=target?(cloudVision.sees(chat.Model)==='no'?'text-only':cloudPhotosAllowed(chat.Model,target.provider)?'sees':'needs-consent'):(projector?'sees':(()=>{const s=visionStore.status(chat.Model);return s.file||s.checked;})()?'projector-missing':'text-only');
   const binding=projectStore.get(chat.Id);let workspace=null;
   if(binding&&mode==='project'){const ws=workspaces.of(chat.Id),tools=codingStore.settings().tools||{};workspace={name:binding.root.toLowerCase()===String(ws.root).toLowerCase()?ws.name:binding.name,mode:ws.mode,commands:!!exec&&tools.commands!==false&&ws.mode!=='plan'};}
   return describeCapabilities({model:target?target.model:(m?.Display||chat.Model),cloud:target?{label:connections.providerLabel(target.provider)}:null,web,autoResearch:!!config?.agent?.auto,

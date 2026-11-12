@@ -34,6 +34,12 @@ test('photos: sees / can be set up / text only', () => {
   assert.match(describe(base), /Not available:[^\n]*seeing photos/);
 });
 
+test('review 12 Nov: a cloud model that could see is told photos are off until the user allows them', () => {
+  const t = describe({ ...base, vision: 'needs-consent' });
+  assert.doesNotMatch(t, /you can:[^\n]*see attached photos/);
+  assert.match(t, /Off right now[^\n]*not yet allowed photos to go to DeepSeek/);
+});
+
 test('workspace folder, mode and commands; otherwise how to attach one', () => {
   const t = describe({ ...base, workspace: { name: 'Site', mode: 'auto', commands: true } });
   assert.match(t, /work in the folder of the workspace "Site": file changes and read-only commands run, other commands ask; PowerShell commands included/);

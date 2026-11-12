@@ -40,5 +40,6 @@ test('remember requests in English and Turkish, and messages that are not', () =
   assert.equal(rememberRequest('Bunu hatırla: vegan besleniyorum'), 'vegan besleniyorum');
   assert.equal(rememberRequest('Hatırla, toplantılar salı günleri.'), 'toplantılar salı günleri');
   assert.equal(rememberRequest('Kahveyi şekersiz içerim, bunu hatırla.'), 'Kahveyi şekersiz içerim');
-  for (const t of ['Do you remember the plot of Dune?', 'Hatırlıyor musun?', 'I cannot remember the word', 'remember']) assert.equal(rememberRequest(t), null, t);
+  for (const t of ['Do you remember the plot of Dune?', 'Hatırlıyor musun?', 'I cannot remember the word', 'remember',
+    'Please remember to buy milk', 'remember to call mom tomorrow']) assert.equal(rememberRequest(t), null, t);
 });

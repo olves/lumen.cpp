@@ -24,7 +24,8 @@
     const add = (kind, value) => { const key = kind + value.replace(/\s+/g, ''); if (!seen.has(key)) { seen.add(key); out.push({ kind, masked: mask(value) }); } };
     for (const m of s.matchAll(/\b(?:\d[ -]?){13,19}\b/g)) { const d = m[0].replace(/\D/g, ''); if (d.length >= 13 && d.length <= 19 && !/^(\d)\1+$/.test(d) && luhn(d)) add('card', m[0]); }
     for (const m of s.matchAll(/\b\d{11}\b/g)) if (tckn(m[0])) add('tckn', m[0]);
-    for (const m of s.matchAll(/\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,7}(?:[ ]?[A-Z0-9]{1,4})?\b/g)) if (iban(m[0])) add('iban', m[0]);
+    // Also lower case ("tr33 0006 …"); iban() upper-cases before the mod-97 check.
+    for (const m of s.matchAll(/\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,7}(?:[ ]?[A-Z0-9]{1,4})?\b/gi)) if (iban(m[0])) add('iban', m[0]);
     for (const re of KEYS) for (const m of s.matchAll(new RegExp(re.source, 'g'))) add('key', m[0]);
     if (/-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/.test(s)) add('private-key', 'PRIVATE KEY');
     // \b does not see "ş" as a letter, so the word start is checked with Unicode letter classes.

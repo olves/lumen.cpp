@@ -90,6 +90,7 @@ Object.assign(translations,{
  memoryAdd:['Add','Ekle'],memoryAddPlaceholder:['A fact to remember, e.g. “I prefer short answers”','Hatırlanacak bir bilgi; ör. “Kısa yanıtları tercih ederim”'],
  memorySave:['Save','Kaydet'],memoryRemove:['Remove','Sil'],memoryClear:['Forget everything','Hepsini unut'],memoryClearConfirm:['Forget everything Lumen remembers?','Lumen’in hatırladığı her şey silinsin mi?'],
  memoryCardTitle:['Remember this?','Bunu hatırlayayım mı?'],memoryRemember:['Remember','Hatırla'],memoryNo:['Not now','Şimdi değil'],memoryAdded:['Lumen will remember this.','Lumen bunu hatırlayacak.'],memoryDuplicate:['Lumen already remembers this.','Lumen bunu zaten hatırlıyor.'],
+ memoryCloudOff:['Kept for local models. {provider} will not get it unless you share memory with cloud models (Settings → Memory).','Yerel modeller için saklanır. Hafızayı bulut modelleriyle paylaşmadıkça {provider} bunu almaz (Ayarlar → Hafıza).'],
 });
 sectionNames.memory='memoryTitle';
 (function memorySection(){
@@ -154,5 +155,7 @@ function showMemoryCard(fact){
  const actions=el('div','approval-actions'),no=el('button','secondary memory-no',t('memoryNo')),yes=el('button','primary memory-yes',t('memoryRemember'));[no,yes].forEach(b=>b.type='button');
  no.onclick=()=>card.remove();
  yes.onclick=async()=>{try{const r=await api.memory('add',{text:fact,language:state.prefs.language});card.remove();toast(t(r.duplicate?'memoryDuplicate':'memoryAdded'));}catch(e){toast(cleanError(e));}};
- actions.append(no,yes);card.append(el('strong','',t('memoryCardTitle')),el('p','memory-fact',fact),actions);$('messages').append(card);$('chat-scroll').scrollTop=$('chat-scroll').scrollHeight;
+ // With a cloud model and sharing off, the fact is still kept for local models; the card says the cloud will not get it.
+ const cloudModel=state.models.find(m=>m.Name===$('model-picker').value)?.Cloud,note=cloudModel&&state.prefs.memoryCloud!==true?el('small','quiet memory-cloud-note',tf('memoryCloudOff',{provider:cloudModel.label})):null;
+ actions.append(no,yes);card.append(el('strong','',t('memoryCardTitle')),el('p','memory-fact',fact),...(note?[note]:[]),actions);$('messages').append(card);$('chat-scroll').scrollTop=$('chat-scroll').scrollHeight;
 }

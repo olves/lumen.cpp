@@ -49,7 +49,8 @@ function createMemory(dataDir) {
 // "Remember: …", "Remember that …", "Bunu hatırla: …", "Hatırla: …", "…, bunu hatırla" -> the fact, or null.
 function rememberRequest(text) {
   const s = clean(text);
-  let m = /^(?:please\s+)?remember(?:\s+that)?\s*[:,-]?\s+(.{3,})$/i.exec(s) || /^(?:lütfen\s+)?(?:bunu\s+)?hatırla(?:r\s+mısın)?\s*[:,-]\s*(.{3,})$/i.exec(s);
+  // English needs "that" or a colon: "please remember to buy milk" is a task, not a fact (review 12 Nov).
+  let m = /^(?:please\s+)?remember(?:\s+that\s+|\s*:\s*)(.{3,})$/i.exec(s) || /^(?:lütfen\s+)?(?:bunu\s+)?hatırla(?:r\s+mısın)?\s*[:,-]\s*(.{3,})$/i.exec(s);
   if (m) return m[1].replace(/[.!]+$/, '').slice(0, TEXT);
   m = /^(.{3,}?)[,.]?\s+(?:bunu\s+)?(?:lütfen\s+)?hatırla[.!]?$/i.exec(s);
   return m ? m[1].slice(0, TEXT) : null;
