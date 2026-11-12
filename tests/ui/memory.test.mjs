@@ -58,9 +58,14 @@ describe(`lasting memory (${shell})`, () => {
     assert.equal(await ev("document.getElementById('memory-cloud').checked"), true);
     await ev("(() => { const i = document.querySelector('#memory-panel .memory-row[data-id] input'); i.value = 'I prefer very short answers'; i.dispatchEvent(new Event('input')); i.parentElement.querySelector('button:not([hidden])').click(); return 0; })()");
     await app.cdp.waitFor("window.lumen.memory('list', {}).then(l => l[0]?.text === 'I prefer very short answers')", 5000);
+    // Saving repaints the panel; type only into the repainted field (Tauri is slower and lost the text otherwise).
+    await app.cdp.waitFor("document.querySelector('#memory-panel .memory-row[data-id] input')?.value === 'I prefer very short answers' && !document.querySelector('#memory-panel .memory-row[data-id] button:not(.danger):not([hidden])')", 5000);
     await app.cdp.type('#memory-new', 'Kahveyi şekersiz içerim');
     await ev("document.querySelector('#memory-panel .memory-new button').click(); 0");
-    await app.cdp.waitFor("document.querySelectorAll('#memory-panel .memory-row[data-id]').length === 2", 5000);
+    await app.cdp.waitFor("document.querySelectorAll('#memory-panel .memory-row[data-id]').length === 2", 5000).catch(async e => {
+      console.log('# state on failure:', JSON.stringify(await ev("({input: document.getElementById('memory-new')?.value, rows: document.querySelectorAll('#memory-panel .memory-row[data-id]').length, toast: document.getElementById('toast').textContent})")), JSON.stringify(await ev("window.lumen.memory('list', {})")));
+      throw e;
+    });
     await ev("document.querySelector('#memory-panel .memory-row[data-id] .danger').click(); 0");
     await app.cdp.waitFor("window.lumen.memory('list', {}).then(l => l.length === 1 && l[0].text === 'Kahveyi şekersiz içerim')", 5000);
     await ev("state.prefs.language = 'tr'; localize(); openSettings('memory'); 0");
@@ -77,8 +82,9 @@ describe(`lasting memory (${shell})`, () => {
     assert.equal(calls(), before); assert.match(await ev("$('prompt').value"), /4111/);
     await app.cdp.click('#send');
     await app.cdp.waitFor("!!document.querySelector('.sensitive-card .sens-send')", 5000);
+    const replies = await ev("state.chat.Messages.filter(m => m.Role === 'assistant').length");
     await ev("document.querySelector('.sensitive-card .sens-send').click(); 0");
-    await app.cdp.waitFor("state.busy === false && state.chat.Messages.at(-1)?.Role === 'assistant'", 30000);
+    await app.cdp.waitFor(`state.busy === false && state.chat.Messages.filter(m => m.Role === 'assistant').length > ${replies}`, 30000);
     assert.equal(calls(), before + 1);
   });
 
