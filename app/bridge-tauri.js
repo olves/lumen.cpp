@@ -65,6 +65,7 @@
     plugins: (action, args) => call('plugins', action, args),
     projects: (action, args) => call('projects', action, args),
     workspaces: (action, args) => call('workspaces', action, args),
+    memory: (action, args) => call('memory', action, args),
     skills: (action, args) => call('skills', action, args),
     modelInfo: repo => call('model-info', repo),
     hub: (kind, query) => call('hub', kind, query),

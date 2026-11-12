@@ -78,3 +78,58 @@ const lumenPaintVision=paintVisionOffer;paintVisionOffer=function(){
  visionOffer.append(allow);
 };
 api.onEvent(e=>{if(e?.type==='images-dropped')toast(tf('cloudPhotoDropped',{provider:e.data?.provider||''}));});
+
+// ---------- Lasting memory (ROADMAP-v1.2 M6-E; core memory.cjs) ----------
+// Settings → Memory: what Lumen remembers about the user (edit, remove, add), whether memory is used, and whether it may go to
+// cloud models (off by default). A message such as "Remember: …" / "Bunu hatırla: …" offers a card; nothing is stored without it.
+Object.assign(translations,{
+ memoryTitle:['Memory','Hafıza'],memoryIntro:['Short facts Lumen remembers about you and gives to the model in every conversation. Nothing is added without your approval.','Lumen’in senin hakkında hatırladığı ve her sohbette modele verdiği kısa bilgiler. Onayın olmadan hiçbir şey eklenmez.'],
+ memoryOn:['Use memory','Hafızayı kullan'],memoryOnHint:['Local models get these facts with every message.','Yerel modeller bu bilgileri her mesajla birlikte alır.'],
+ memoryCloud:['Share memory with cloud models','Hafızayı bulut modelleriyle paylaş'],memoryCloudHint:['Off: cloud providers never receive these facts.','Kapalıyken bulut sağlayıcıları bu bilgileri hiç almaz.'],
+ memoryEmpty:['Nothing yet. Write “Remember: …” in a message, or add a fact here.','Henüz bir şey yok. Bir mesajda “Bunu hatırla: …” yaz ya da buradan ekle.'],
+ memoryAdd:['Add','Ekle'],memoryAddPlaceholder:['A fact to remember, e.g. “I prefer short answers”','Hatırlanacak bir bilgi; ör. “Kısa yanıtları tercih ederim”'],
+ memorySave:['Save','Kaydet'],memoryRemove:['Remove','Sil'],memoryClear:['Forget everything','Hepsini unut'],memoryClearConfirm:['Forget everything Lumen remembers?','Lumen’in hatırladığı her şey silinsin mi?'],
+ memoryCardTitle:['Remember this?','Bunu hatırlayayım mı?'],memoryRemember:['Remember','Hatırla'],memoryNo:['Not now','Şimdi değil'],memoryAdded:['Lumen will remember this.','Lumen bunu hatırlayacak.'],memoryDuplicate:['Lumen already remembers this.','Lumen bunu zaten hatırlıyor.'],
+});
+sectionNames.memory='memoryTitle';
+(function memorySection(){
+ if($('memory-panel'))return;const after=document.querySelector('#settings-nav [data-setting="agent"]');if(!after)return;
+ const nav=el('button');nav.dataset.setting='memory';nav.append(icon('book'),el('span','',t('memoryTitle')));nav.onclick=()=>openSettings('memory');after.after(nav);
+ const panel=el('section','settings-panel');panel.id='memory-panel';panel.hidden=true;$('settings-page').append(panel);
+})();
+const memoryOpenSettings=openSettings;openSettings=function(section,animate){const r=memoryOpenSettings(section,animate);$('memory-panel').hidden=state.setting!=='memory';if(state.setting==='memory'){$('chat-title').textContent=t('memoryTitle');paintMemory();}return r;};
+async function paintMemory(){
+ const panel=$('memory-panel');if(panel.hidden)return;let items=[];try{items=await api.memory('list',{});}catch{}
+ const head=el('div','settings-heading');head.append(el('h1','',t('memoryTitle')),el('p','',t('memoryIntro')));
+ const sw=(id,label,hint,on,save)=>{const row=el('div','setting-row'),text=el('div'),s=el('label','switch'),box=el('input'),knob=el('span');box.type='checkbox';box.id=id;box.checked=on;s.append(box,knob);text.append(el('h3','',t(label)),el('p','',t(hint)));row.append(text,s);box.onchange=async()=>{try{state.prefs=await api.preferences({...state.prefs,...save(box.checked)});}catch(e){box.checked=!box.checked;toast(cleanError(e));}};return row;};
+ const list=el('div','memory-list');
+ if(!items.length)list.append(el('p','quiet memory-empty',t('memoryEmpty')));
+ for(const item of items){
+  const row=el('div','memory-row'),input=el('input');input.value=item.text;input.maxLength=300;input.setAttribute('aria-label',t('memoryTitle'));
+  const save=el('button','text-button',t('memorySave')),remove=el('button','text-button danger',t('memoryRemove'));[save,remove].forEach(b=>b.type='button');save.hidden=true;
+  input.oninput=()=>{save.hidden=input.value.trim()===item.text;};
+  save.onclick=async()=>{try{await api.memory('update',{id:item.id,text:input.value,language:state.prefs.language});paintMemory();}catch(e){toast(cleanError(e));}};
+  remove.onclick=async()=>{try{await api.memory('remove',{id:item.id});paintMemory();}catch(e){toast(cleanError(e));}};
+  row.dataset.id=item.id;row.append(input,save,remove);list.append(row);
+ }
+ const addRow=el('div','memory-row memory-new'),add=el('input'),addButton=el('button','secondary',t('memoryAdd'));add.id='memory-new';add.maxLength=300;add.placeholder=t('memoryAddPlaceholder');addButton.type='button';
+ addButton.onclick=async()=>{if(!add.value.trim())return;try{await api.memory('add',{text:add.value,language:state.prefs.language});paintMemory();}catch(e){toast(cleanError(e));}};
+ add.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();addButton.click();}};addRow.append(add,addButton);
+ const clear=el('button','text-button danger memory-clear',t('memoryClear'));clear.type='button';clear.hidden=!items.length;
+ clear.onclick=async()=>{if(!confirm(t('memoryClearConfirm')))return;await api.memory('clear',{});paintMemory();};
+ panel.replaceChildren(head,sw('memory-on','memoryOn','memoryOnHint',state.prefs.memoryOn!==false,v=>({memoryOn:v})),sw('memory-cloud','memoryCloud','memoryCloudHint',state.prefs.memoryCloud===true,v=>({memoryCloud:v})),list,addRow,clear);
+}
+// "Remember: …" in a message: the message is sent as usual and a card offers to store the fact.
+const memorySend=send;send=async function(){
+ const typed=$('prompt').value.trim();let fact=null;
+ if(!state.busy&&typed&&state.prefs.memoryOn!==false){try{fact=(await api.memory('check',{text:typed})).fact;}catch{}}
+ const r=await memorySend();if(fact)showMemoryCard(fact);return r;
+};
+function showMemoryCard(fact){
+ document.querySelector('.memory-card')?.remove();
+ const card=el('div','approval-card memory-card');card.setAttribute('role','group');card.setAttribute('aria-label',t('memoryCardTitle'));
+ const actions=el('div','approval-actions'),no=el('button','secondary memory-no',t('memoryNo')),yes=el('button','primary memory-yes',t('memoryRemember'));[no,yes].forEach(b=>b.type='button');
+ no.onclick=()=>card.remove();
+ yes.onclick=async()=>{try{const r=await api.memory('add',{text:fact,language:state.prefs.language});card.remove();toast(t(r.duplicate?'memoryDuplicate':'memoryAdded'));}catch(e){toast(cleanError(e));}};
+ actions.append(no,yes);card.append(el('strong','',t('memoryCardTitle')),el('p','memory-fact',fact),actions);$('messages').append(card);$('chat-scroll').scrollTop=$('chat-scroll').scrollHeight;
+}

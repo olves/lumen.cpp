@@ -53,3 +53,8 @@
 .builtin-badge{align-self:flex-start;padding:1px 8px;border:1px solid var(--border);border-radius:999px;color:var(--text-muted);font-size:var(--font-size-small)}
 .builtin-switch{display:flex;align-items:center;gap:8px;font-size:var(--font-size-small);color:var(--text-muted)}
 .builtin-card>button{align-self:flex-start}
+/* v1.2 Settings → Memory and the "remember this?" card */
+.memory-list{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+.memory-row{display:flex;align-items:center;gap:8px}
+.memory-row input{flex:1;min-width:0}
+.memory-fact{font-style:italic}
