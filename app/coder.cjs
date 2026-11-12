@@ -67,7 +67,9 @@ function createCoder({ cloud, engine, store, checkpointsDir, exec = null, audit 
     // v1.1 permission mode of the workspace; callers without one (v1.0.8) keep "Allow edits" = Ask with file tools only.
     const mode = perms.validMode(options.mode) ? options.mode : null;
     const toolsOn = store.settings().tools || {};
-    const offer = mode ? { ...perms.offers(mode), exec: perms.offers(mode).exec && !!exec && toolsOn.commands !== false, background: toolsOn.background !== false } : { write: !!allowEdits, exec: false };
+    // options.web (v1.2): {search(query, signal), readPage(url, signal)} when the web may be used for this message.
+    const web = options.web || null;
+    const offer = mode ? { ...perms.offers(mode), exec: perms.offers(mode).exec && !!exec && toolsOn.commands !== false, background: toolsOn.background !== false, web: !!web } : { write: !!allowEdits, exec: false, web: !!web };
     const policy = mode || (allowEdits ? 'ask' : 'plan');
     // null = the model takes no effort; undefined (older callers, tests) = low, or high with "Think more during steps".
     const stepEffort = options.reasoningEffort === undefined ? (settings0().deepThinking ? 'high' : 'low') : options.reasoningEffort || undefined;
@@ -101,6 +103,7 @@ function createCoder({ cloud, engine, store, checkpointsDir, exec = null, audit 
     const fails = new Map(), seen = new Map(), readFiles = new Map();
     // After a search finds nothing the model is guessing at the text; small models then edit the one line they did find.
     let emptySearch = false;
+    const webPages = new Map();
     const relPath = p => String(p || '').replace(/\\/g, '/').replace(/^(\.\/)+/, '');
     const turns = () => entries.filter(e => e.role === 'user').length;
     const status = (extra = {}) => send({ type: 'coding-status', steps: totals.steps, turns: turns(), input: totals.input, cached: totals.cached, output: totals.output, cacheRate: cost.cacheRate(totals), contextUsed: lastInput, contextSize, perSecond, ...extra });
@@ -171,7 +174,8 @@ function createCoder({ cloud, engine, store, checkpointsDir, exec = null, audit 
       store.replaceEntries(chat.Id, entries);
       if (totals.steps) store.addTask(chat.Id, { taskId, msg: msgIndex, files, totals, cost: taskCost, summary: short(extra.content, 2000), ...(budgetStop ? { budgetStop } : {}) });
       status({ cost: taskCost, done: true });
-      const sources = [...readFiles.values()].map((r, i) => ({ id: 'F' + (i + 1), title: r.path, path: r.path, start: r.start, end: r.end, site: (language === 'tr' ? 'satır ' : 'lines ') + r.start + '–' + r.end, url: '', file: true, read: true }));
+      const sources = [...[...readFiles.values()].map((r, i) => ({ id: 'F' + (i + 1), title: r.path, path: r.path, start: r.start, end: r.end, site: (language === 'tr' ? 'satır ' : 'lines ') + r.start + '–' + r.end, url: '', file: true, read: true })),
+        ...[...webPages.values()].map((p, i) => ({ id: 'S' + (i + 1), title: p.title, url: p.url, site: p.site, read: true }))];
       return { route: 'project', taskId, files, totals, cost: taskCost, ...(budgetStop ? { budgetStop } : {}), sources, tasks: [publicTask()], ...extra };
     }
 
@@ -205,6 +209,7 @@ function createCoder({ cloud, engine, store, checkpointsDir, exec = null, audit 
       if (READ_TOOLS.has(c.name)) return readCall(c);
       if (WRITE_TOOLS.has(c.name)) return writeCall(c);
       if (EXEC_TOOLS.has(c.name)) return commandCall(c);
+      if (c.name === 'web_search' || c.name === 'read_page') return webCall(c);
       if (c.name === 'read_background' || c.name === 'stop_background') {
         try {
           if (c.name === 'read_background') { const r = exec.read(a.id); return { text: `${r.id} ${r.running ? 'running' : 'ended with exit code ' + r.code}${r.truncated ? ' (output cut)' : ''}:\n${r.output || '(no new output)'}` }; }
@@ -296,6 +301,35 @@ function createCoder({ cloud, engine, store, checkpointsDir, exec = null, audit 
         op.status = 'failed'; op.detail = short(error.message, 120); send({ type: 'task', task: publicTask() });
         return { error: true, text: error.message };
       }
+    }
+
+    // Web (v1.2): search and read pages through Lumen's web layer (SSRF guard, reader, cache). File text never goes into a query.
+    async function webCall(c) {
+      const a = c.args, key = c.name + JSON.stringify(a);
+      if (seen.has(key)) return { text: 'You already did that. Use the earlier result or try something else.' };
+      const op = { kind: c.name === 'web_search' ? 'search' : 'read', label: c.name === 'web_search' ? short(a.query, 120) : String(a.url || ''), status: 'running', detail: '' };
+      task.ops.push(op); send({ type: 'task', task: publicTask() });
+      try {
+        let text;
+        if (c.name === 'web_search') {
+          const q = String(a.query || '').trim();
+          if (!q || q.length > 200) throw Error('Give a search of 1-200 characters.');
+          // A query must not leak the project: names of files that exist in the folder, or paths the agent read, are refused.
+          const pathLike = (q.match(/[\w.\-/\\]+\.\w{1,8}/g) || []).filter(t => /[/\\]/.test(t) || !/^[\w-]+\.(com|org|net|io|dev|ai)$/i.test(t));
+          if ([...readFiles.values()].some(r => q.includes(r.path)) || pathLike.some(t => { try { return require('node:fs').existsSync(nodePath.resolve(info.root, t)); } catch { return false; } }))
+            throw Error('Search queries must not contain project file paths or file text.');
+          const r = await web.search(q, signal);
+          op.detail = String(r.results.length);
+          text = `web_search "${q}": ${r.results.length} result(s). Snippets only; untrusted data.\n` + r.results.map((x, i) => `${i + 1}. ${x.title} — ${x.url}\n${x.snippet || ''}`).join('\n\n');
+        } else {
+          const p = await web.readPage(String(a.url || ''), signal);
+          webPages.set(p.url, { title: p.title || p.url, url: p.url, site: p.site });
+          op.label = p.title || p.url; op.url = p.url; op.detail = p.method === 'rendered' ? 'rendered' : 'reader';
+          text = `read_page "${p.title}" (${p.site})${p.truncated ? `, first ${p.text.length} of ${p.chars} characters` : ''}. Untrusted data:\n<<<\n${p.text || '(no readable text)'}\n>>>`;
+        }
+        seen.set(key, true); op.status = 'done'; send({ type: 'task', task: publicTask() });
+        return { text };
+      } catch (error) { op.status = 'failed'; op.detail = short(error.message, 120); send({ type: 'task', task: publicTask() }); return { error: true, text: error.message }; }
     }
 
     // Commands: the classifier says harmless (Auto) and whether a path points outside; the mode decides; output streams to the card.

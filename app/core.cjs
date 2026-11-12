@@ -71,7 +71,10 @@ async function runCoding(args,chat,runId,prompt,contextSize){
  const levels=effortOf(chat.Model).levels,choice=runSettings.effective(chat.Id,p).effort,deep=codingStore.settings().deepThinking;
  const reasoningEffort=!levels.length?null:levels.includes(choice)?choice:deep&&levels.includes('high')?'high':levels.includes('low')?'low':null;
  const ws=workspaces.of(chat.Id);
- return coder.run({runId,chat,msgIndex:chat.Messages.length-1,prompt,model:chat.Model,cloudTarget:target?{provider:target.provider,model:target.model}:null,contextSize:window,language:tr?'tr':'en',binding,allowEdits:codingStore.get(chat.Id).allowEdits,mode:ws.mode,systemPrompt,reasoningEffort});
+ // Web for this task: the user turned research on for the message (+ → Research) and web search is set up.
+ const config=toolSettings.plain(),webOn=args.research===true&&(config.search.enabled||args.webOnce===true);
+ const web=webOn?{search:(query,signal)=>webTools.search(query,{...config.search,language:config.search.language==='auto'?(tr?'tr':'en'):config.search.language},{signal}),readPage:(url,signal)=>webTools.readPage(url,{signal,allowRender:config.browser.render,maxChars:16000})}:null;
+ return coder.run({runId,chat,msgIndex:chat.Messages.length-1,prompt,model:chat.Model,cloudTarget:target?{provider:target.provider,model:target.model}:null,contextSize:window,language:tr?'tr':'en',binding,allowEdits:codingStore.get(chat.Id).allowEdits,mode:ws.mode,systemPrompt,reasoningEffort,web});
 }
 // Checkpoints of coding tasks older than 30 days are removed at startup.
 function pruneCheckpoints(){const dir=path.join(data,'agent-checkpoints');let names=[];try{names=fs.readdirSync(dir);}catch{return;}const cutoff=Date.now()-30*86400000;for(const n of names){try{const full=path.join(dir,n);if(fs.statSync(full).mtimeMs<cutoff)fs.rmSync(full,{recursive:true,force:true});}catch{}}}
@@ -439,14 +442,16 @@ async function requestNow(action,args={}){
    // webOnce (v1.2): the user allowed the web for this one message from the card; no setting changes.
    const webOnce=args.webOnce===true&&['auto','research'].includes(mode);
    const cloudResearch=cloudModel&&(connections.summary().cloud.webResearch||webOnce)&&['auto','research'].includes(mode);
-   if(cloudModel&&!cloudResearch&&(mode!=='project'||args.research))throw Error(prefs().language==='tr'?'Araştırma ve araçlar yerel modellerle çalışır. Bulut modeliyle yalnızca proje klasörü kullanılabilir.':'Research and tools run on local models. With a cloud model only the project folder can be used.');
+   // v1.2: project + web runs in the coding agent; a cloud model may use the web there when web research is on for cloud models
+   // (or allowed once).
+   const projectWeb=mode==='project'&&args.research&&(!cloudModel||connections.summary().cloud.webResearch||args.webOnce===true);
+   if(cloudModel&&!cloudResearch&&(mode!=='project'||(args.research&&!projectWeb)))throw Error(prefs().language==='tr'?'Araştırma ve araçlar yerel modellerle çalışır. Bulut modeliyle yalnızca proje klasörü kullanılabilir.':'Research and tools run on local models. With a cloud model only the project folder can be used.');
    // The coding agent (coder.cjs) handles project folders, for local and cloud models; project + web research keeps the
    // read-only research loop of agent.cjs (spec §11a-3).
-   if(mode==='project'&&!args.research)return runCoding(args,chat,runId,prompt,contextSize);
+   if(mode==='project')return runCoding({...args,research:projectWeb},chat,runId,prompt,contextSize);
    let systemPrompt=String(chat.SystemPrompt||'').slice(0,12000);try{systemPrompt=skillStore.compile(systemPrompt,Array.isArray(chat.SkillIds)?chat.SkillIds:[]).prompt;}catch{}
    systemPrompt=[capabilityText(chat,mode==='project'?'project':mode==='tools'?'tools':'chat'),systemPrompt].filter(Boolean).join('\n\n');
    const p=prefs(),context=cloudResearch?{value:CLOUD_RESEARCH_CONTEXT}:await contextFor(chat.Model,contextSize);if(!cloudResearch)loaded={model:chat.Model,context:context.value};
-   if(mode==='project'){const binding=projectStore.get(chat.Id);if(!binding)throw Error('No project folder is attached to this conversation.');if(!fs.existsSync(binding.root))throw Error('The project folder was not found: '+binding.root);return agent.runProject({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',project:createProjectTools(binding),research:args.research===true,systemPrompt,...runOptions(chat)});}
    if(mode==='tools'){const tools=[...connections.activeTools(),...imageTools()];return agent.runTools({runId,chat,prompt,model:chat.Model,contextSize:context.value,language:p.language==='tr'?'tr':'en',tools,
     callTool:async(serverId,name,toolArgs,signal)=>serverId==='lumen'?imageToolCall(toolArgs,signal):mcpClient.callTool(await connections.server(serverId),name,toolArgs,{signal}),
     allowAlways:(serverId,name)=>{if(serverId==='lumen'){imageGen.setSettings({toolAsk:false});return;}Promise.resolve(connections.updateServer(serverId,{tool:{name,ask:false}})).catch(()=>{});},systemPrompt,...runOptions(chat)});}

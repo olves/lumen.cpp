@@ -129,3 +129,29 @@ test('built-in tools: commands can be switched off; AGENTS.md joins the system t
   assert.ok(names.includes('make_dir'));
   assert.ok(s.requests[0].messages[0].content.includes('--- AGENTS.md ---' + String.fromCharCode(10) + 'Use tabs.'));
 });
+
+test('v1.2 web tools in the coding agent: search, read a page, cite it; offered only with web; no file paths in queries', async () => {
+  const s = setup(), searches = [];
+  const web = {
+    search: async q => { searches.push(q); return { results: [{ title: 'Docs', url: 'https://docs.example.test/a', snippet: 'use foo()' }] }; },
+    readPage: async url => ({ url, title: 'Docs page', site: 'docs.example.test', text: 'Call foo() with two arguments.', method: 'reader', truncated: false, chars: 30 }),
+  };
+  let n = 0;
+  const cloud = { chat: async args => { s.requests.push(args); n++;
+    const calls = n === 1 ? [{ name: 'web_search', args: { query: 'foo api' } }] : n === 2 ? [{ name: 'web_search', args: { query: 'what does src/a.txt say' } }] : n === 3 ? [{ name: 'read_page', args: { url: 'https://docs.example.test/a' } }] : [{ name: 'finish', args: { summary: 'Use foo() [S1].' } }];
+    return { content: '', toolCalls: calls.map((c, i) => ({ id: `w${n}_${i}`, name: c.name, arguments: JSON.stringify(c.args) })), usage: { prompt_tokens: 10, completion_tokens: 2 } }; } };
+  const store = createCodingStore(s.base);
+  const coder = createCoder({ cloud, engine: null, store, checkpointsDir: path.join(s.base, 'cp'), exec, emit: () => {} });
+  const base = { runId: '00000000-0000-4000-8000-0000000009' + String(Date.now()).slice(-2), chat: { Id: chatId, Messages: [{ Role: 'user', Content: 'go' }] }, msgIndex: 0, prompt: 'go', model: 'cloud:x/y', cloudTarget: { provider: 'x', model: 'y' }, contextSize: 128000, language: 'en', binding: { root: s.root, allow: [], exclude: [] }, mode: 'ask' };
+  const r = await coder.run({ ...base, web });
+  const names = s.requests[0].tools.map(t => t.function.name);
+  assert.ok(names.includes('web_search') && names.includes('read_page'));
+  assert.deepEqual(searches, ['foo api'], 'the query with a file path was refused');
+  const results = s.requests.at(-1).messages.filter(m => m.role === 'tool').map(m => m.content);
+  assert.match(results[1], /must not contain project file paths/);
+  assert.match(results[2], /Call foo\(\) with two arguments/);
+  assert.equal(r.sources.find(x => x.url)?.url, 'https://docs.example.test/a');
+  s.requests.length = 0; n = 3;
+  await coder.run({ ...base, runId: base.runId.slice(0, -2) + '77' });
+  assert.ok(!s.requests[0].tools.some(t => t.function.name === 'web_search'), 'no web tools without web');
+});
